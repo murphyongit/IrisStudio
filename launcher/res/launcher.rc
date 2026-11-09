@@ -1,0 +1,48 @@
+// The launcher's resources: the version, and what it embeds (found through the project's resource include folders:
+// res, core/resources and t5/bin/Win32/<configuration>)
+#include <winres.h>
+#include "resource.h"
+#include "../src/Version.hpp"
+
+LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+
+IDR_T5_DLL RCDATA "T5iris.dll"
+IDR_CHARACTERS RCDATA "characters.json"
+IDR_ANIMATIONS RCDATA "animations.json"
+IDR_CAMPAIGN_KITS RCDATA "campaign-kits.json"
+IDR_CAMPAIGN_WEAPONS RCDATA "campaign-weapons.json"
+IDR_RUBIK RCDATA "Rubik-Regular.ttf"
+IDR_RUBIK_SEMIBOLD RCDATA "Rubik-SemiBold.ttf"
+IDR_FA_SOLID RCDATA "fa-solid-900.ttf"
+
+// the window's and IrisStudio.exe's icon, drawn by tools/release/icon.py
+IDI_LAUNCHER ICON "IrisStudio.ico"
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION IRIS_STUDIO_VERSION_MAJOR, IRIS_STUDIO_VERSION_MINOR, IRIS_STUDIO_VERSION_PATCH, 0
+ PRODUCTVERSION IRIS_STUDIO_VERSION_MAJOR, IRIS_STUDIO_VERSION_MINOR, IRIS_STUDIO_VERSION_PATCH, 0
+ FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+ FILEFLAGS 0
+ FILEOS VOS_NT_WINDOWS32
+ FILETYPE VFT_APP
+ FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "CompanyName", "Iris Studio"
+            VALUE "FileDescription", "Iris Studio: sets up and starts T5iris, the movie mod for Black Ops (Plutonium T5, LAN)"
+            VALUE "FileVersion", IRIS_STUDIO_VERSION_STRING
+            VALUE "InternalName", "IrisStudio"
+            VALUE "LegalCopyright", "GPL-3.0. Based on IWXMVM."
+            VALUE "OriginalFilename", "IrisStudio.exe"
+            VALUE "ProductName", "Iris Studio"
+            VALUE "ProductVersion", IRIS_STUDIO_VERSION_STRING
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

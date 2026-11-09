@@ -1,0 +1,248 @@
+#include "StdInclude.hpp"
+#include "ImGuiExtensions.hpp"
+
+#include "Resources.hpp"
+
+#ifndef IMGUI_DEFINE_MATH_OPERATORS
+#define IMGUI_DEFINE_MATH_OPERATORS
+#endif
+
+
+#include "Components/Playback.hpp"
+#include "Utilities/MathUtils.hpp"
+#include "Components/CameraManager.hpp"
+
+namespace ImGuiEx
+{
+    void DrawLine3D(glm::vec3 from, glm::vec3 to, ImVec4 color, float thickness)
+    {
+        using namespace IWXMVM;
+
+        const auto& camera = Components::CameraManager::Get().GetActiveCamera();
+        auto screenPosition1 = MathUtils::WorldToScreenPoint(from, *camera);
+        auto screenPosition2 = MathUtils::WorldToScreenPoint(to, *camera);
+
+        if (screenPosition1.has_value() && screenPosition2.has_value())
+        {
+            ImGui::GetWindowDrawList()->AddLine(screenPosition1.value(), screenPosition2.value(),
+                                                ImGui::ColorConvertFloat4ToU32(color), thickness);
+        }
+    }
+
+    void DrawPoint3D(glm::vec3 point, ImVec4 color, ImVec2 size)
+    {
+        using namespace IWXMVM;
+
+        const auto& camera = Components::CameraManager::Get().GetActiveCamera();
+        auto screenPosition = MathUtils::WorldToScreenPoint(point, *camera);
+
+        if (screenPosition.has_value())
+        {
+            ImGui::GetWindowDrawList()->AddRectFilled(screenPosition.value() - size, screenPosition.value() + size,
+                                                      ImGui::ColorConvertFloat4ToU32(color));
+        }
+    }
+
+    bool TimescaleSliderInternal(const char* label, ImGuiDataType data_type, void* p_data, const void* p_min,
+                                 const void* p_max, const char* format, ImGuiSliderFlags flags, auto ClampValueFn)
+    {
+        using namespace ImGui;
+
+        ImGuiWindow* window = GetCurrentWindow();
+        if (window->SkipItems)
+            return false;
+
+        ImGuiContext& g = *GImGui;
+        const ImGuiStyle& style = g.Style;
+        const ImGuiID id = window->GetID(label);
+        const float w = CalcItemWidth();
+
+        const ImVec2 label_size = CalcTextSize(label, NULL, true);
+        const ImRect frame_bb(window->DC.CursorPos,
+                              window->DC.CursorPos + ImVec2(w, label_size.y + style.FramePadding.y * 2.0f));
+        const ImRect total_bb(
+            frame_bb.Min,
+            frame_bb.Max + ImVec2(label_size.x > 0.0f ? style.ItemInnerSpacing.x + label_size.x : 0.0f, 0.0f));
+
+        const bool temp_input_allowed = (flags & ImGuiSliderFlags_NoInput) == 0;
+        ItemSize(total_bb, style.FramePadding.y);
+        if (!ItemAdd(total_bb, id, &frame_bb, temp_input_allowed ? ImGuiItemFlags_Inputable : 0))
+            return false;
+
+        // Default format string when passing NULL
+        if (format == NULL)
+            format = DataTypeGetInfo(data_type)->PrintFmt;
+
+        const bool hovered = ItemHoverable(frame_bb, id, g.LastItemData.InFlags);
+        bool temp_input_is_active = temp_input_allowed && TempInputIsActive(id);
+        if (!temp_input_is_active)
+        {
+            // Tabbing or CTRL-clicking on Slider turns it into an input box
+            const bool input_requested_by_tabbing =
+                temp_input_allowed && (g.LastItemData.StatusFlags & ImGuiItemStatusFlags_FocusedByTabbing) != 0;
+            const bool clicked = hovered && IsMouseClicked(0, id);
+            const bool make_active = (input_requested_by_tabbing || clicked || g.NavActivateId == id);
+            if (make_active && clicked)
+                SetKeyOwner(ImGuiKey_MouseLeft, id);
+            if (make_active && temp_input_allowed)
+                if (input_requested_by_tabbing || (clicked && g.IO.KeyCtrl) ||
+                    (g.NavActivateId == id && (g.NavActivateFlags & ImGuiActivateFlags_PreferInput)))
+                    temp_input_is_active = true;
+
+            if (make_active && !temp_input_is_active)
+            {
+                SetActiveID(id, window);
+                SetFocusID(id, window);
+                FocusWindow(window);
+                g.ActiveIdUsingNavDirMask |= (1 << ImGuiDir_Left) | (1 << ImGuiDir_Right);
+            }
+        }
+
+        if (temp_input_is_active)
+        {
+            // Only clamp CTRL+Click input when ImGuiSliderFlags_AlwaysClamp is set
+            const bool is_clamp_input = (flags & ImGuiSliderFlags_AlwaysClamp) != 0;
+            return TempInputScalar(frame_bb, id, label, data_type, p_data, format, is_clamp_input ? p_min : NULL,
+                                   is_clamp_input ? p_max : NULL);
+        }
+
+        // Draw frame
+        const ImU32 frame_col = GetColorU32(g.ActiveId == id
+                                                ? ImGuiCol_FrameBgActive
+                                                : hovered
+                                                ? ImGuiCol_FrameBgHovered
+                                                : ImGuiCol_FrameBg);
+        RenderNavHighlight(frame_bb, id);
+        RenderFrame(frame_bb.Min, frame_bb.Max, frame_col, true, g.Style.FrameRounding);
+
+        // Slider behavior
+        ImRect grab_bb;
+        const bool value_changed =
+            SliderBehavior(frame_bb, id, data_type, p_data, p_min, p_max, format, flags, &grab_bb);
+        if (value_changed)
+        {
+            MarkItemEdited(id);
+
+            ClampValueFn(static_cast<float*>(p_data));
+        }
+
+        // Render grab
+        if (grab_bb.Max.x > grab_bb.Min.x)
+            window->DrawList->AddRectFilled(
+                grab_bb.Min, grab_bb.Max,
+                GetColorU32(g.ActiveId == id ? ImGuiCol_SliderGrabActive : ImGuiCol_SliderGrab), style.GrabRounding);
+
+        // Display value using user-provided display format so user can add prefix/suffix/decorations to the value.
+        char value_buf[64];
+        const char* value_buf_end =
+            value_buf + DataTypeFormatString(value_buf, IM_ARRAYSIZE(value_buf), data_type, p_data, format);
+        if (g.LogEnabled)
+            LogSetNextTextDecoration("{", "}");
+        RenderTextClipped(frame_bb.Min, frame_bb.Max, value_buf, value_buf_end, NULL, ImVec2(0.5f, 0.5f));
+
+        if (label_size.x > 0.0f)
+            RenderText(ImVec2(frame_bb.Max.x + style.ItemInnerSpacing.x, frame_bb.Min.y + style.FramePadding.y), label);
+
+        IMGUI_TEST_ENGINE_ITEM_INFO(
+            id, label, g.LastItemData.StatusFlags | (temp_input_allowed ? ImGuiItemStatusFlags_Inputable : 0));
+        return value_changed;
+    }
+
+    bool TimescaleSlider(const char* label, float* v, float v_min, float v_max, const char* format,
+                         ImGuiSliderFlags flags)
+    {
+        auto ClampValue = [](void* p_data) {
+            static constexpr double ROUNDING = 0.00000001;
+            static constexpr std::array TIMESCALE_STEPS = IWXMVM::Components::Playback::TIMESCALE_STEPS;
+
+            float* ptr = static_cast<float*>(p_data);
+            const auto it = std::upper_bound(TIMESCALE_STEPS.begin(), TIMESCALE_STEPS.end(), *ptr - ROUNDING);
+
+            *ptr = (it != TIMESCALE_STEPS.end()) ? *it : TIMESCALE_STEPS.back();
+        };
+
+        // TimescaleSliderInternal is a copy of SliderScalar with the intended behavior of being a slider with fixed
+        // steps; the only change to SliderScalar is the above lambda and its execution, to clamp the slider value if it
+        // has changed
+        return ImGuiEx::TimescaleSliderInternal(label, ImGuiDataType_Float, v, &v_min, &v_max, format, flags,
+                                                ClampValue);
+    }
+
+    bool DragSlider(const char* label, float* v, float v_min, float v_max, const char* format,
+                    const DragSliderOptions& options)
+    {
+        using namespace ImGui;
+
+        ImGuiWindow* window = GetCurrentWindow();
+        if (window->SkipItems)
+            return false;
+
+        const ImGuiStyle& style = GetStyle();
+        const ImRect frame(window->DC.CursorPos, window->DC.CursorPos + ImVec2(CalcItemWidth(), GetFrameHeight()));
+        const float speed = (v_max - v_min) / ImMax(frame.GetWidth(), 1.0f);
+
+        // DragFloat draws the frame and the value on top of each other, so its frame is hidden and drawn again on a
+        // channel underneath, together with the fill
+        ImDrawListSplitter splitter;
+        splitter.Split(window->DrawList, 2);
+        splitter.SetCurrentChannel(window->DrawList, 1);
+
+        PushStyleColor(ImGuiCol_FrameBg, IM_COL32_BLACK_TRANS);
+        PushStyleColor(ImGuiCol_FrameBgHovered, IM_COL32_BLACK_TRANS);
+        PushStyleColor(ImGuiCol_FrameBgActive, IM_COL32_BLACK_TRANS);
+        const bool changed = DragFloat(label, v, speed, v_min, v_max, format, options.flags);
+        PopStyleColor(3);
+
+        const bool active = IsItemActive();
+        splitter.SetCurrentChannel(window->DrawList, 0);
+        window->DrawList->AddRectFilled(
+            frame.Min, frame.Max,
+            GetColorU32(active ? ImGuiCol_FrameBgActive : IsItemHovered() ? ImGuiCol_FrameBgHovered : ImGuiCol_FrameBg),
+            style.FrameRounding);
+
+        if (!TempInputIsActive(GetItemID()) && v_max > v_min)
+        {
+            const auto ToX = [&](float value) {
+                return frame.Min.x + (ImClamp(value, v_min, v_max) - v_min) / (v_max - v_min) * frame.GetWidth();
+            };
+
+            const float origin = options.origin.value_or(v_min < 0.0f && v_max > 0.0f ? 0.0f : v_min);
+            const float originX = ToX(origin);
+            const float valueX = ToX(*v);
+            const ImU32 color = GetColorU32(active ? ImGuiCol_SliderGrabActive : ImGuiCol_SliderGrab);
+
+            window->DrawList->AddRectFilled(ImVec2(ImMin(originX, valueX), frame.Min.y),
+                                            ImVec2(ImMax(originX, valueX), frame.Max.y),
+                                            (color & ~IM_COL32_A_MASK) | IM_COL32(0, 0, 0, 90));
+            // the edge at the value stays visible when the value is at the origin
+            const float edgeX = ImClamp(valueX, frame.Min.x + 1.0f, frame.Max.x - 1.0f);
+            window->DrawList->AddLine(ImVec2(edgeX, frame.Min.y), ImVec2(edgeX, frame.Max.y), color, 2.0f);
+        }
+
+        splitter.Merge(window->DrawList);
+
+        if (options.resetValue.has_value())
+        {
+            char valueText[64];
+            ImFormatString(valueText, IM_ARRAYSIZE(valueText), format, options.resetValue.value());
+            if (ResetMenu(valueText) && *v != options.resetValue.value())
+            {
+                *v = options.resetValue.value();
+                return true;
+            }
+        }
+
+        return changed;
+    }
+
+    bool ResetMenu(const char* valueText, const char* popupId)
+    {
+        bool reset = false;
+        if (ImGui::BeginPopupContextItem(popupId))
+        {
+            reset = ImGui::Selectable(std::format(ICON_FA_ROTATE_LEFT " Reset to {}", valueText).c_str());
+            ImGui::EndPopup();
+        }
+        return reset;
+    }
+} // namespace ImGuiEx

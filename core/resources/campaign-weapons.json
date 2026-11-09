@@ -1,0 +1,3386 @@
+{
+ "version": 1,
+ "generator": "tools/t5-weapons/weapons.py",
+ "weapons": [
+  {
+   "name": "ppsh_sp",
+   "variants": [
+    {
+     "name": "ppsh_sp",
+     "attachments": [],
+     "display": "PPSh-41",
+     "zone": "t5w_ppsh_sp",
+     "sound": "wpn_ppsh_fire",
+     "sounds": "t5s_spl_fullahead",
+     "projectile": false,
+     "left": ""
+    }
+   ],
+   "display": "PPSh-41",
+   "group": "Campaign",
+   "category": "Submachine Guns"
+  },
+  {
+   "name": "mp40_sp",
+   "variants": [
+    {
+     "name": "mp40_sp",
+     "attachments": [],
+     "display": "MP40",
+     "zone": "t5w_mp40_sp",
+     "sound": "wpn_mp40_fire_npc",
+     "sounds": "t5s_spl_fullahead",
+     "projectile": false,
+     "left": ""
+    }
+   ],
+   "display": "MP40",
+   "group": "Campaign",
+   "category": "Submachine Guns"
+  },
+  {
+   "name": "sten_sp",
+   "variants": [
+    {
+     "name": "sten_sp",
+     "attachments": [],
+     "display": "Sten",
+     "zone": "t5w_sten_sp",
+     "sound": "wpn_sten_fire",
+     "sounds": "t5s_spl_fullahead",
+     "projectile": false,
+     "left": ""
+    }
+   ],
+   "display": "Sten",
+   "group": "Campaign",
+   "category": "Submachine Guns"
+  },
+  {
+   "name": "stg44_sp",
+   "variants": [
+    {
+     "name": "stg44_sp",
+     "attachments": [],
+     "display": "STG-44",
+     "zone": "t5w_stg44_sp",
+     "sound": "wpn_mp44_fire",
+     "sounds": "t5s_spl_fullahead",
+     "projectile": false,
+     "left": ""
+    }
+   ],
+   "display": "STG-44",
+   "group": "Campaign",
+   "category": "Rifles"
+  },
+  {
+   "name": "mosin_sp",
+   "variants": [
+    {
+     "name": "mosin_sp",
+     "attachments": [],
+     "display": "Mosin-Nagant",
+     "zone": "t5w_mosin_sp",
+     "sound": "wpn_mosin_fire",
+     "sounds": "t5s_spl_fullahead",
+     "projectile": false,
+     "left": ""
+    }
+   ],
+   "display": "Mosin-Nagant",
+   "group": "Campaign",
+   "category": "Rifles"
+  },
+  {
+   "name": "mosin_scope_sp",
+   "variants": [
+    {
+     "name": "mosin_scope_sp",
+     "attachments": [],
+     "display": "Scoped Mosin-Nagant",
+     "zone": "t5w_mosin_scope_sp",
+     "sound": "wpn_mosin_fire",
+     "sounds": "t5s_spl_fullahead",
+     "projectile": false,
+     "left": ""
+    }
+   ],
+   "display": "Scoped Mosin-Nagant",
+   "group": "Campaign",
+   "category": "Rifles"
+  },
+  {
+   "name": "aug_arctic_acog_sp",
+   "variants": [
+    {
+     "name": "aug_arctic_acog_sp",
+     "attachments": [],
+     "display": "AUG Arctic",
+     "zone": "t5w_aug_arctic_acog_sp",
+     "sound": "wpn_aug_fire_npc",
+     "sounds": "t5s_spl_wmd",
+     "projectile": false,
+     "left": ""
+    }
+   ],
+   "display": "AUG Arctic",
+   "group": "Campaign",
+   "category": "Rifles"
+  },
+  {
+   "name": "ks23_sp",
+   "variants": [
+    {
+     "name": "ks23_sp",
+     "attachments": [],
+     "display": "KS-23",
+     "zone": "t5w_ks23_sp",
+     "sound": "wpn_ks23_fire_npc",
+     "sounds": "t5s_spl_vorkuta",
+     "projectile": false,
+     "left": ""
+    }
+   ],
+   "display": "KS-23",
+   "group": "Campaign",
+   "category": "Shotguns"
+  },
+  {
+   "name": "ks23_hook_sp",
+   "variants": [
+    {
+     "name": "ks23_hook_sp",
+     "attachments": [],
+     "display": "KS-23 Harpoon",
+     "zone": "t5w_ks23_hook_sp",
+     "sound": "wpn_ks23_fire_npc",
+     "sounds": "t5s_spl_vorkuta",
+     "projectile": false,
+     "left": ""
+    }
+   ],
+   "display": "KS-23 Harpoon",
+   "group": "Campaign",
+   "category": "Shotguns"
+  },
+  {
+   "name": "vorkuta_motorcycle_shotgun_sp",
+   "variants": [
+    {
+     "name": "vorkuta_motorcycle_shotgun_sp",
+     "attachments": [],
+     "display": "Model 1887",
+     "zone": "t5w_vorkuta_motorcycle_shotgun_sp",
+     "sound": "",
+     "sounds": "",
+     "projectile": false,
+     "left": ""
+    }
+   ],
+   "display": "Model 1887",
+   "group": "Campaign",
+   "category": "Shotguns"
+  },
+  {
+   "name": "spas_db_sp",
+   "variants": [
+    {
+     "name": "spas_db_sp",
+     "attachments": [],
+     "display": "SPAS-12 Dragon's Breath",
+     "zone": "t5w_spas_db_sp",
+     "sound": "wpn_spas_fire_plr_db",
+     "sounds": "t5s_spl_hue_city",
+     "projectile": false,
+     "left": ""
+    }
+   ],
+   "display": "SPAS-12 Dragon's Breath",
+   "group": "Campaign",
+   "category": "Shotguns"
+  },
+  {
+   "name": "tokarevtt30_sp",
+   "variants": [
+    {
+     "name": "tokarevtt30_sp",
+     "attachments": [],
+     "display": "Tokarev TT-33",
+     "zone": "t5w_tokarevtt30_sp",
+     "sound": "wpn_tt33_fire",
+     "sounds": "t5s_spl_fullahead",
+     "projectile": false,
+     "left": ""
+    }
+   ],
+   "display": "Tokarev TT-33",
+   "group": "Campaign",
+   "category": "Pistols"
+  },
+  {
+   "name": "waltherp38_sp",
+   "variants": [
+    {
+     "name": "waltherp38_sp",
+     "attachments": [],
+     "display": "Walther P38",
+     "zone": "t5w_waltherp38_sp",
+     "sound": "",
+     "sounds": "",
+     "projectile": false,
+     "left": ""
+    }
+   ],
+   "display": "Walther P38",
+   "group": "Campaign",
+   "category": "Pistols"
+  },
+  {
+   "name": "m1911_sp",
+   "variants": [
+    {
+     "name": "m1911_sp",
+     "attachments": [],
+     "display": "M1911",
+     "zone": "t5w_m1911_sp",
+     "sound": "wpn_colt45_fire_npc",
+     "sounds": "t5s_spl_khe_sanh",
+     "projectile": false,
+     "left": ""
+    }
+   ],
+   "display": "M1911",
+   "group": "Campaign",
+   "category": "Pistols"
+  },
+  {
+   "name": "creek_flashlight_pistol_sp",
+   "variants": [
+    {
+     "name": "creek_flashlight_pistol_sp",
+     "attachments": [],
+     "display": "Python Flashlight",
+     "zone": "t5w_creek_flashlight_pistol_sp",
+     "sound": "wpn_357_fire_plr",
+     "sounds": "t5s_spl_creek_1",
+     "projectile": false,
+     "left": ""
+    }
+   ],
+   "display": "Python Flashlight",
+   "group": "Campaign",
+   "category": "Pistols"
+  },
+  {
+   "name": "fullahead_flashlight_pistol_sp",
+   "variants": [
+    {
+     "name": "fullahead_flashlight_pistol_sp",
+     "attachments": [],
+     "display": "Tokarev Flashlight",
+     "zone": "t5w_fullahead_flashlight_pistol_sp",
+     "sound": "wpn_tt33_fire",
+     "sounds": "t5s_spl_fullahead",
+     "projectile": false,
+     "left": ""
+    }
+   ],
+   "display": "Tokarev Flashlight",
+   "group": "Campaign",
+   "category": "Pistols"
+  },
+  {
+   "name": "panzerschreck_sp",
+   "variants": [
+    {
+     "name": "panzerschreck_sp",
+     "attachments": [],
+     "display": "Panzerschreck",
+     "zone": "t5w_panzerschreck_sp",
+     "sound": "wpn_pnzr_fire_npc",
+     "sounds": "t5s_spl_fullahead",
+     "projectile": true,
+     "left": ""
+    }
+   ],
+   "display": "Panzerschreck",
+   "group": "Campaign",
+   "category": "Launchers"
+  },
+  {
+   "name": "crossbow_sp",
+   "variants": [
+    {
+     "name": "crossbow_sp",
+     "attachments": [],
+     "display": "Crossbow",
+     "zone": "t5w_crossbow_sp",
+     "sound": "wpn_crossbow_fire_npc",
+     "sounds": "t5s_spl_flashpoint",
+     "projectile": true,
+     "left": ""
+    }
+   ],
+   "display": "Crossbow",
+   "group": "Campaign",
+   "category": "Launchers"
+  },
+  {
+   "name": "knife_karambit_sp",
+   "variants": [
+    {
+     "name": "knife_karambit_sp",
+     "attachments": [],
+     "display": "Karambit",
+     "zone": "t5w_knife_karambit_sp",
+     "sound": "",
+     "sounds": "",
+     "projectile": false,
+     "left": ""
+    }
+   ],
+   "display": "Karambit",
+   "group": "Campaign",
+   "category": "Melee"
+  },
+  {
+   "name": "knife_creek_sp",
+   "variants": [
+    {
+     "name": "knife_creek_sp",
+     "attachments": [],
+     "display": "SOG Knife",
+     "zone": "t5w_knife_creek_sp",
+     "sound": "",
+     "sounds": "",
+     "projectile": false,
+     "left": ""
+    }
+   ],
+   "display": "SOG Knife",
+   "group": "Campaign",
+   "category": "Melee"
+  },
+  {
+   "name": "vorkuta_knife_sp",
+   "variants": [
+    {
+     "name": "vorkuta_knife_sp",
+     "attachments": [],
+     "display": "Prison Knife",
+     "zone": "t5w_vorkuta_knife_sp",
+     "sound": "",
+     "sounds": "",
+     "projectile": false,
+     "left": ""
+    }
+   ],
+   "display": "Prison Knife",
+   "group": "Campaign",
+   "category": "Melee"
+  },
+  {
+   "name": "ray_gun_zm",
+   "variants": [
+    {
+     "name": "ray_gun_zm",
+     "attachments": [],
+     "display": "Ray Gun",
+     "zone": "t5w_ray_gun_zm",
+     "sound": "wpn_rgun_fire_npc",
+     "sounds": "t5s_zmb_common",
+     "projectile": true,
+     "left": ""
+    },
+    {
+     "name": "ray_gun_upgraded_zm",
+     "attachments": [
+      "pap"
+     ],
+     "display": "Porter's X2 Ray Gun",
+     "zone": "t5w_ray_gun_zm",
+     "sound": "wpn_rgun_fire_npc",
+     "sounds": "t5s_zmb_common",
+     "projectile": true,
+     "left": ""
+    }
+   ],
+   "display": "Ray Gun",
+   "group": "Zombies",
+   "category": "Wonder Weapons"
+  },
+  {
+   "name": "thundergun_zm",
+   "variants": [
+    {
+     "name": "thundergun_zm",
+     "attachments": [],
+     "display": "Thundergun",
+     "zone": "t5w_thundergun_zm",
+     "sound": "wpn_thundergun_fire_npc",
+     "sounds": "t5s_zmb_common",
+     "projectile": true,
+     "left": ""
+    },
+    {
+     "name": "thundergun_upgraded_zm",
+     "attachments": [
+      "pap"
+     ],
+     "display": "Zeus Cannon",
+     "zone": "t5w_thundergun_zm",
+     "sound": "wpn_thundergun_fire_npc",
+     "sounds": "t5s_zmb_common",
+     "projectile": true,
+     "left": ""
+    }
+   ],
+   "display": "Thundergun",
+   "group": "Zombies",
+   "category": "Wonder Weapons"
+  },
+  {
+   "name": "tesla_gun_zm",
+   "variants": [
+    {
+     "name": "tesla_gun_zm",
+     "attachments": [],
+     "display": "Wunderwaffe DG-2",
+     "zone": "t5w_tesla_gun_zm",
+     "sound": "wpn_tesla_fire_npc",
+     "sounds": "t5s_zmb_factory",
+     "projectile": true,
+     "left": ""
+    },
+    {
+     "name": "tesla_gun_upgraded_zm",
+     "attachments": [
+      "pap"
+     ],
+     "display": "Wunderwaffe DG-3 JZ",
+     "zone": "t5w_tesla_gun_zm",
+     "sound": "weap_tesla_fire_ubershot_st",
+     "sounds": "t5s_zmb_factory",
+     "projectile": true,
+     "left": ""
+    }
+   ],
+   "display": "Wunderwaffe DG-2",
+   "group": "Zombies",
+   "category": "Wonder Weapons"
+  },
+  {
+   "name": "freezegun_zm",
+   "variants": [
+    {
+     "name": "freezegun_zm",
+     "attachments": [],
+     "display": "Winter's Howl",
+     "zone": "t5w_freezegun_zm",
+     "sound": "wpn_freezegun_fire_npc",
+     "sounds": "t5s_zmb_common",
+     "projectile": true,
+     "left": ""
+    },
+    {
+     "name": "freezegun_upgraded_zm",
+     "attachments": [
+      "pap"
+     ],
+     "display": "Winter's Fury",
+     "zone": "t5w_freezegun_zm",
+     "sound": "wpn_freezegun_fire_npc",
+     "sounds": "t5s_zmb_common",
+     "projectile": true,
+     "left": ""
+    }
+   ],
+   "display": "Winter's Howl",
+   "group": "Zombies",
+   "category": "Wonder Weapons"
+  },
+  {
+   "name": "shrink_ray_zm",
+   "variants": [
+    {
+     "name": "shrink_ray_zm",
+     "attachments": [],
+     "display": "31-79 JGb215",
+     "zone": "t5w_shrink_ray_zm",
+     "sound": "wpn_shrinkray_fire_npc",
+     "sounds": "t5s_zmb_temple",
+     "projectile": true,
+     "left": ""
+    },
+    {
+     "name": "shrink_ray_upgraded_zm",
+     "attachments": [
+      "pap"
+     ],
+     "display": "The Fractalizer",
+     "zone": "t5w_shrink_ray_zm",
+     "sound": "wpn_shrinkray_fire_upgr_npc",
+     "sounds": "t5s_zmb_temple",
+     "projectile": true,
+     "left": ""
+    }
+   ],
+   "display": "31-79 JGb215",
+   "group": "Zombies",
+   "category": "Wonder Weapons"
+  },
+  {
+   "name": "humangun_zm",
+   "variants": [
+    {
+     "name": "humangun_zm",
+     "attachments": [],
+     "display": "V-R11",
+     "zone": "t5w_humangun_zm",
+     "sound": "wpn_humangun_fire_last_npc",
+     "sounds": "t5s_zmb_coast",
+     "projectile": true,
+     "left": ""
+    },
+    {
+     "name": "humangun_upgraded_zm",
+     "attachments": [
+      "pap"
+     ],
+     "display": "V-R11 Lazarus",
+     "zone": "t5w_humangun_zm",
+     "sound": "wpn_humangun_fire_last_npc",
+     "sounds": "t5s_zmb_coast",
+     "projectile": true,
+     "left": ""
+    }
+   ],
+   "display": "V-R11",
+   "group": "Zombies",
+   "category": "Wonder Weapons"
+  },
+  {
+   "name": "sniper_explosive_zm",
+   "variants": [
+    {
+     "name": "sniper_explosive_zm",
+     "attachments": [],
+     "display": "Scavenger",
+     "zone": "t5w_sniper_explosive_zm",
+     "sound": "wpn_ubersniper_fire_npc",
+     "sounds": "t5s_zmb_coast",
+     "projectile": true,
+     "left": ""
+    },
+    {
+     "name": "sniper_explosive_upgraded_zm",
+     "attachments": [
+      "pap"
+     ],
+     "display": "Hyena Infra-dead",
+     "zone": "t5w_sniper_explosive_zm",
+     "sound": "wpn_ubersniper_fire_plr_pap",
+     "sounds": "t5s_zmb_coast",
+     "projectile": true,
+     "left": ""
+    }
+   ],
+   "display": "Scavenger",
+   "group": "Zombies",
+   "category": "Wonder Weapons"
+  },
+  {
+   "name": "microwavegundw_zm",
+   "variants": [
+    {
+     "name": "microwavegundw_zm",
+     "attachments": [],
+     "display": "Zap Gun Dual Wield",
+     "zone": "t5w_microwavegundw_zm",
+     "sound": "wpn_mgun_dual_fire_npc",
+     "sounds": "t5s_zmb_moon",
+     "projectile": true,
+     "left": "microwavegunlh_zm"
+    },
+    {
+     "name": "microwavegundw_upgraded_zm",
+     "attachments": [
+      "pap"
+     ],
+     "display": "Porter's X2 Zap Gun Dual Wield",
+     "zone": "t5w_microwavegundw_zm",
+     "sound": "wpn_mgun_dual_fire_npc",
+     "sounds": "t5s_zmb_moon",
+     "projectile": true,
+     "left": "microwavegunlh_upgraded_zm"
+    }
+   ],
+   "display": "Zap Gun Dual Wield",
+   "group": "Zombies",
+   "category": "Wonder Weapons"
+  },
+  {
+   "name": "mp40_zm",
+   "variants": [
+    {
+     "name": "mp40_zm",
+     "attachments": [],
+     "display": "MP40",
+     "zone": "t5w_mp40_zm",
+     "sound": "wpn_mp40_fire_npc",
+     "sounds": "t5s_zmb_common",
+     "projectile": false,
+     "left": ""
+    },
+    {
+     "name": "mp40_upgraded_zm",
+     "attachments": [
+      "pap"
+     ],
+     "display": "The Afterburner",
+     "zone": "t5w_mp40_zm",
+     "sound": "wpn_mp40_fire_npc_pap",
+     "sounds": "t5s_zmb_common",
+     "projectile": false,
+     "left": ""
+    }
+   ],
+   "display": "MP40",
+   "group": "Zombies",
+   "category": "World War II"
+  },
+  {
+   "name": "zombie_thompson",
+   "variants": [
+    {
+     "name": "zombie_thompson",
+     "attachments": [],
+     "display": "Thompson",
+     "zone": "t5w_zombie_thompson",
+     "sound": "weap_thompson_fire",
+     "sounds": "t5s_zmb_factory",
+     "projectile": false,
+     "left": ""
+    },
+    {
+     "name": "zombie_thompson_upgraded",
+     "attachments": [
+      "pap"
+     ],
+     "display": "Gibs-o-matic",
+     "zone": "t5w_zombie_thompson",
+     "sound": "weap_thompson_fire_ubershot_m",
+     "sounds": "t5s_zmb_factory",
+     "projectile": false,
+     "left": ""
+    }
+   ],
+   "display": "Thompson",
+   "group": "Zombies",
+   "category": "World War II"
+  },
+  {
+   "name": "zombie_type100_smg",
+   "variants": [
+    {
+     "name": "zombie_type100_smg",
+     "attachments": [],
+     "display": "Type 100",
+     "zone": "t5w_zombie_type100_smg",
+     "sound": "weap_type100_fire",
+     "sounds": "t5s_zmb_factory",
+     "projectile": false,
+     "left": ""
+    },
+    {
+     "name": "zombie_type100_smg_upgraded",
+     "attachments": [
+      "pap"
+     ],
+     "display": "1001 Samurais",
+     "zone": "t5w_zombie_type100_smg",
+     "sound": "weap_type100_fire_ubershot_m",
+     "sounds": "t5s_zmb_factory",
+     "projectile": false,
+     "left": ""
+    }
+   ],
+   "display": "Type 100",
+   "group": "Zombies",
+   "category": "World War II"
+  },
+  {
+   "name": "zombie_stg44",
+   "variants": [
+    {
+     "name": "zombie_stg44",
+     "attachments": [],
+     "display": "STG-44",
+     "zone": "t5w_zombie_stg44",
+     "sound": "weap_mp44_fire",
+     "sounds": "t5s_zmb_factory",
+     "projectile": false,
+     "left": ""
+    },
+    {
+     "name": "zombie_stg44_upgraded",
+     "attachments": [
+      "pap"
+     ],
+     "display": "Spatz-447 +",
+     "zone": "t5w_zombie_stg44",
+     "sound": "weap_mp44_fire_ubershot_m",
+     "sounds": "t5s_zmb_factory",
+     "projectile": false,
+     "left": ""
+    }
+   ],
+   "display": "STG-44",
+   "group": "Zombies",
+   "category": "World War II"
+  },
+  {
+   "name": "zombie_fg42",
+   "variants": [
+    {
+     "name": "zombie_fg42",
+     "attachments": [],
+     "display": "FG42",
+     "zone": "t5w_zombie_fg42",
+     "sound": "weap_fg42_fire",
+     "sounds": "t5s_zmb_factory",
+     "projectile": false,
+     "left": ""
+    },
+    {
+     "name": "zombie_fg42_upgraded",
+     "attachments": [
+      "pap"
+     ],
+     "display": "420 Impeller",
+     "zone": "t5w_zombie_fg42",
+     "sound": "weap_fg42_fire_ubershot_m",
+     "sounds": "t5s_zmb_factory",
+     "projectile": false,
+     "left": ""
+    }
+   ],
+   "display": "FG42",
+   "group": "Zombies",
+   "category": "World War II"
+  },
+  {
+   "name": "zombie_bar",
+   "variants": [
+    {
+     "name": "zombie_bar",
+     "attachments": [],
+     "display": "BAR",
+     "zone": "t5w_zombie_bar",
+     "sound": "weap_bar_fire_plr",
+     "sounds": "t5s_zmb_asylum",
+     "projectile": false,
+     "left": ""
+    }
+   ],
+   "display": "BAR",
+   "group": "Zombies",
+   "category": "World War II"
+  },
+  {
+   "name": "zombie_m1garand",
+   "variants": [
+    {
+     "name": "zombie_m1garand",
+     "attachments": [],
+     "display": "M1 Garand",
+     "zone": "t5w_zombie_m1garand",
+     "sound": "weap_m1garand_fire",
+     "sounds": "t5s_zmb_asylum",
+     "projectile": false,
+     "left": ""
+    }
+   ],
+   "display": "M1 Garand",
+   "group": "Zombies",
+   "category": "World War II"
+  },
+  {
+   "name": "zombie_m1carbine",
+   "variants": [
+    {
+     "name": "zombie_m1carbine",
+     "attachments": [],
+     "display": "M1 Carbine",
+     "zone": "t5w_zombie_m1carbine",
+     "sound": "weap_carbine_fire",
+     "sounds": "t5s_zmb_factory",
+     "projectile": false,
+     "left": ""
+    },
+    {
+     "name": "zombie_m1carbine_upgraded",
+     "attachments": [
+      "pap"
+     ],
+     "display": "Widdershins RC-1",
+     "zone": "t5w_zombie_m1carbine",
+     "sound": "weap_carbine_fire_ubershot_m",
+     "sounds": "t5s_zmb_factory",
+     "projectile": false,
+     "left": ""
+    }
+   ],
+   "display": "M1 Carbine",
+   "group": "Zombies",
+   "category": "World War II"
+  },
+  {
+   "name": "zombie_gewehr43",
+   "variants": [
+    {
+     "name": "zombie_gewehr43",
+     "attachments": [],
+     "display": "Gewehr 43",
+     "zone": "t5w_zombie_gewehr43",
+     "sound": "weap_g43_fire",
+     "sounds": "t5s_zmb_factory",
+     "projectile": false,
+     "left": ""
+    },
+    {
+     "name": "zombie_gewehr43_upgraded",
+     "attachments": [
+      "pap"
+     ],
+     "display": "G115 Compressor",
+     "zone": "t5w_zombie_gewehr43",
+     "sound": "weap_g43_fire_ubershot_m",
+     "sounds": "t5s_zmb_factory",
+     "projectile": false,
+     "left": ""
+    }
+   ],
+   "display": "Gewehr 43",
+   "group": "Zombies",
+   "category": "World War II"
+  },
+  {
+   "name": "zombie_kar98k",
+   "variants": [
+    {
+     "name": "zombie_kar98k",
+     "attachments": [],
+     "display": "Kar98k",
+     "zone": "t5w_zombie_kar98k",
+     "sound": "wpn_kar98k_fire",
+     "sounds": "t5s_zmb_factory",
+     "projectile": false,
+     "left": ""
+    },
+    {
+     "name": "zombie_kar98k_upgraded",
+     "attachments": [
+      "pap"
+     ],
+     "display": "Armageddon",
+     "zone": "t5w_zombie_kar98k",
+     "sound": "wpn_kar98k_fire_ubershot_m",
+     "sounds": "t5s_zmb_factory",
+     "projectile": false,
+     "left": ""
+    }
+   ],
+   "display": "Kar98k",
+   "group": "Zombies",
+   "category": "World War II"
+  },
+  {
+   "name": "kar98k_scoped_zombie",
+   "variants": [
+    {
+     "name": "kar98k_scoped_zombie",
+     "attachments": [],
+     "display": "Scoped Kar98k",
+     "zone": "t5w_kar98k_scoped_zombie",
+     "sound": "wpn_kar98k_fire_snp",
+     "sounds": "t5s_zmb_prototype",
+     "projectile": false,
+     "left": ""
+    }
+   ],
+   "display": "Scoped Kar98k",
+   "group": "Zombies",
+   "category": "World War II"
+  },
+  {
+   "name": "zombie_type99_rifle",
+   "variants": [
+    {
+     "name": "zombie_type99_rifle",
+     "attachments": [],
+     "display": "Arisaka",
+     "zone": "t5w_zombie_type99_rifle",
+     "sound": "weap_arisaka_fire",
+     "sounds": "t5s_zmb_sumpf",
+     "projectile": false,
+     "left": ""
+    }
+   ],
+   "display": "Arisaka",
+   "group": "Zombies",
+   "category": "World War II"
+  },
+  {
+   "name": "zombie_shotgun",
+   "variants": [
+    {
+     "name": "zombie_shotgun",
+     "attachments": [],
+     "display": "M1897 Trench Gun",
+     "zone": "t5w_zombie_shotgun",
+     "sound": "weap_shotgun_fire_pump",
+     "sounds": "t5s_zmb_factory",
+     "projectile": false,
+     "left": ""
+    },
+    {
+     "name": "zombie_shotgun_upgraded",
+     "attachments": [
+      "pap"
+     ],
+     "display": "Gut Shot",
+     "zone": "t5w_zombie_shotgun",
+     "sound": "weap_shotgun_fire_ubershot_m",
+     "sounds": "t5s_zmb_factory",
+     "projectile": false,
+     "left": ""
+    }
+   ],
+   "display": "M1897 Trench Gun",
+   "group": "Zombies",
+   "category": "World War II"
+  },
+  {
+   "name": "zombie_doublebarrel",
+   "variants": [
+    {
+     "name": "zombie_doublebarrel",
+     "attachments": [],
+     "display": "Double-Barreled Shotgun",
+     "zone": "t5w_zombie_doublebarrel",
+     "sound": "weap_shotgun_fire_pump",
+     "sounds": "t5s_zmb_factory",
+     "projectile": false,
+     "left": ""
+    },
+    {
+     "name": "zombie_doublebarrel_upgraded",
+     "attachments": [
+      "pap"
+     ],
+     "display": "24 Bore long range",
+     "zone": "t5w_zombie_doublebarrel",
+     "sound": "weap_shotgun_fire_ubershot_m",
+     "sounds": "t5s_zmb_factory",
+     "projectile": false,
+     "left": ""
+    }
+   ],
+   "display": "Double-Barreled Shotgun",
+   "group": "Zombies",
+   "category": "World War II"
+  },
+  {
+   "name": "zombie_doublebarrel_sawed",
+   "variants": [
+    {
+     "name": "zombie_doublebarrel_sawed",
+     "attachments": [],
+     "display": "Sawed-Off Shotgun",
+     "zone": "t5w_zombie_doublebarrel_sawed",
+     "sound": "weap_shotgun_fire_pump",
+     "sounds": "t5s_zmb_asylum",
+     "projectile": false,
+     "left": ""
+    }
+   ],
+   "display": "Sawed-Off Shotgun",
+   "group": "Zombies",
+   "category": "World War II"
+  },
+  {
+   "name": "mp5k_mp",
+   "variants": [
+    {
+     "name": "mp5k_upgraded_zm",
+     "attachments": [
+      "pap"
+     ],
+     "display": "MP115 Kollider",
+     "zone": "t5w_mp5k_upgraded_zm",
+     "sound": "wpn_mp5_fire_npc_pap",
+     "sounds": "t5s_zmb_common",
+     "projectile": false,
+     "left": ""
+    }
+   ]
+  },
+  {
+   "name": "ak74u_mp",
+   "variants": [
+    {
+     "name": "ak74u_upgraded_zm",
+     "attachments": [
+      "pap"
+     ],
+     "display": "AK74fu2",
+     "zone": "t5w_ak74u_upgraded_zm",
+     "sound": "wpn_ak47u_fire_npc_pap",
+     "sounds": "t5s_zmb_common",
+     "projectile": false,
+     "left": ""
+    }
+   ]
+  },
+  {
+   "name": "pm63_mp",
+   "variants": [
+    {
+     "name": "pm63_upgraded_zm",
+     "attachments": [
+      "pap"
+     ],
+     "display": "Tokyo & Rose",
+     "zone": "t5w_pm63_upgraded_zm",
+     "sound": "wpn_pm63_fire_npc_pap",
+     "sounds": "t5s_zmb_common",
+     "projectile": false,
+     "left": "pm63lh_upgraded_zm"
+    }
+   ]
+  },
+  {
+   "name": "mpl_mp",
+   "variants": [
+    {
+     "name": "mpl_upgraded_zm",
+     "attachments": [
+      "pap"
+     ],
+     "display": "MPL-LF",
+     "zone": "t5w_mpl_upgraded_zm",
+     "sound": "wpn_mpl_fire_npc_pap",
+     "sounds": "t5s_zmb_common",
+     "projectile": false,
+     "left": ""
+    }
+   ]
+  },
+  {
+   "name": "spectre_mp",
+   "variants": [
+    {
+     "name": "spectre_upgraded_zm",
+     "attachments": [
+      "pap"
+     ],
+     "display": "Phantom",
+     "zone": "t5w_spectre_upgraded_zm",
+     "sound": "wpn_spectre_fire_npc_pap",
+     "sounds": "t5s_zmb_common",
+     "projectile": false,
+     "left": ""
+    }
+   ]
+  },
+  {
+   "name": "m16_mp",
+   "variants": [
+    {
+     "name": "m16_gl_upgraded_zm",
+     "attachments": [
+      "pap"
+     ],
+     "display": "Skullcrusher",
+     "zone": "t5w_m16_gl_upgraded_zm",
+     "sound": "wpn_m16_fire_npc_pap",
+     "sounds": "t5s_zmb_common",
+     "projectile": false,
+     "left": ""
+    }
+   ]
+  },
+  {
+   "name": "m14_mp",
+   "variants": [
+    {
+     "name": "m14_upgraded_zm",
+     "attachments": [
+      "pap"
+     ],
+     "display": "Mnesia",
+     "zone": "t5w_m14_upgraded_zm",
+     "sound": "wpn_m14_fire_npc_pap",
+     "sounds": "t5s_zmb_common",
+     "projectile": false,
+     "left": ""
+    }
+   ]
+  },
+  {
+   "name": "famas_mp",
+   "variants": [
+    {
+     "name": "famas_upgraded_zm",
+     "attachments": [
+      "pap"
+     ],
+     "display": "G16-GL35",
+     "zone": "t5w_famas_upgraded_zm",
+     "sound": "wpn_famas_fire_plr_pap",
+     "sounds": "t5s_zmb_common",
+     "projectile": false,
+     "left": ""
+    }
+   ]
+  },
+  {
+   "name": "galil_mp",
+   "variants": [
+    {
+     "name": "galil_upgraded_zm",
+     "attachments": [
+      "pap"
+     ],
+     "display": "Lamentation",
+     "zone": "t5w_galil_upgraded_zm",
+     "sound": "wpn_galil_fire_npc_pap",
+     "sounds": "t5s_zmb_common",
+     "projectile": false,
+     "left": ""
+    }
+   ]
+  },
+  {
+   "name": "aug_mp",
+   "variants": [
+    {
+     "name": "aug_acog_mk_upgraded_zm",
+     "attachments": [
+      "pap"
+     ],
+     "display": "AUG-50M3",
+     "zone": "t5w_aug_acog_mk_upgraded_zm",
+     "sound": "wpn_aug_fire_npc_pap",
+     "sounds": "t5s_zmb_common",
+     "projectile": false,
+     "left": ""
+    }
+   ]
+  },
+  {
+   "name": "fnfal_mp",
+   "variants": [
+    {
+     "name": "fnfal_upgraded_zm",
+     "attachments": [
+      "pap"
+     ],
+     "display": "EPC WN",
+     "zone": "t5w_fnfal_upgraded_zm",
+     "sound": "wpn_fnfal_fire_plr_pap",
+     "sounds": "t5s_zmb_common",
+     "projectile": false,
+     "left": ""
+    }
+   ]
+  },
+  {
+   "name": "commando_mp",
+   "variants": [
+    {
+     "name": "commando_upgraded_zm",
+     "attachments": [
+      "pap"
+     ],
+     "display": "Predator",
+     "zone": "t5w_commando_upgraded_zm",
+     "sound": "wpn_commando_fire_plr_pap",
+     "sounds": "t5s_zmb_common",
+     "projectile": false,
+     "left": ""
+    }
+   ]
+  },
+  {
+   "name": "g11_mp",
+   "variants": [
+    {
+     "name": "g11_lps_upgraded_zm",
+     "attachments": [
+      "pap"
+     ],
+     "display": "G115 Generator",
+     "zone": "t5w_g11_lps_upgraded_zm",
+     "sound": "wpn_g11_fire_npc_pap",
+     "sounds": "t5s_zmb_common",
+     "projectile": false,
+     "left": ""
+    }
+   ]
+  },
+  {
+   "name": "rottweil72_mp",
+   "variants": [
+    {
+     "name": "rottweil72_upgraded_zm",
+     "attachments": [
+      "pap"
+     ],
+     "display": "Hades",
+     "zone": "t5w_rottweil72_upgraded_zm",
+     "sound": "wpn_rottweil72_fire_npc_pap",
+     "sounds": "t5s_zmb_common",
+     "projectile": false,
+     "left": ""
+    }
+   ]
+  },
+  {
+   "name": "ithaca_mp",
+   "variants": [
+    {
+     "name": "ithaca_upgraded_zm",
+     "attachments": [
+      "pap"
+     ],
+     "display": "Raid",
+     "zone": "t5w_ithaca_upgraded_zm",
+     "sound": "wpn_ithaca_fire_npc_pap",
+     "sounds": "t5s_zmb_common",
+     "projectile": false,
+     "left": ""
+    }
+   ]
+  },
+  {
+   "name": "spas_mp",
+   "variants": [
+    {
+     "name": "spas_upgraded_zm",
+     "attachments": [
+      "pap"
+     ],
+     "display": "SPAZ-24",
+     "zone": "t5w_spas_upgraded_zm",
+     "sound": "wpn_spas_fire_npc_pap",
+     "sounds": "t5s_zmb_common",
+     "projectile": false,
+     "left": ""
+    }
+   ]
+  },
+  {
+   "name": "hs10_mp",
+   "variants": [
+    {
+     "name": "hs10_upgraded_zm",
+     "attachments": [
+      "pap"
+     ],
+     "display": "Typhoid & Mary",
+     "zone": "t5w_hs10_upgraded_zm",
+     "sound": "wpn_hs10_fire_plr_pap_rh",
+     "sounds": "t5s_zmb_common",
+     "projectile": false,
+     "left": "hs10lh_upgraded_zm"
+    }
+   ]
+  },
+  {
+   "name": "hk21_mp",
+   "variants": [
+    {
+     "name": "hk21_upgraded_zm",
+     "attachments": [
+      "pap"
+     ],
+     "display": "H115 Oscillator",
+     "zone": "t5w_hk21_upgraded_zm",
+     "sound": "wpn_hk21_fire_plr_pap",
+     "sounds": "t5s_zmb_common",
+     "projectile": false,
+     "left": ""
+    }
+   ]
+  },
+  {
+   "name": "rpk_mp",
+   "variants": [
+    {
+     "name": "rpk_upgraded_zm",
+     "attachments": [
+      "pap"
+     ],
+     "display": "R115 Resonator",
+     "zone": "t5w_rpk_upgraded_zm",
+     "sound": "wpn_rpk_fire_npc_pap",
+     "sounds": "t5s_zmb_common",
+     "projectile": false,
+     "left": ""
+    }
+   ]
+  },
+  {
+   "name": "dragunov_mp",
+   "variants": [
+    {
+     "name": "dragunov_upgraded_zm",
+     "attachments": [
+      "pap"
+     ],
+     "display": "D115 Disassembler",
+     "zone": "t5w_dragunov_upgraded_zm",
+     "sound": "wpn_dragunov_fire_plr_pap",
+     "sounds": "t5s_zmb_common",
+     "projectile": false,
+     "left": ""
+    }
+   ]
+  },
+  {
+   "name": "l96a1_mp",
+   "variants": [
+    {
+     "name": "l96a1_upgraded_zm",
+     "attachments": [
+      "pap"
+     ],
+     "display": "L115 Isolator",
+     "zone": "t5w_l96a1_upgraded_zm",
+     "sound": "wpn_l96a1_fire_npc",
+     "sounds": "",
+     "projectile": false,
+     "left": ""
+    }
+   ]
+  },
+  {
+   "name": "m1911_mp",
+   "variants": [
+    {
+     "name": "m1911_upgraded_zm",
+     "attachments": [
+      "pap"
+     ],
+     "display": "Mustang & Sally",
+     "zone": "t5w_m1911_upgraded_zm",
+     "sound": "wpn_colt45_fire_npc_pap",
+     "sounds": "t5s_zmb_common",
+     "projectile": true,
+     "left": "m1911lh_upgraded_zm"
+    }
+   ]
+  },
+  {
+   "name": "python_mp",
+   "variants": [
+    {
+     "name": "python_upgraded_zm",
+     "attachments": [
+      "pap"
+     ],
+     "display": "Cobra",
+     "zone": "t5w_python_upgraded_zm",
+     "sound": "wpn_python_fire_plr_pap",
+     "sounds": "t5s_zmb_common",
+     "projectile": false,
+     "left": ""
+    }
+   ]
+  },
+  {
+   "name": "cz75_mp",
+   "variants": [
+    {
+     "name": "cz75_upgraded_zm",
+     "attachments": [
+      "pap"
+     ],
+     "display": "Calamity",
+     "zone": "t5w_cz75_upgraded_zm",
+     "sound": "wpn_cz75_fire_npc_pap",
+     "sounds": "t5s_zmb_common",
+     "projectile": false,
+     "left": ""
+    },
+    {
+     "name": "cz75dw_upgraded_zm",
+     "attachments": [
+      "dw",
+      "pap"
+     ],
+     "display": "Calamity & Jane",
+     "zone": "t5w_cz75_upgraded_zm",
+     "sound": "wpn_cz75_fire_npc_pap",
+     "sounds": "t5s_zmb_common",
+     "projectile": false,
+     "left": "cz75lh_upgraded_zm"
+    }
+   ]
+  },
+  {
+   "name": "m72_law_mp",
+   "variants": [
+    {
+     "name": "m72_law_upgraded_zm",
+     "attachments": [
+      "pap"
+     ],
+     "display": "M72 Anarchy",
+     "zone": "t5w_m72_law_upgraded_zm",
+     "sound": "wpn_rpg_fire_npc",
+     "sounds": "t5s_zmb_common",
+     "projectile": true,
+     "left": ""
+    }
+   ]
+  },
+  {
+   "name": "china_lake_mp",
+   "variants": [
+    {
+     "name": "china_lake_upgraded_zm",
+     "attachments": [
+      "pap"
+     ],
+     "display": "China Beach",
+     "zone": "t5w_china_lake_upgraded_zm",
+     "sound": "wpn_china_lake_fire_npc",
+     "sounds": "t5s_zmb_common",
+     "projectile": true,
+     "left": ""
+    }
+   ]
+  },
+  {
+   "name": "crossbow_explosive_mp",
+   "variants": [
+    {
+     "name": "crossbow_explosive_upgraded_zm",
+     "attachments": [
+      "pap"
+     ],
+     "display": "Awful Lawton",
+     "zone": "t5w_crossbow_explosive_upgraded_zm",
+     "sound": "wpn_crossbow_fire_npc_pap",
+     "sounds": "t5s_zmb_common",
+     "projectile": true,
+     "left": ""
+    }
+   ]
+  },
+  {
+   "name": "knife_ballistic_mp",
+   "variants": [
+    {
+     "name": "knife_ballistic_upgraded_zm",
+     "attachments": [
+      "pap"
+     ],
+     "display": "The Krauss Refibrillator",
+     "zone": "t5w_knife_ballistic_upgraded_zm",
+     "sound": "wpn_bal_knife_fire_npc_pap",
+     "sounds": "t5s_zmb_common",
+     "projectile": true,
+     "left": ""
+    }
+   ]
+  }
+ ],
+ "zones": [
+  {
+   "zone": "t5w_ppsh_sp",
+   "sources": [
+    "fullahead"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "ppsh_sp"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_mp40_sp",
+   "sources": [
+    "fullahead"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "mp40_sp"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_sten_sp",
+   "sources": [
+    "fullahead"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "sten_sp"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_stg44_sp",
+   "sources": [
+    "fullahead"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "stg44_sp"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_mosin_sp",
+   "sources": [
+    "fullahead"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "mosin_sp"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_mosin_scope_sp",
+   "sources": [
+    "fullahead"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "mosin_scope_sp"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_aug_arctic_acog_sp",
+   "sources": [
+    "wmd",
+    "wmd_sr71"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "aug_arctic_acog_sp"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_ks23_sp",
+   "sources": [
+    "vorkuta",
+    "cuba",
+    "flashpoint",
+    "rebirth",
+    "river",
+    "wmd",
+    "wmd_sr71"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "ks23_sp"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_ks23_hook_sp",
+   "sources": [
+    "vorkuta"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "ks23_hook_sp"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_vorkuta_motorcycle_shotgun_sp",
+   "sources": [
+    "vorkuta"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "vorkuta_motorcycle_shotgun_sp"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_spas_db_sp",
+   "sources": [
+    "hue_city"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "spas_db_sp"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_tokarevtt30_sp",
+   "sources": [
+    "fullahead"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "tokarevtt30_sp"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_waltherp38_sp",
+   "sources": [
+    "fullahead"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "waltherp38_sp"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_m1911_sp",
+   "sources": [
+    "pentagon",
+    "khe_sanh",
+    "hue_city",
+    "kowloon",
+    "creek_1",
+    "river",
+    "wmd_sr71",
+    "wmd",
+    "int_escape",
+    "zombie_pentagon"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "m1911_sp"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_creek_flashlight_pistol_sp",
+   "sources": [
+    "creek_1"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "creek_flashlight_pistol_sp"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_fullahead_flashlight_pistol_sp",
+   "sources": [
+    "fullahead"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "fullahead_flashlight_pistol_sp"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_panzerschreck_sp",
+   "sources": [
+    "fullahead"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "panzerschreck_sp"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_crossbow_sp",
+   "sources": [
+    "flashpoint",
+    "wmd",
+    "wmd_sr71"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "crossbow_sp"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_knife_karambit_sp",
+   "sources": [
+    "flashpoint"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "knife_karambit_sp"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_knife_creek_sp",
+   "sources": [
+    "creek_1"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "knife_creek_sp"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_vorkuta_knife_sp",
+   "sources": [
+    "vorkuta"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "vorkuta_knife_sp"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_ray_gun_zm",
+   "sources": [
+    "zombie_theater",
+    "zombie_pentagon",
+    "zombie_cosmodrome",
+    "zombie_coast",
+    "zombie_temple",
+    "zombie_moon",
+    "zombie_cod5_prototype",
+    "zombie_cod5_asylum",
+    "zombie_cod5_sumpf",
+    "zombie_cod5_factory"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "ray_gun_zm"
+    ],
+    [
+     "weapon",
+     "ray_gun_upgraded_zm"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_thundergun_zm",
+   "sources": [
+    "zombie_theater",
+    "zombie_cosmodrome",
+    "zombie_cod5_prototype",
+    "kowloon"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "thundergun_zm"
+    ],
+    [
+     "weapon",
+     "thundergun_upgraded_zm"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_tesla_gun_zm",
+   "sources": [
+    "zombie_cod5_factory",
+    "zombie_cod5_sumpf",
+    "zombie_coast"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "tesla_gun_zm"
+    ],
+    [
+     "weapon",
+     "tesla_gun_upgraded_zm"
+    ]
+   ],
+   "rezurrection": true
+  },
+  {
+   "zone": "t5w_freezegun_zm",
+   "sources": [
+    "zombie_pentagon",
+    "zombie_cod5_asylum"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "freezegun_zm"
+    ],
+    [
+     "weapon",
+     "freezegun_upgraded_zm"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_shrink_ray_zm",
+   "sources": [
+    "zombie_temple"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "shrink_ray_zm"
+    ],
+    [
+     "weapon",
+     "shrink_ray_upgraded_zm"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_humangun_zm",
+   "sources": [
+    "zombie_coast"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "humangun_zm"
+    ],
+    [
+     "weapon",
+     "humangun_upgraded_zm"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_sniper_explosive_zm",
+   "sources": [
+    "zombie_coast"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "sniper_explosive_zm"
+    ],
+    [
+     "weapon",
+     "sniper_explosive_upgraded_zm"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_microwavegundw_zm",
+   "sources": [
+    "zombie_moon"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "microwavegundw_zm"
+    ],
+    [
+     "weapon",
+     "microwavegunlh_zm"
+    ],
+    [
+     "weapon",
+     "microwavegun_zm"
+    ],
+    [
+     "weapon",
+     "microwavegundw_upgraded_zm"
+    ],
+    [
+     "weapon",
+     "microwavegunlh_upgraded_zm"
+    ],
+    [
+     "weapon",
+     "microwavegun_upgraded_zm"
+    ]
+   ],
+   "rezurrection": true
+  },
+  {
+   "zone": "t5w_mp40_zm",
+   "sources": [
+    "zombie_theater",
+    "zombie_pentagon",
+    "zombie_cosmodrome",
+    "zombie_coast",
+    "zombie_temple",
+    "zombie_moon",
+    "zombie_cod5_prototype",
+    "zombie_cod5_asylum",
+    "zombie_cod5_sumpf",
+    "zombie_cod5_factory"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "mp40_zm"
+    ],
+    [
+     "weapon",
+     "mp40_upgraded_zm"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_zombie_thompson",
+   "sources": [
+    "zombie_cod5_factory"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "zombie_thompson"
+    ],
+    [
+     "weapon",
+     "zombie_thompson_upgraded"
+    ]
+   ],
+   "rezurrection": true
+  },
+  {
+   "zone": "t5w_zombie_type100_smg",
+   "sources": [
+    "zombie_cod5_factory"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "zombie_type100_smg"
+    ],
+    [
+     "weapon",
+     "zombie_type100_smg_upgraded"
+    ]
+   ],
+   "rezurrection": true
+  },
+  {
+   "zone": "t5w_zombie_stg44",
+   "sources": [
+    "zombie_cod5_factory"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "zombie_stg44"
+    ],
+    [
+     "weapon",
+     "zombie_stg44_upgraded"
+    ]
+   ],
+   "rezurrection": true
+  },
+  {
+   "zone": "t5w_zombie_fg42",
+   "sources": [
+    "zombie_cod5_factory"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "zombie_fg42"
+    ],
+    [
+     "weapon",
+     "zombie_fg42_upgraded"
+    ]
+   ],
+   "rezurrection": true
+  },
+  {
+   "zone": "t5w_zombie_bar",
+   "sources": [
+    "zombie_cod5_asylum",
+    "zombie_cod5_prototype",
+    "zombie_cod5_sumpf"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "zombie_bar"
+    ]
+   ],
+   "rezurrection": true
+  },
+  {
+   "zone": "t5w_zombie_m1garand",
+   "sources": [
+    "zombie_cod5_asylum",
+    "zombie_cod5_sumpf"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "zombie_m1garand"
+    ]
+   ],
+   "rezurrection": true
+  },
+  {
+   "zone": "t5w_zombie_m1carbine",
+   "sources": [
+    "zombie_cod5_factory"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "zombie_m1carbine"
+    ],
+    [
+     "weapon",
+     "zombie_m1carbine_upgraded"
+    ]
+   ],
+   "rezurrection": true
+  },
+  {
+   "zone": "t5w_zombie_gewehr43",
+   "sources": [
+    "zombie_cod5_factory"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "zombie_gewehr43"
+    ],
+    [
+     "weapon",
+     "zombie_gewehr43_upgraded"
+    ]
+   ],
+   "rezurrection": true
+  },
+  {
+   "zone": "t5w_zombie_kar98k",
+   "sources": [
+    "zombie_cod5_factory"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "zombie_kar98k"
+    ],
+    [
+     "weapon",
+     "zombie_kar98k_upgraded"
+    ]
+   ],
+   "rezurrection": true
+  },
+  {
+   "zone": "t5w_kar98k_scoped_zombie",
+   "sources": [
+    "zombie_cod5_prototype"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "kar98k_scoped_zombie"
+    ]
+   ],
+   "rezurrection": true
+  },
+  {
+   "zone": "t5w_zombie_type99_rifle",
+   "sources": [
+    "zombie_cod5_sumpf"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "zombie_type99_rifle"
+    ]
+   ],
+   "rezurrection": true
+  },
+  {
+   "zone": "t5w_zombie_shotgun",
+   "sources": [
+    "zombie_cod5_factory"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "zombie_shotgun"
+    ],
+    [
+     "weapon",
+     "zombie_shotgun_upgraded"
+    ]
+   ],
+   "rezurrection": true
+  },
+  {
+   "zone": "t5w_zombie_doublebarrel",
+   "sources": [
+    "zombie_cod5_factory"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "zombie_doublebarrel"
+    ],
+    [
+     "weapon",
+     "zombie_doublebarrel_upgraded"
+    ]
+   ],
+   "rezurrection": true
+  },
+  {
+   "zone": "t5w_zombie_doublebarrel_sawed",
+   "sources": [
+    "zombie_cod5_asylum",
+    "zombie_cod5_prototype"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "zombie_doublebarrel_sawed"
+    ]
+   ],
+   "rezurrection": true
+  },
+  {
+   "zone": "t5w_mp5k_upgraded_zm",
+   "sources": [
+    "zombie_theater",
+    "zombie_pentagon",
+    "zombie_cosmodrome",
+    "zombie_coast",
+    "zombie_temple",
+    "zombie_moon",
+    "zombie_cod5_prototype",
+    "zombie_cod5_asylum",
+    "zombie_cod5_sumpf",
+    "zombie_cod5_factory"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "mp5k_upgraded_zm"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_ak74u_upgraded_zm",
+   "sources": [
+    "zombie_theater",
+    "zombie_pentagon",
+    "zombie_cosmodrome",
+    "zombie_coast",
+    "zombie_temple",
+    "zombie_moon",
+    "zombie_cod5_prototype",
+    "zombie_cod5_asylum",
+    "zombie_cod5_sumpf",
+    "zombie_cod5_factory"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "ak74u_upgraded_zm"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_pm63_upgraded_zm",
+   "sources": [
+    "zombie_theater",
+    "zombie_pentagon",
+    "zombie_cosmodrome",
+    "zombie_coast",
+    "zombie_temple",
+    "zombie_moon",
+    "zombie_cod5_prototype",
+    "zombie_cod5_asylum",
+    "zombie_cod5_sumpf",
+    "zombie_cod5_factory"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "pm63_upgraded_zm"
+    ],
+    [
+     "weapon",
+     "pm63lh_upgraded_zm"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_mpl_upgraded_zm",
+   "sources": [
+    "zombie_theater",
+    "zombie_pentagon",
+    "zombie_cosmodrome",
+    "zombie_coast",
+    "zombie_temple",
+    "zombie_moon",
+    "zombie_cod5_prototype",
+    "zombie_cod5_asylum",
+    "zombie_cod5_sumpf",
+    "zombie_cod5_factory"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "mpl_upgraded_zm"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_spectre_upgraded_zm",
+   "sources": [
+    "zombie_theater",
+    "zombie_pentagon",
+    "zombie_cosmodrome",
+    "zombie_coast",
+    "zombie_temple",
+    "zombie_moon",
+    "zombie_cod5_prototype",
+    "zombie_cod5_asylum",
+    "zombie_cod5_sumpf",
+    "zombie_cod5_factory"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "spectre_upgraded_zm"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_m16_gl_upgraded_zm",
+   "sources": [
+    "zombie_theater",
+    "zombie_pentagon",
+    "zombie_cosmodrome",
+    "zombie_coast",
+    "zombie_temple",
+    "zombie_moon",
+    "zombie_cod5_prototype",
+    "zombie_cod5_asylum",
+    "zombie_cod5_sumpf",
+    "zombie_cod5_factory"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "m16_gl_upgraded_zm"
+    ],
+    [
+     "weapon",
+     "gl_m16_upgraded_zm"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_m14_upgraded_zm",
+   "sources": [
+    "zombie_theater",
+    "zombie_pentagon",
+    "zombie_cosmodrome",
+    "zombie_coast",
+    "zombie_temple",
+    "zombie_moon",
+    "zombie_cod5_prototype",
+    "zombie_cod5_asylum",
+    "zombie_cod5_sumpf",
+    "zombie_cod5_factory"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "m14_upgraded_zm"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_famas_upgraded_zm",
+   "sources": [
+    "zombie_theater",
+    "zombie_pentagon",
+    "zombie_cosmodrome",
+    "zombie_coast",
+    "zombie_temple",
+    "zombie_moon",
+    "zombie_cod5_prototype",
+    "zombie_cod5_asylum",
+    "zombie_cod5_sumpf",
+    "zombie_cod5_factory"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "famas_upgraded_zm"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_galil_upgraded_zm",
+   "sources": [
+    "zombie_theater",
+    "zombie_pentagon",
+    "zombie_cosmodrome",
+    "zombie_coast",
+    "zombie_temple",
+    "zombie_moon",
+    "zombie_cod5_prototype",
+    "zombie_cod5_asylum",
+    "zombie_cod5_sumpf",
+    "zombie_cod5_factory"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "galil_upgraded_zm"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_aug_acog_mk_upgraded_zm",
+   "sources": [
+    "zombie_theater",
+    "zombie_pentagon",
+    "zombie_cosmodrome",
+    "zombie_coast",
+    "zombie_temple",
+    "zombie_moon",
+    "zombie_cod5_prototype",
+    "zombie_cod5_asylum",
+    "zombie_cod5_sumpf",
+    "zombie_cod5_factory"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "aug_acog_mk_upgraded_zm"
+    ],
+    [
+     "weapon",
+     "mk_aug_upgraded_zm"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_fnfal_upgraded_zm",
+   "sources": [
+    "zombie_theater",
+    "zombie_pentagon",
+    "zombie_cosmodrome",
+    "zombie_coast",
+    "zombie_temple",
+    "zombie_moon",
+    "zombie_cod5_prototype",
+    "zombie_cod5_asylum",
+    "zombie_cod5_sumpf",
+    "zombie_cod5_factory"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "fnfal_upgraded_zm"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_commando_upgraded_zm",
+   "sources": [
+    "zombie_theater",
+    "zombie_pentagon",
+    "zombie_cosmodrome",
+    "zombie_coast",
+    "zombie_temple",
+    "zombie_moon",
+    "zombie_cod5_prototype",
+    "zombie_cod5_asylum",
+    "zombie_cod5_sumpf",
+    "zombie_cod5_factory"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "commando_upgraded_zm"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_g11_lps_upgraded_zm",
+   "sources": [
+    "zombie_theater",
+    "zombie_pentagon",
+    "zombie_cosmodrome",
+    "zombie_coast",
+    "zombie_temple",
+    "zombie_moon",
+    "zombie_cod5_prototype",
+    "zombie_cod5_asylum",
+    "zombie_cod5_sumpf",
+    "zombie_cod5_factory"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "g11_lps_upgraded_zm"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_rottweil72_upgraded_zm",
+   "sources": [
+    "zombie_theater",
+    "zombie_pentagon",
+    "zombie_cosmodrome",
+    "zombie_coast",
+    "zombie_temple",
+    "zombie_moon",
+    "zombie_cod5_prototype",
+    "zombie_cod5_asylum",
+    "zombie_cod5_sumpf",
+    "zombie_cod5_factory"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "rottweil72_upgraded_zm"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_ithaca_upgraded_zm",
+   "sources": [
+    "zombie_theater",
+    "zombie_pentagon",
+    "zombie_cosmodrome",
+    "zombie_coast",
+    "zombie_temple",
+    "zombie_moon",
+    "zombie_cod5_prototype",
+    "zombie_cod5_asylum",
+    "zombie_cod5_sumpf",
+    "zombie_cod5_factory"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "ithaca_upgraded_zm"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_spas_upgraded_zm",
+   "sources": [
+    "zombie_theater",
+    "zombie_pentagon",
+    "zombie_cosmodrome",
+    "zombie_coast",
+    "zombie_temple",
+    "zombie_moon",
+    "zombie_cod5_prototype",
+    "zombie_cod5_asylum",
+    "zombie_cod5_sumpf",
+    "zombie_cod5_factory"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "spas_upgraded_zm"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_hs10_upgraded_zm",
+   "sources": [
+    "zombie_theater",
+    "zombie_pentagon",
+    "zombie_cosmodrome",
+    "zombie_coast",
+    "zombie_temple",
+    "zombie_moon",
+    "zombie_cod5_prototype",
+    "zombie_cod5_asylum",
+    "zombie_cod5_sumpf",
+    "zombie_cod5_factory"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "hs10_upgraded_zm"
+    ],
+    [
+     "weapon",
+     "hs10lh_upgraded_zm"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_hk21_upgraded_zm",
+   "sources": [
+    "zombie_theater",
+    "zombie_pentagon",
+    "zombie_cosmodrome",
+    "zombie_coast",
+    "zombie_temple",
+    "zombie_moon",
+    "zombie_cod5_prototype",
+    "zombie_cod5_asylum",
+    "zombie_cod5_sumpf",
+    "zombie_cod5_factory"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "hk21_upgraded_zm"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_rpk_upgraded_zm",
+   "sources": [
+    "zombie_theater",
+    "zombie_pentagon",
+    "zombie_cosmodrome",
+    "zombie_coast",
+    "zombie_temple",
+    "zombie_moon",
+    "zombie_cod5_prototype",
+    "zombie_cod5_asylum",
+    "zombie_cod5_sumpf",
+    "zombie_cod5_factory"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "rpk_upgraded_zm"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_dragunov_upgraded_zm",
+   "sources": [
+    "zombie_theater",
+    "zombie_pentagon",
+    "zombie_cosmodrome",
+    "zombie_coast",
+    "zombie_temple",
+    "zombie_moon",
+    "zombie_cod5_prototype",
+    "zombie_cod5_asylum",
+    "zombie_cod5_sumpf",
+    "zombie_cod5_factory"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "dragunov_upgraded_zm"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_l96a1_upgraded_zm",
+   "sources": [
+    "zombie_theater",
+    "zombie_pentagon",
+    "zombie_cosmodrome",
+    "zombie_coast",
+    "zombie_temple",
+    "zombie_moon",
+    "zombie_cod5_prototype",
+    "zombie_cod5_asylum",
+    "zombie_cod5_sumpf",
+    "zombie_cod5_factory"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "l96a1_upgraded_zm"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_m1911_upgraded_zm",
+   "sources": [
+    "zombie_theater",
+    "zombie_pentagon",
+    "zombie_cosmodrome",
+    "zombie_coast",
+    "zombie_temple",
+    "zombie_moon",
+    "zombie_cod5_prototype",
+    "zombie_cod5_asylum",
+    "zombie_cod5_sumpf",
+    "zombie_cod5_factory"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "m1911_upgraded_zm"
+    ],
+    [
+     "weapon",
+     "m1911lh_upgraded_zm"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_python_upgraded_zm",
+   "sources": [
+    "zombie_theater",
+    "zombie_pentagon",
+    "zombie_cosmodrome",
+    "zombie_coast",
+    "zombie_temple",
+    "zombie_moon",
+    "zombie_cod5_prototype",
+    "zombie_cod5_asylum",
+    "zombie_cod5_sumpf",
+    "zombie_cod5_factory"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "python_upgraded_zm"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_cz75_upgraded_zm",
+   "sources": [
+    "zombie_theater",
+    "zombie_pentagon",
+    "zombie_cosmodrome",
+    "zombie_coast",
+    "zombie_temple",
+    "zombie_moon",
+    "zombie_cod5_prototype",
+    "zombie_cod5_asylum",
+    "zombie_cod5_sumpf",
+    "zombie_cod5_factory"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "cz75_upgraded_zm"
+    ],
+    [
+     "weapon",
+     "cz75dw_upgraded_zm"
+    ],
+    [
+     "weapon",
+     "cz75lh_upgraded_zm"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_m72_law_upgraded_zm",
+   "sources": [
+    "zombie_theater",
+    "zombie_pentagon",
+    "zombie_cosmodrome",
+    "zombie_coast",
+    "zombie_temple",
+    "zombie_moon",
+    "zombie_cod5_prototype",
+    "zombie_cod5_asylum",
+    "zombie_cod5_sumpf",
+    "zombie_cod5_factory"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "m72_law_upgraded_zm"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_china_lake_upgraded_zm",
+   "sources": [
+    "zombie_theater",
+    "zombie_pentagon",
+    "zombie_cosmodrome",
+    "zombie_coast",
+    "zombie_temple",
+    "zombie_moon",
+    "zombie_cod5_prototype",
+    "zombie_cod5_asylum",
+    "zombie_cod5_sumpf",
+    "zombie_cod5_factory"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "china_lake_upgraded_zm"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_crossbow_explosive_upgraded_zm",
+   "sources": [
+    "zombie_theater",
+    "zombie_pentagon",
+    "zombie_cosmodrome",
+    "zombie_coast",
+    "zombie_temple",
+    "zombie_cod5_prototype",
+    "zombie_cod5_asylum",
+    "zombie_cod5_sumpf",
+    "zombie_cod5_factory"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "crossbow_explosive_upgraded_zm"
+    ]
+   ]
+  },
+  {
+   "zone": "t5w_knife_ballistic_upgraded_zm",
+   "sources": [
+    "zombie_theater",
+    "zombie_pentagon",
+    "zombie_cosmodrome",
+    "zombie_coast",
+    "zombie_temple",
+    "zombie_moon",
+    "zombie_cod5_prototype",
+    "zombie_cod5_asylum",
+    "zombie_cod5_sumpf",
+    "zombie_cod5_factory"
+   ],
+   "assets": [
+    [
+     "weapon",
+     "knife_ballistic_upgraded_zm"
+    ]
+   ]
+  },
+  {
+   "zone": "t5s_spl_creek_1",
+   "sources": [
+    "creek_1"
+   ],
+   "assets": [
+    [
+     "soundbank",
+     "spl_creek_1.all"
+    ]
+   ]
+  },
+  {
+   "zone": "t5s_spl_flashpoint",
+   "sources": [
+    "flashpoint"
+   ],
+   "assets": [
+    [
+     "soundbank",
+     "spl_flashpoint.all"
+    ]
+   ]
+  },
+  {
+   "zone": "t5s_spl_fullahead",
+   "sources": [
+    "fullahead"
+   ],
+   "assets": [
+    [
+     "soundbank",
+     "spl_fullahead.all"
+    ]
+   ]
+  },
+  {
+   "zone": "t5s_spl_hue_city",
+   "sources": [
+    "hue_city"
+   ],
+   "assets": [
+    [
+     "soundbank",
+     "spl_hue_city.all"
+    ]
+   ]
+  },
+  {
+   "zone": "t5s_spl_khe_sanh",
+   "sources": [
+    "khe_sanh"
+   ],
+   "assets": [
+    [
+     "soundbank",
+     "spl_khe_sanh.all"
+    ]
+   ]
+  },
+  {
+   "zone": "t5s_spl_vorkuta",
+   "sources": [
+    "vorkuta"
+   ],
+   "assets": [
+    [
+     "soundbank",
+     "spl_vorkuta.all"
+    ]
+   ]
+  },
+  {
+   "zone": "t5s_spl_wmd",
+   "sources": [
+    "wmd"
+   ],
+   "assets": [
+    [
+     "soundbank",
+     "spl_wmd.all"
+    ]
+   ]
+  },
+  {
+   "zone": "t5s_zmb_asylum",
+   "sources": [
+    "zombie_cod5_asylum"
+   ],
+   "assets": [
+    [
+     "soundbank",
+     "zmb_asylum.all"
+    ]
+   ]
+  },
+  {
+   "zone": "t5s_zmb_coast",
+   "sources": [
+    "zombie_coast"
+   ],
+   "assets": [
+    [
+     "soundbank",
+     "zmb_coast.all"
+    ]
+   ]
+  },
+  {
+   "zone": "t5s_zmb_common",
+   "sources": [
+    "zombie_theater",
+    "zombie_pentagon",
+    "zombie_cosmodrome",
+    "zombie_coast",
+    "zombie_temple",
+    "zombie_moon",
+    "zombie_cod5_prototype",
+    "zombie_cod5_asylum",
+    "zombie_cod5_sumpf",
+    "zombie_cod5_factory"
+   ],
+   "assets": [
+    [
+     "soundbank",
+     "zmb_common.all"
+    ]
+   ]
+  },
+  {
+   "zone": "t5s_zmb_factory",
+   "sources": [
+    "zombie_cod5_factory"
+   ],
+   "assets": [
+    [
+     "soundbank",
+     "zmb_factory.all"
+    ]
+   ]
+  },
+  {
+   "zone": "t5s_zmb_moon",
+   "sources": [
+    "zombie_moon"
+   ],
+   "assets": [
+    [
+     "soundbank",
+     "zmb_moon.all"
+    ]
+   ]
+  },
+  {
+   "zone": "t5s_zmb_prototype",
+   "sources": [
+    "zombie_cod5_prototype"
+   ],
+   "assets": [
+    [
+     "soundbank",
+     "zmb_prototype.all"
+    ]
+   ]
+  },
+  {
+   "zone": "t5s_zmb_sumpf",
+   "sources": [
+    "zombie_cod5_sumpf"
+   ],
+   "assets": [
+    [
+     "soundbank",
+     "zmb_sumpf.all"
+    ]
+   ]
+  },
+  {
+   "zone": "t5s_zmb_temple",
+   "sources": [
+    "zombie_temple"
+   ],
+   "assets": [
+    [
+     "soundbank",
+     "zmb_temple.all"
+    ]
+   ]
+  }
+ ],
+ "damage": {
+  "thundergun_zm": [
+   1000,
+   1000,
+   200,
+   240
+  ],
+  "thundergun_upgraded_zm": [
+   1000,
+   1000,
+   200,
+   300
+  ],
+  "tesla_gun_zm": [
+   1000,
+   1000,
+   200,
+   110
+  ],
+  "tesla_gun_upgraded_zm": [
+   1000,
+   1000,
+   200,
+   150
+  ],
+  "freezegun_zm": [
+   1000,
+   1000,
+   200,
+   96
+  ],
+  "freezegun_upgraded_zm": [
+   1000,
+   1000,
+   200,
+   128
+  ],
+  "shrink_ray_zm": [
+   1000,
+   1000,
+   200,
+   64
+  ],
+  "shrink_ray_upgraded_zm": [
+   1000,
+   1000,
+   200,
+   96
+  ],
+  "humangun_zm": [
+   1000,
+   1000,
+   200,
+   64
+  ],
+  "humangun_upgraded_zm": [
+   1000,
+   1000,
+   200,
+   96
+  ],
+  "sniper_explosive_zm": [
+   1000,
+   10000,
+   10000,
+   360
+  ],
+  "sniper_explosive_upgraded_zm": [
+   1000,
+   10000,
+   10000,
+   480
+  ],
+  "microwavegundw_zm": [
+   1000,
+   1000,
+   200,
+   64
+  ],
+  "microwavegundw_upgraded_zm": [
+   1000,
+   1000,
+   200,
+   64
+  ],
+  "microwavegunlh_zm": [
+   1000,
+   1000,
+   200,
+   64
+  ],
+  "microwavegunlh_upgraded_zm": [
+   1000,
+   1000,
+   200,
+   64
+  ],
+  "microwavegun_zm": [
+   1000,
+   1000,
+   200,
+   128
+  ],
+  "microwavegun_upgraded_zm": [
+   1000,
+   1000,
+   200,
+   160
+  ]
+ },
+ "textures": {
+  "file": "iw_iris_weapons.iwd",
+  "images": [
+   "c_zom_moon_pressure_suit_c",
+   "c_zom_moon_pressure_suit_g",
+   "c_zom_moon_pressure_suit_n",
+   "c_zom_moon_pressure_suit_s",
+   "c_zom_moon_pressure_suit_visor_c",
+   "c_zom_moon_pressure_suit_visor_g",
+   "c_zom_moon_pressure_suit_visor_s",
+   "c_zom_moon_tech_zombie_1_c",
+   "c_zom_moon_tech_zombie_2_c",
+   "c_zom_moon_tech_zombie_3_c",
+   "c_zom_moon_tech_zombie_g",
+   "c_zom_moon_tech_zombie_n",
+   "c_zom_moon_tech_zombie_s",
+   "c_zom_moon_zombie_heads_c",
+   "c_zom_moon_zombie_heads_g",
+   "c_zom_moon_zombie_heads_n",
+   "c_zom_moon_zombie_heads_s",
+   "c_zom_mp_zombie_straps_c",
+   "c_zom_mp_zombie_straps_g",
+   "c_zom_mp_zombie_straps_n",
+   "c_zom_mp_zombie_straps_s",
+   "c_zom_quad_pants_c",
+   "c_zom_quad_pants_g",
+   "c_zom_quad_pants_s",
+   "char_gear_burn_swatch_c",
+   "char_head_cosine",
+   "char_head_spec",
+   "char_jap_impinf2_head1z_c",
+   "char_jap_impinf2_head1z_m",
+   "char_jap_impinf2_head1z_n",
+   "char_jap_impinf_body5_n",
+   "char_jap_impinf_body5z_1_c",
+   "char_jap_impinf_body5z_2_c",
+   "char_jap_impinf_body5z_g",
+   "char_jap_impinf_body5z_s",
+   "char_jap_impinf_gear02_n",
+   "double_barrel_n",
+   "fxt_fire_flame_clump_rvn",
+   "ger_scope_kar98k_n",
+   "hud_bar",
+   "hud_double_barrel",
+   "hud_fg42",
+   "hud_gewehr43",
+   "hud_kar98k",
+   "hud_m1carbine",
+   "hud_m1garand",
+   "hud_shotgun",
+   "hud_thompson",
+   "hud_type100_smg",
+   "hud_type99_rifle",
+   "k98round_n",
+   "limbs_c",
+   "limbs_g",
+   "limbs_s",
+   "orniment_soft_n",
+   "scope_overlay_kar",
+   "t5_weapon_zom_moon_raygun_front_n",
+   "t5_weapon_zom_moon_raygun_rear_n",
+   "w_bar_n",
+   "w_fg42_n",
+   "w_ge43_n",
+   "w_m1garand_n",
+   "w_shotgun_n",
+   "w_tommy_n",
+   "w_type100_n",
+   "weapon_arisaka_type99_n",
+   "weapon_carbine_n",
+   "weapon_kar98_n",
+   "~-gbrass_garand",
+   "~-gchar_jap_impinf_gear02_c",
+   "~-gdouble_barrel_mp_c",
+   "~-gger_scope_kar98k_c",
+   "~-gk98round_c",
+   "~-gt5_weapon_zom_moon_raygun_front_clr",
+   "~-gt5_weapon_zom_moon_raygun_rear_c",
+   "~-gw_bar_mp_c",
+   "~-gw_fg42_mp_c",
+   "~-gw_ge43_mp_c",
+   "~-gw_m1garand_mp_c",
+   "~-gw_shotgun_mp_c",
+   "~-gw_tommy_c",
+   "~-gw_type100_c_new",
+   "~-gweapon_arisaka_type99_mp_c",
+   "~-gweapon_carbine_mp_c",
+   "~-gweapon_kar98_c",
+   "~-gweapon_kar98_mp_c",
+   "~-gweapon_stg44_mp_c",
+   "~double_barrel_env-rgb&double~34db92ad",
+   "~ger_scope_kar98k_env-rgb&ger~9be690b1",
+   "~gold_env-rgb&gold_ao-l",
+   "~k98round_env-rgb&k98round_ao-l",
+   "~orniment_silver_ao-rgbl",
+   "~t5_weapon_zom_moon_raygun_fr~00aa291a",
+   "~t5_weapon_zom_moon_raygun_re~e509bd0e",
+   "~w_bar_mp_env-rgb&w_bar_mp_ao-l",
+   "~w_fg42_env-rgb&w_fg42_ao-l",
+   "~w_ge43_mp_env-rgb&w_ge43_mp_ao-l",
+   "~w_m1garand_env-rgb&w_m1garand_ao-l",
+   "~w_shotgun_env-rgb&w_shotgun_ao-l",
+   "~w_tommy_env-rgb&w_tommy_ao-l",
+   "~w_type100_env-rgb&w_type100_ao-l",
+   "~weapon_arisaka_type99_env-rg~4d0334be",
+   "~weapon_carbine_env-rgb&weapo~9a6c452a",
+   "~weapon_kar98_env-rgb&weapon_~84729ae0",
+   "~weapon_stg44_mp_env-rgb&weap~7b88fd0e",
+   "~~-gchar_jap_impinf_gear02_s-~391a84ff",
+   "~~-gdouble_barrel_mp_s-rgb&~-~291df5b8",
+   "~~-gdouble_barrel_mp_s-rgb&~-~f84c5f10",
+   "~~-gger_scope_kar98k_s-rgb&~-~e5861f05",
+   "~~-ggold_spec-rgb&~-rblacknes~9126c4c9",
+   "~~-ggold_spec2-rgb&~-rgold_sp~ba3a4617",
+   "~~-gk98round_s-rgb&~-rk98roun~e345ae0a",
+   "~~-gt5_weapon_zom_moon_raygun~81e84bdd",
+   "~~-gt5_weapon_zom_moon_raygun~d819e697",
+   "~~-gtesla_s-rgb&~-rtesla_g&tesla_n-l",
+   "~~-gw_bar_mp_s-rgb&~-rw_bar_m~07844289",
+   "~~-gw_bar_mp_s-rgb&~-rw_bar_m~9e8badd3",
+   "~~-gw_fg42_mp_s-rgb&~-rw_fg42~d1c67469",
+   "~~-gw_ge43_mp_s-rgb&~-rw_ge43~1baf1916",
+   "~~-gw_ge43_mp_s-rgb&~-rw_ge43~f5780fdd",
+   "~~-gw_m1garand_mp_s-rgb&~-rw_~ad68192b",
+   "~~-gw_m1garand_mp_s-rgb&~-rw_~ecc41aa6",
+   "~~-gw_shotgun_mp_s-rgb&~-rw_s~17347e00",
+   "~~-gw_shotgun_mp_s-rgb&~-rw_s~f12d0e85",
+   "~~-gw_tommy_s-rgb&~-rw_tommy_~19539fe0",
+   "~~-gw_tommy_s-rgb&~-rw_tommy_~d759dbaa",
+   "~~-gw_type100_s-rgb&~-rw_type~658ffbf3",
+   "~~-gweapon_arisaka_type99_mp_~7eb76f2c",
+   "~~-gweapon_arisaka_type99_mp_~cf0d9ea1",
+   "~~-gweapon_carbine_mp_s-rgb&~~a9f81e6c",
+   "~~-gweapon_carbine_mp_s-rgb&~~ca533ad4",
+   "~~-gweapon_kar98_s-rgb&~-rwea~126f233f",
+   "~~-gweapon_stg44_mp_s-rgb&~-r~481824e3"
+  ],
+  "characters": {
+   "t5c_zombie_cod5_sumpf_char_jap_zombie": [
+    "char_gear_burn_swatch_c",
+    "char_head_cosine",
+    "char_head_spec",
+    "char_jap_impinf2_head1z_c",
+    "char_jap_impinf2_head1z_m",
+    "char_jap_impinf2_head1z_n",
+    "char_jap_impinf_body5_n",
+    "char_jap_impinf_body5z_1_c",
+    "char_jap_impinf_body5z_2_c",
+    "char_jap_impinf_body5z_g",
+    "char_jap_impinf_body5z_s",
+    "char_jap_impinf_gear02_n",
+    "~-gchar_jap_impinf_gear02_c",
+    "~~-gchar_jap_impinf_gear02_s-~391a84ff"
+   ],
+   "t5c_zombie_cod5_sumpf_char_jap_zombie_nocap": [
+    "char_head_cosine",
+    "char_head_spec",
+    "char_jap_impinf2_head1z_c",
+    "char_jap_impinf2_head1z_m",
+    "char_jap_impinf2_head1z_n",
+    "char_jap_impinf_body5_n",
+    "char_jap_impinf_body5z_1_c",
+    "char_jap_impinf_body5z_2_c",
+    "char_jap_impinf_body5z_g",
+    "char_jap_impinf_body5z_s"
+   ],
+   "t5c_zombie_moon_zom_moon_pressure_suit_body_player": [
+    "c_zom_moon_pressure_suit_c",
+    "c_zom_moon_pressure_suit_g",
+    "c_zom_moon_pressure_suit_n",
+    "c_zom_moon_pressure_suit_s",
+    "c_zom_moon_pressure_suit_visor_c",
+    "c_zom_moon_pressure_suit_visor_g",
+    "c_zom_moon_pressure_suit_visor_s"
+   ],
+   "t5c_zombie_moon_zom_moon_pressure_suit_zombie": [
+    "c_zom_moon_pressure_suit_c",
+    "c_zom_moon_pressure_suit_g",
+    "c_zom_moon_pressure_suit_n",
+    "c_zom_moon_pressure_suit_s",
+    "c_zom_moon_pressure_suit_visor_c",
+    "c_zom_moon_pressure_suit_visor_g",
+    "c_zom_moon_pressure_suit_visor_s"
+   ],
+   "t5c_zombie_moon_zom_moon_quad": [
+    "c_zom_quad_pants_c",
+    "c_zom_quad_pants_g",
+    "c_zom_quad_pants_s"
+   ],
+   "t5c_zombie_moon_zom_moon_tech_zombie_1": [
+    "c_zom_moon_tech_zombie_1_c",
+    "c_zom_moon_tech_zombie_g",
+    "c_zom_moon_tech_zombie_n",
+    "c_zom_moon_tech_zombie_s",
+    "c_zom_moon_zombie_heads_c",
+    "c_zom_moon_zombie_heads_g",
+    "c_zom_moon_zombie_heads_n",
+    "c_zom_moon_zombie_heads_s"
+   ],
+   "t5c_zombie_moon_zom_moon_tech_zombie_1_2": [
+    "c_zom_moon_tech_zombie_1_c",
+    "c_zom_moon_tech_zombie_2_c",
+    "c_zom_moon_tech_zombie_g",
+    "c_zom_moon_tech_zombie_n",
+    "c_zom_moon_tech_zombie_s",
+    "c_zom_moon_zombie_heads_c",
+    "c_zom_moon_zombie_heads_g",
+    "c_zom_moon_zombie_heads_n",
+    "c_zom_moon_zombie_heads_s"
+   ],
+   "t5c_zombie_moon_zom_moon_tech_zombie_1_3": [
+    "c_zom_moon_tech_zombie_1_c",
+    "c_zom_moon_tech_zombie_3_c",
+    "c_zom_moon_tech_zombie_g",
+    "c_zom_moon_tech_zombie_n",
+    "c_zom_moon_tech_zombie_s",
+    "c_zom_moon_zombie_heads_c",
+    "c_zom_moon_zombie_heads_g",
+    "c_zom_moon_zombie_heads_n",
+    "c_zom_moon_zombie_heads_s"
+   ],
+   "t5c_zombie_moon_zom_moon_tech_zombie_2": [
+    "c_zom_moon_tech_zombie_1_c",
+    "c_zom_moon_tech_zombie_g",
+    "c_zom_moon_tech_zombie_n",
+    "c_zom_moon_tech_zombie_s",
+    "c_zom_moon_zombie_heads_c",
+    "c_zom_moon_zombie_heads_g",
+    "c_zom_moon_zombie_heads_n",
+    "c_zom_moon_zombie_heads_s"
+   ],
+   "t5c_zombie_moon_zom_moon_tech_zombie_2_2": [
+    "c_zom_moon_tech_zombie_1_c",
+    "c_zom_moon_tech_zombie_2_c",
+    "c_zom_moon_tech_zombie_g",
+    "c_zom_moon_tech_zombie_n",
+    "c_zom_moon_tech_zombie_s",
+    "c_zom_moon_zombie_heads_c",
+    "c_zom_moon_zombie_heads_g",
+    "c_zom_moon_zombie_heads_n",
+    "c_zom_moon_zombie_heads_s"
+   ],
+   "t5c_zombie_moon_zom_moon_tech_zombie_3": [
+    "c_zom_moon_tech_zombie_1_c",
+    "c_zom_moon_tech_zombie_g",
+    "c_zom_moon_tech_zombie_n",
+    "c_zom_moon_tech_zombie_s",
+    "c_zom_moon_zombie_heads_c",
+    "c_zom_moon_zombie_heads_g",
+    "c_zom_moon_zombie_heads_n",
+    "c_zom_moon_zombie_heads_s"
+   ],
+   "t5c_zombie_moon_zom_moon_tech_zombie_3_2": [
+    "c_zom_moon_tech_zombie_1_c",
+    "c_zom_moon_tech_zombie_2_c",
+    "c_zom_moon_tech_zombie_g",
+    "c_zom_moon_tech_zombie_n",
+    "c_zom_moon_tech_zombie_s",
+    "c_zom_moon_zombie_heads_c",
+    "c_zom_moon_zombie_heads_g",
+    "c_zom_moon_zombie_heads_n",
+    "c_zom_moon_zombie_heads_s"
+   ],
+   "t5c_zombie_moon_zom_moon_tech_zombie_3_3": [
+    "c_zom_moon_tech_zombie_1_c",
+    "c_zom_moon_tech_zombie_3_c",
+    "c_zom_moon_tech_zombie_g",
+    "c_zom_moon_tech_zombie_n",
+    "c_zom_moon_tech_zombie_s",
+    "c_zom_moon_zombie_heads_c",
+    "c_zom_moon_zombie_heads_g",
+    "c_zom_moon_zombie_heads_n",
+    "c_zom_moon_zombie_heads_s"
+   ],
+   "t5c_zombie_moon_zom_moon_zombie_militarypolice": [
+    "c_zom_moon_zombie_heads_c",
+    "c_zom_moon_zombie_heads_g",
+    "c_zom_moon_zombie_heads_n",
+    "c_zom_moon_zombie_heads_s",
+    "c_zom_mp_zombie_straps_c",
+    "c_zom_mp_zombie_straps_g",
+    "c_zom_mp_zombie_straps_n",
+    "c_zom_mp_zombie_straps_s",
+    "limbs_c",
+    "limbs_g",
+    "limbs_s"
+   ]
+  }
+ }
+}

@@ -1,0 +1,6 @@
+{
+  "generator": "tools/t5-maps/closed-doors.py reads it; made by looking at each door closed and open in the game (docs/t5-sp-maps-plan.md 12.8)",
+  "levels": {
+    "flashpoint": ["hall1", "hall2"]
+  }
+}

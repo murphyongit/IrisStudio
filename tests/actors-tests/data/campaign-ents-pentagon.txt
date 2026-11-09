@@ -1,0 +1,201 @@
+{
+"origin" "0 0 0"
+"exposure" "0.5"
+"sunshadowintensity" "45"
+"_sunshadowcolor" "0.1607 0.1647 0.1686"
+"sunlight" "32"
+"suncolor" "0.4 0.48 0.55"
+"ambientintensity" "0.5"
+"_ambientcolor" "1 1 1"
+"newsun" "1"
+"sundirection" "195 245 0"
+"skyboxmodel" "skybox_sp_pentagon"
+"classname" "worldspawn"
+"treescatterintensity" "0.2"
+"treescatteramount" "0.4"
+}
+{
+"model" "*1"
+"origin" "-37054 -10155 203"
+"classname" "trigger_multiple"
+"targetname" "ambient_package"
+"script_ambientroom" "office"
+"script_ambientpriority" "1"
+"spawnflags" "128"
+}
+{
+"classname" "script_struct"
+"script_sound" "amb_walktalk"
+"script_label" "random"
+"origin" "-35412 -10064 170"
+"script_wait_min" "4"
+"script_wait_max" "8"
+}
+{
+"classname" "script_struct"
+"script_sound" "amb_radio_loop"
+"script_label" "looper"
+"script_looping" "1"
+"origin" "-36693 -9845 165"
+}
+{
+"model" "*2"
+"origin" "-36827 -11547 203"
+"classname" "trigger_multiple"
+"targetname" "ambient_package"
+"script_ambientroom" "corridor"
+"script_ambientpriority" "1"
+"spawnflags" "128"
+}
+{
+"classname" "script_origin"
+"targetname" "door_open"
+"origin" "-36538 -12108 214"
+"spawnflags" "2"
+}
+{
+"classname" "info_vehicle_node"
+"origin" "-39768 4872 34.3"
+"targetname" "auto640"
+"target" "auto641"
+"speed" "40"
+"lookahead" "2"
+"spawnflags" "0"
+"target2" "auto1422"
+}
+{
+"classname" "info_vehicle_node"
+"origin" "-39040 3864 34.2"
+"targetname" "auto641"
+"target" "auto642"
+"speed" "40"
+"lookahead" "2"
+"spawnflags" "0"
+"target2" "auto1423"
+}
+{
+"origin" "-50153 -33275.3 390.5"
+"angles" "0 0 0"
+"classname" "node_scripted"
+}
+{
+"classname" "script_model"
+"model" "t5_veh_us_limo"
+"origin" "-52864 -28488 390.5"
+"targetname" "smodel_camera_alignment_limo"
+}
+{
+"classname" "actor_Civilian_Pentagon_Hudson"
+"model" "c_usa_pentagon_hudson_fb"
+"export" "16"
+"angles" "0 270 0"
+"origin" "-49984 -32832 390.8"
+"spawnflags" "1"
+"targetname" "spawner_hudson"
+"script_animname" "hudson"
+"spawner_id" "dummy"
+}
+{
+"classname" "actor_Civilian_Pentagon_JFK"
+"model" "c_usa_pent_jfk_fb"
+"export" "17"
+"angles" "0 297.2 0"
+"origin" "-36431.2 -12719.2 -570"
+"spawnflags" "1"
+"targetname" "spawner_kennedy"
+"script_animname" "kennedy"
+"spawner_id" "dummy"
+}
+{
+"classname" "script_model"
+"model" "anim_pent_double_doors_win_left"
+"angles" "0 117.2 0"
+"origin" "-35813.4 -10072.4 150"
+"targetname" "smodel_security_door_left"
+}
+{
+"classname" "script_model"
+"model" "anim_pent_double_doors_win_right"
+"angles" "0 117.2 0"
+"targetname" "smodel_security_door_right"
+"origin" "-35868.2 -9965.67 150"
+}
+{
+"classname" "node_scripted"
+"angles" "0 117.2 0"
+"origin" "-35424.6 -9807.35 164"
+"spawnflags" "1"
+"targetname" "security_center"
+}
+{
+"classname" "node_scripted"
+"angles" "0 117.2 0"
+"origin" "-34852.7 -9511.2 150"
+"spawnflags" "1"
+"targetname" "security_entrance"
+}
+{
+"model" "*19"
+"origin" "-36497 -12195 205"
+"classname" "script_brushmodel"
+"targetname" "bmodel_elevator_cab"
+}
+{
+"angles" "0 28 0"
+"origin" "-37646.8 -11095.6 208.5"
+"far" "2500"
+"near" "0"
+"classname" "lod_info"
+}
+{
+"pl#" "54"
+"classname" "light"
+"angle" "0 0 0"
+"far_edge" "0"
+"near_edge" "0"
+"attenuation" "1 0 0"
+"falloffdistance" "100"
+"radius" "100"
+"cut_on" "0"
+"intensity" "16"
+"_color" "0.843137 0.949020 1.000000"
+"def" "white_light"
+"spawnflags" "133"
+"origin" "-36052.7 -12802.5 -466"
+"target" "pf539_auto263"
+"fov_outer" "90"
+"fov_inner" "60"
+"roundness" "1"
+"superellipse" "0.75 1 0.75 1"
+"targetname" "fire_flicker"
+}
+{
+"angles" "0 60.2 0"
+"origin" "-50162.5 -33283.5 437"
+"classname" "info_player_start"
+}
+{
+"classname" "script_vehicle"
+"vehicletype" "civ_pentagon_sedan"
+"model" "t5_veh_civ_limousine"
+"angles" "0 303 0"
+"script_vehiclespawngroup" "3"
+"spawnflags" "2"
+"origin" "-34643.6 -2112.8 40.3"
+"target" "auto955"
+}
+{
+"classname" "script_vehicle"
+"vehicletype" "civ_pentagon_sedan"
+"model" "t5_veh_civ_limousine"
+"angles" "0 307.4 0"
+"script_vehiclespawngroup" "3"
+"spawnflags" "2"
+"origin" "-37627.1 1934.6 40.3"
+"target" "auto644"
+}
+{
+"model" "*25"
+"classname" "script_vehicle_collmap"
+"targetname" "t5_veh_civ_limousine"
+}

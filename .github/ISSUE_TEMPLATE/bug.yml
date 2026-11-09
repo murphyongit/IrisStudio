@@ -1,0 +1,21 @@
+name: Bug
+description: Something in Iris Studio or the mod doesn't work right
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you saw, what you expected. A video or screenshot helps most (drag it in).
+    validations:
+      required: true
+  - type: input
+    id: where
+    attributes:
+      label: Where
+      description: Demo, map, tab or feature, if you know it.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The launcher's version or the commit, if you know it.

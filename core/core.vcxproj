@@ -1,0 +1,445 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>16.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{95d6e5c9-d833-4695-9d0e-d7f3643e3e8c}</ProjectGuid>
+    <RootNamespace>core</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>MultiByte</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>MultiByte</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="Shared">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <OutDir>$(SolutionDir)$(ProjectName)\bin\$(Platform)\$(Configuration)\</OutDir>
+    <IntDir>$(SolutionDir)$(ProjectName)\bin\$(Platform)\$(Configuration)\intermediate\</IntDir>
+    <IncludePath>$(DXSDK_DIR)Include;$(IncludePath)</IncludePath>
+    <LibraryPath>$(DXSDK_DIR)Lib\x86;$(LibraryPath)</LibraryPath>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <OutDir>$(SolutionDir)$(ProjectName)\bin\$(Platform)\$(Configuration)\</OutDir>
+    <IntDir>$(SolutionDir)$(ProjectName)\bin\$(Platform)\$(Configuration)\intermediate\</IntDir>
+    <IncludePath>$(DXSDK_DIR)Include;$(IncludePath)</IncludePath>
+    <LibraryPath>$(DXSDK_DIR)Lib\x86;$(LibraryPath)</LibraryPath>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <AdditionalIncludeDirectories>src;third-party/imgui/;third-party/spdlog/include/;third-party/incbin/;third-party/minhook/include/;third-party/minhook/src/;third-party/glm;third-party/IconFontCppHeaders;third-party/json/single_include;third-party/tinyobjloader;third-party/magic_enum/include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <ExceptionHandling>Async</ExceptionHandling>
+      <PrecompiledHeader>Use</PrecompiledHeader>
+      <PrecompiledHeaderFile>StdInclude.hpp</PrecompiledHeaderFile>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <DisableSpecificWarnings>4996</DisableSpecificWarnings>
+      <TreatWarningAsError>true</TreatWarningAsError>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+    <PreBuildEvent>
+      <Command>cl third-party/incbin/incbin.c  /Fo:third-party/incbin/ /link /out:third-party/incbin/incbin.exe
+"third-party/incbin/incbin.exe" src/Resources.cpp -o src/ResourceData.cpp -Ssnakecase -p""</Command>
+    </PreBuildEvent>
+    <PreLinkEvent>
+      <Command>
+      </Command>
+    </PreLinkEvent>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <AdditionalIncludeDirectories>src;third-party/imgui/;third-party/spdlog/include/;third-party/incbin/;third-party/minhook/include/;third-party/minhook/src/;third-party/glm;third-party/IconFontCppHeaders;third-party/json/single_include;third-party/tinyobjloader;third-party/magic_enum/include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <ExceptionHandling>Async</ExceptionHandling>
+      <PrecompiledHeader>Use</PrecompiledHeader>
+      <PrecompiledHeaderFile>StdInclude.hpp</PrecompiledHeaderFile>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+    <PreBuildEvent>
+      <Command>cl third-party/incbin/incbin.c  /Fo:third-party/incbin/ /link /out:third-party/incbin/incbin.exe
+"third-party/incbin/incbin.exe" src/Resources.cpp -o src/ResourceData.cpp -Ssnakecase -p""</Command>
+    </PreBuildEvent>
+    <PreLinkEvent>
+      <Command>
+      </Command>
+    </PreLinkEvent>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="src\Components\BoneCamera.cpp" />
+    <ClCompile Include="src\Setup\Folders.cpp" />
+    <ClCompile Include="src\Beta\BetaKey.cpp" />
+    <ClCompile Include="src\Components\BoneCameraLogic.cpp" />
+    <ClCompile Include="src\Components\BulletTime.cpp" />
+    <ClCompile Include="src\Components\Camera.cpp" />
+    <ClCompile Include="src\Components\CameraManager.cpp" />
+    <ClCompile Include="src\Components\CampaignMapLogic.cpp" />
+    <ClCompile Include="src\Components\MapMenuLogic.cpp" />
+    <ClCompile Include="src\Components\CampathManager.cpp" />
+    <ClCompile Include="src\Components\DollyCamera.cpp" />
+    <ClCompile Include="src\Components\FreeCamera.cpp" />
+    <ClCompile Include="src\Components\FrozenSpans.cpp" />
+    <ClCompile Include="src\Components\KeyframeManager.cpp" />
+    <ClCompile Include="src\Components\KeyframeSerializer.cpp" />
+    <ClCompile Include="src\Components\OrbitCamera.cpp" />
+    <ClCompile Include="src\Components\CaptureManager.cpp" />
+    <ClCompile Include="src\Components\Playback.cpp" />
+    <ClCompile Include="src\Components\PlayerAnimation.cpp" />
+    <ClCompile Include="src\Components\Loadouts.cpp" />
+    <ClCompile Include="src\Components\Actors.cpp" />
+    <ClCompile Include="src\Components\ActorLogic.cpp" />
+    <ClCompile Include="src\Components\PoseLogic.cpp" />
+    <ClCompile Include="src\Components\KeyframeLogic.cpp" />
+    <ClCompile Include="src\Components\LightLogic.cpp" />
+    <ClCompile Include="src\Components\AreaLogic.cpp" />
+    <ClCompile Include="src\Components\ModelLightingLogic.cpp" />
+    <ClCompile Include="src\Components\ThreadStopLogic.cpp" />
+    <ClCompile Include="src\Components\Lights.cpp" />
+    <ClCompile Include="src\Components\PropLogic.cpp" />
+    <ClCompile Include="src\Components\Props.cpp" />
+    <ClCompile Include="src\Components\CharacterLogic.cpp" />
+    <ClCompile Include="src\Components\PlayerLookLogic.cpp" />
+    <ClCompile Include="src\Components\GripLogic.cpp" />
+    <ClCompile Include="src\Components\ShotLogic.cpp" />
+    <ClCompile Include="src\Components\LiveActorLogic.cpp" />
+    <ClCompile Include="src\Components\LiveActors.cpp" />
+    <ClCompile Include="src\Components\LiveGame.cpp" />
+    <ClCompile Include="src\Components\LiveGameLogic.cpp" />
+    <ClCompile Include="src\Components\WeaponCatalog.cpp" />
+    <ClCompile Include="src\Components\AnimationCatalogLogic.cpp" />
+    <ClCompile Include="src\Components\AnimationPackLogic.cpp" />
+    <ClCompile Include="src\Components\ReloadLogic.cpp" />
+    <ClCompile Include="src\Components\ReloadProfiles.cpp" />
+    <ClCompile Include="src\Components\TransitionLogic.cpp" />
+    <ClCompile Include="src\Components\KillstreakLogic.cpp" />
+    <ClCompile Include="src\Components\DropLogic.cpp" />
+    <ClCompile Include="src\Components\VehicleLogic.cpp" />
+    <ClCompile Include="src\Components\PoseSignatures.cpp" />
+    <ClCompile Include="src\Components\Rendering.cpp" />
+    <ClCompile Include="src\Components\Rewinding.cpp" />
+    <ClCompile Include="src\Components\VisualConfiguration.cpp" />
+    <ClCompile Include="src\Components\VisualsLogic.cpp" />
+    <ClCompile Include="src\Components\RuntimeProperties.cpp" />
+    <ClCompile Include="src\Components\ReShadeKeys.cpp" />
+    <ClCompile Include="src\Components\ReShadeLogic.cpp" />
+    <ClCompile Include="src\Components\AddressSpaceLogic.cpp" />
+    <ClCompile Include="src\Components\QualityLogic.cpp" />
+    <ClCompile Include="src\Components\RestartLogic.cpp" />
+    <ClCompile Include="src\Components\SurfaceDepth.cpp" />
+    <ClCompile Include="src\Components\SurfaceLogic.cpp" />
+    <ClCompile Include="src\Components\TexturePack.cpp" />
+    <ClCompile Include="src\Components\TextureLogic.cpp" />
+    <ClCompile Include="src\Components\DemoModLogic.cpp" />
+    <ClCompile Include="src\Components\CaptureWatch.cpp" />
+    <ClCompile Include="src\Configuration\Configuration.cpp" />
+    <ClCompile Include="src\Configuration\InputConfiguration.cpp" />
+    <ClCompile Include="src\Configuration\PreferencesConfiguration.cpp" />
+    <ClCompile Include="src\D3D9.cpp" />
+    <ClCompile Include="src\ReShade.cpp">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\Graphics\Graphics.cpp" />
+    <ClCompile Include="src\Graphics\Resource.cpp" />
+    <ClCompile Include="src\Graphics\ViewLines.cpp" />
+    <ClCompile Include="src\Input.cpp" />
+    <ClCompile Include="src\ResourceData.cpp">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\Resources.cpp" />
+    <ClCompile Include="src\UI\Components\Background.cpp" />
+    <ClCompile Include="src\UI\Components\CameraMenu.cpp" />
+    <ClCompile Include="src\UI\Components\CaptureMenu.cpp" />
+    <ClCompile Include="src\UI\Components\ControlsMenu.cpp" />
+    <ClCompile Include="src\UI\Components\Credits.cpp" />
+    <ClCompile Include="src\UI\Components\Timeline.cpp" />
+    <ClCompile Include="src\UI\Components\TimelineGraph.cpp" />
+    <ClCompile Include="src\UI\Components\ReloadStrip.cpp" />
+    <ClCompile Include="src\UI\Components\PlayerAnimationUI.cpp" />
+    <ClCompile Include="src\UI\Components\LoadoutsUI.cpp" />
+    <ClCompile Include="src\UI\Components\ActorsMenu.cpp" />
+    <ClCompile Include="src\UI\Components\Preferences.cpp" />
+    <ClCompile Include="src\UI\ImGuiEx\ImGuiExtensions.cpp" />
+    <ClCompile Include="src\UI\Components\DebugPanel.cpp" />
+    <ClCompile Include="src\Events.cpp" />
+    <ClCompile Include="src\Logger.cpp" />
+    <ClCompile Include="src\Mod.cpp" />
+    <ClCompile Include="src\StdInclude.cpp">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Create</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\UI\Components\DemoLoader.cpp" />
+    <ClCompile Include="src\UI\Components\GameView.cpp" />
+    <ClCompile Include="src\UI\Components\MenuBar.cpp" />
+    <ClCompile Include="src\UI\Components\PrimaryTabs.cpp" />
+    <ClCompile Include="src\UI\Components\VisualsMenu.cpp" />
+    <ClCompile Include="src\Components\KillFinder.cpp" />
+    <ClCompile Include="src\UI\Components\KillsMenu.cpp" />
+    <ClCompile Include="src\UI\ImGuiEx\KeyframeableControls.cpp" />
+    <ClCompile Include="src\UI\UIImage.cpp" />
+    <ClCompile Include="src\UI\UIManager.cpp" />
+    <ClCompile Include="src\UI\TimelineGroups.cpp" />
+    <ClCompile Include="src\UI\TimelineMath.cpp" />
+    <ClCompile Include="src\UI\LayoutMath.cpp" />
+    <ClCompile Include="src\UI\Layout.cpp" />
+    <ClCompile Include="src\UI\PanelLogic.cpp" />
+    <ClCompile Include="src\UI\DemoLoadLogic.cpp" />
+    <ClCompile Include="src\UI\ModSwitchLogic.cpp" />
+    <ClCompile Include="src\UI\GettingStartedLogic.cpp" />
+    <ClCompile Include="src\UI\GettingStarted.cpp" />
+    <ClCompile Include="src\UI\ActorActions.cpp" />
+    <ClCompile Include="src\UI\AreaMap.cpp" />
+    <ClCompile Include="src\UI\ViewMenu.cpp" />
+    <ClCompile Include="src\UI\Components\PlayersMenu.cpp" />
+    <ClCompile Include="src\UI\TimelineSelection.cpp" />
+    <ClCompile Include="src\UI\CommandDispatch.cpp" />
+    <ClCompile Include="src\UI\InputRouting.cpp" />
+    <ClCompile Include="src\UI\Commands.cpp" />
+    <ClCompile Include="src\UI\Theme.cpp" />
+    <ClCompile Include="src\UI\Toasts.cpp" />
+    <ClCompile Include="src\Components\UndoHistory.cpp" />
+    <ClCompile Include="src\Components\Markers.cpp" />
+    <ClCompile Include="src\UI\Components\ShortcutsWindow.cpp" />
+    <ClCompile Include="src\Utilities\HookManager.cpp" />
+    <ClCompile Include="src\Utilities\MemoryUtils.cpp" />
+    <ClCompile Include="src\Utilities\PathUtils.cpp" />
+    <ClCompile Include="src\Utilities\Deflate.cpp" />
+    <ClCompile Include="src\Utilities\Inflate.cpp" />
+    <ClCompile Include="src\Utilities\MathUtils.cpp" />
+    <ClInclude Include="src\Components\BoneCamera.hpp" />
+    <ClInclude Include="src\Components\BoneCameraLogic.hpp" />
+    <ClInclude Include="src\Components\BulletTime.hpp" />
+    <ClInclude Include="src\Components\CameraManager.hpp" />
+    <ClInclude Include="src\Components\CampaignMapLogic.hpp" />
+    <ClInclude Include="src\Components\MapMenuLogic.hpp" />
+    <ClInclude Include="src\Components\CampathManager.hpp" />
+    <ClInclude Include="src\Components\DefaultCamera.hpp" />
+    <ClInclude Include="src\Components\DollyCamera.hpp" />
+    <ClInclude Include="src\Components\FreeCamera.hpp" />
+    <ClInclude Include="src\Components\FrozenSpans.hpp" />
+    <ClInclude Include="src\Components\KeyframeManager.hpp" />
+    <ClInclude Include="src\Components\KeyframeSerializer.hpp" />
+    <ClInclude Include="src\Components\OrbitCamera.hpp" />
+    <ClInclude Include="src\Components\CaptureManager.hpp" />
+    <ClInclude Include="src\Components\Playback.hpp" />
+    <ClInclude Include="src\Components\PlayerAnimation.hpp" />
+    <ClInclude Include="src\Components\Loadouts.hpp" />
+    <ClInclude Include="src\Components\Actors.hpp" />
+    <ClInclude Include="src\Components\ActorLogic.hpp" />
+    <ClInclude Include="src\Components\GripLogic.hpp" />
+    <ClInclude Include="src\Components\ShotLogic.hpp" />
+    <ClInclude Include="src\Components\PoseLogic.hpp" />
+    <ClInclude Include="src\Components\KeyframeLogic.hpp" />
+    <ClInclude Include="src\Components\LightLogic.hpp" />
+    <ClInclude Include="src\Components\AreaLogic.hpp" />
+    <ClInclude Include="src\Components\ListenerList.hpp" />
+    <ClInclude Include="src\Components\ModelLightingLogic.hpp" />
+    <ClInclude Include="src\Components\ThreadStopLogic.hpp" />
+    <ClInclude Include="src\Types\LevelAreas.hpp" />
+    <ClInclude Include="src\UI\AreaMap.hpp" />
+    <ClInclude Include="src\Components\Lights.hpp" />
+    <ClInclude Include="src\Components\PropLogic.hpp" />
+    <ClInclude Include="src\Components\Props.hpp" />
+    <ClInclude Include="src\Components\CharacterLogic.hpp" />
+    <ClInclude Include="src\Components\PlayerLookLogic.hpp" />
+    <ClInclude Include="src\Components\LiveActorLogic.hpp" />
+    <ClInclude Include="src\Components\LiveActors.hpp" />
+    <ClInclude Include="src\Components\LiveGame.hpp" />
+    <ClInclude Include="src\Components\LiveGameLogic.hpp" />
+    <ClInclude Include="src\Components\WeaponCatalog.hpp" />
+    <ClInclude Include="src\Components\AnimationCatalogLogic.hpp" />
+    <ClInclude Include="src\Components\AnimationPackLogic.hpp" />
+    <ClInclude Include="src\Types\AnimationCatalog.hpp" />
+    <ClInclude Include="src\Components\ReloadLogic.hpp" />
+    <ClInclude Include="src\Components\ReloadProfiles.hpp" />
+    <ClInclude Include="src\Components\TransitionLogic.hpp" />
+    <ClInclude Include="src\Components\KillstreakLogic.hpp" />
+    <ClInclude Include="src\Components\DropLogic.hpp" />
+    <ClInclude Include="src\Components\VehicleLogic.hpp" />
+    <ClInclude Include="src\Components\PoseSignatures.hpp" />
+    <ClInclude Include="src\Types\Actor.hpp" />
+    <ClInclude Include="src\Types\Character.hpp" />
+    <ClInclude Include="src\Types\Loadout.hpp" />
+    <ClInclude Include="src\Components\Rendering.hpp" />
+    <ClInclude Include="src\Components\Rewinding.hpp" />
+    <ClInclude Include="src\Components\VisualConfiguration.hpp" />
+    <ClInclude Include="src\Components\VisualsLogic.hpp" />
+    <ClInclude Include="src\Components\RuntimeProperties.hpp" />
+    <ClInclude Include="src\Components\ReShadeKeys.hpp" />
+    <ClInclude Include="src\Components\ReShadeLogic.hpp" />
+    <ClInclude Include="src\Components\AddressSpaceLogic.hpp" />
+    <ClInclude Include="src\Components\QualityLogic.hpp" />
+    <ClInclude Include="src\Components\RestartLogic.hpp" />
+    <ClInclude Include="src\Components\SurfaceDepth.hpp" />
+    <ClInclude Include="src\Components\SurfaceLogic.hpp" />
+    <ClInclude Include="src\Components\TexturePack.hpp" />
+    <ClInclude Include="src\Components\TextureLogic.hpp" />
+    <ClInclude Include="src\Types\NormalMap.hpp" />
+    <ClInclude Include="src\Components\DemoModLogic.hpp" />
+    <ClInclude Include="src\Components\CaptureWatch.hpp" />
+    <ClInclude Include="src\Configuration\Configuration.hpp" />
+    <ClInclude Include="src\Configuration\InputConfiguration.hpp" />
+    <ClInclude Include="src\Configuration\PreferencesConfiguration.hpp" />
+    <ClInclude Include="src\Graphics\GizmoState.hpp" />
+    <ClInclude Include="src\Graphics\Graphics.hpp" />
+    <ClInclude Include="src\Graphics\Resource.hpp" />
+    <ClInclude Include="src\Graphics\ViewLines.hpp" />
+    <ClInclude Include="src\Input.hpp" />
+    <ClInclude Include="src\Types\AnimationPose.hpp" />
+    <ClInclude Include="src\Types\BoneData.hpp" />
+    <ClInclude Include="src\Types\BoneCamera.hpp" />
+    <ClInclude Include="src\Types\DemoInfo.hpp" />
+    <ClInclude Include="src\Types\Dof.hpp" />
+    <ClInclude Include="src\Types\Dvar.hpp" />
+    <ClInclude Include="src\Types\Entity.hpp" />
+    <ClInclude Include="src\Types\Features.hpp" />
+    <ClInclude Include="src\Types\Filmtweaks.hpp" />
+    <ClInclude Include="src\Types\MapEffects.hpp" />
+    <ClInclude Include="src\Types\FrozenSpan.hpp" />
+    <ClInclude Include="src\Types\Game.hpp" />
+    <ClInclude Include="src\Types\GameState.hpp" />
+    <ClInclude Include="src\Types\HudInfo.hpp" />
+    <ClInclude Include="src\Types\Keyframe.hpp" />
+    <ClInclude Include="src\Types\KeyframeableProperty.hpp" />
+    <ClInclude Include="src\Types\MouseMode.hpp" />
+    <ClInclude Include="src\Types\PlaybackData.hpp" />
+    <ClInclude Include="src\Types\RenderingFlags.hpp" />
+    <ClInclude Include="src\Types\MapVisuals.hpp" />
+    <ClInclude Include="src\Types\Sun.hpp" />
+    <ClInclude Include="src\Types\Vertex.hpp" />
+    <ClInclude Include="src\Types\ReloadProfile.hpp" />
+    <ClInclude Include="src\Types\WeaponRig.hpp" />
+    <ClInclude Include="src\UI\Components\CameraMenu.hpp" />
+    <ClInclude Include="src\UI\Components\ControlsMenu.hpp" />
+    <ClInclude Include="src\UI\Components\Credits.hpp" />
+    <ClInclude Include="src\UI\Components\Timeline.hpp" />
+    <ClInclude Include="src\UI\Components\TimelineGraph.hpp" />
+    <ClInclude Include="src\UI\Components\ReloadStrip.hpp" />
+    <ClInclude Include="src\UI\Components\PlayerAnimationUI.hpp" />
+    <ClInclude Include="src\UI\Components\LoadoutsUI.hpp" />
+    <ClInclude Include="src\UI\Components\ActorsMenu.hpp" />
+    <ClInclude Include="src\UI\Components\Preferences.hpp" />
+    <ClInclude Include="src\UI\Components\VisualsMenu.hpp" />
+    <ClInclude Include="src\Components\KillFinder.hpp" />
+    <ClInclude Include="src\UI\Components\KillsMenu.hpp" />
+    <ClInclude Include="src\Types\DemoEvents.hpp" />
+    <ClInclude Include="src\UI\ImGuiEx\KeyframeableControls.hpp" />
+    <ClInclude Include="src\Utilities\GLMExtensions.hpp" />
+    <ClInclude Include="src\Utilities\MathUtils.hpp" />
+    <ClCompile Include="src\UI\TaskbarProgress.cpp" />
+    <ClCompile Include="src\WindowsConsole.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\Components\Camera.hpp" />
+    <ClInclude Include="src\D3D9.hpp" />
+    <ClInclude Include="src\ReShade.hpp" />
+    <ClInclude Include="src\Resources.hpp" />
+    <ClInclude Include="src\UI\Components\Background.hpp" />
+    <ClInclude Include="src\UI\Components\CaptureMenu.hpp" />
+    <ClInclude Include="src\UI\ImGuiEx\ImGuiExtensions.hpp" />
+    <ClInclude Include="src\UI\Components\DebugPanel.hpp" />
+    <ClInclude Include="src\UI\Components\DemoLoader.hpp" />
+    <ClInclude Include="src\UI\Components\GameView.hpp" />
+    <ClInclude Include="src\UI\Components\MenuBar.hpp" />
+    <ClInclude Include="src\UI\Components\PrimaryTabs.hpp" />
+    <ClInclude Include="src\UI\UIComponent.hpp" />
+    <ClInclude Include="src\UI\UIImage.hpp" />
+    <ClInclude Include="src\Utilities\HookManager.hpp" />
+    <ClInclude Include="src\Events.hpp" />
+    <ClInclude Include="src\GameInterface.hpp" />
+    <ClInclude Include="src\Logger.hpp" />
+    <ClInclude Include="src\Mod.hpp" />
+    <ClInclude Include="src\StdInclude.hpp" />
+    <ClInclude Include="src\UI\UIManager.hpp" />
+    <ClInclude Include="src\UI\TimelineGroups.hpp" />
+    <ClInclude Include="src\UI\TimelineMath.hpp" />
+    <ClInclude Include="src\UI\LayoutMath.hpp" />
+    <ClInclude Include="src\UI\Layout.hpp" />
+    <ClInclude Include="src\UI\PanelLogic.hpp" />
+    <ClInclude Include="src\UI\DemoLoadLogic.hpp" />
+    <ClInclude Include="src\UI\ModSwitchLogic.hpp" />
+    <ClInclude Include="src\UI\GettingStartedLogic.hpp" />
+    <ClInclude Include="src\UI\GettingStarted.hpp" />
+    <ClInclude Include="src\UI\ActorActions.hpp" />
+    <ClInclude Include="src\UI\ViewMenu.hpp" />
+    <ClInclude Include="src\UI\Components\PlayersMenu.hpp" />
+    <ClInclude Include="src\UI\TimelineSelection.hpp" />
+    <ClInclude Include="src\UI\CommandDispatch.hpp" />
+    <ClInclude Include="src\UI\InputRouting.hpp" />
+    <ClInclude Include="src\UI\Commands.hpp" />
+    <ClInclude Include="src\UI\Palettes.hpp" />
+    <ClInclude Include="src\UI\Theme.hpp" />
+    <ClInclude Include="src\UI\Toasts.hpp" />
+    <ClInclude Include="src\Components\UndoHistory.hpp" />
+    <ClInclude Include="src\Components\Markers.hpp" />
+    <ClInclude Include="src\UI\Components\ShortcutsWindow.hpp" />
+    <ClInclude Include="src\Utilities\MemoryUtils.hpp" />
+    <ClInclude Include="src\Utilities\Patches.hpp" />
+    <ClInclude Include="src\Utilities\PathUtils.hpp" />
+    <ClInclude Include="src\Setup\Folders.hpp" />
+    <ClInclude Include="src\Beta\BetaKey.hpp" />
+    <ClInclude Include="src\Beta\BetaKeys.hpp" />
+    <ClInclude Include="src\Utilities\Deflate.hpp" />
+    <ClInclude Include="src\Utilities\Inflate.hpp" />
+    <ClInclude Include="src\Utilities\Signatures.hpp" />
+    <ClInclude Include="src\UI\TaskbarProgress.hpp" />
+    <ClInclude Include="src\Version.hpp" />
+    <ClInclude Include="src\WindowsConsole.hpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="resources\pause_button.png" />
+    <Image Include="resources\play_button.png" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>

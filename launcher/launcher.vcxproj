@@ -1,0 +1,181 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>16.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{7B3E2A91-4C5D-4F1E-9A2B-3C8D6E0F1B47}</ProjectGuid>
+    <RootNamespace>launcher</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="Shared">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <!-- IrisStudio.exe, the launcher users download: it embeds T5iris.dll of the same
+       configuration, so the t5 project builds first. The C runtime is linked in, so it runs without the Visual C++
+       redistributable. -->
+  <PropertyGroup>
+    <TargetName>IrisStudio</TargetName>
+    <OutDir>$(SolutionDir)launcher\bin\$(Platform)\$(Configuration)\</OutDir>
+    <IntDir>$(SolutionDir)launcher\bin\$(Platform)\$(Configuration)\intermediate\</IntDir>
+  </PropertyGroup>
+  <!-- a beta build: the key screen, and the beta T5iris.dll embedded, in folders of its
+       own -->
+  <PropertyGroup Condition="'$(IrisBeta)'=='true' or '$(IrisBeta)'=='test'">
+    <OutDir>$(SolutionDir)launcher\bin\$(Platform)\$(Configuration)Beta\</OutDir>
+    <IntDir>$(SolutionDir)launcher\bin\$(Platform)\$(Configuration)Beta\intermediate\</IntDir>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <!-- src first, so the core sources get this StdInclude.hpp instead of the game's -->
+      <AdditionalIncludeDirectories>$(ProjectDir)src;$(SolutionDir)core\src;$(SolutionDir)core\third-party\imgui;$(SolutionDir)core\third-party\IconFontCppHeaders;$(SolutionDir)core\third-party\json\single_include;$(SolutionDir)tools\injector\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32;_WINDOWS;NOMINMAX;WIN32_LEAN_AND_MEAN;IMGUI_DEFINE_MATH_OPERATORS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <LargeAddressAware>true</LargeAddressAware>
+      <AdditionalDependencies>d3d9.lib;dwmapi.lib;windowscodecs.lib;winhttp.lib;bcrypt.lib;shlwapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+    <ResourceCompile>
+      <AdditionalIncludeDirectories>$(ProjectDir)res;$(SolutionDir)core\resources;$(SolutionDir)t5\bin\$(Platform)\$(Configuration);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <ClCompile>
+      <PreprocessorDefinitions>_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <ClCompile>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+    </ClCompile>
+    <Link>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(IrisBeta)'=='true' or '$(IrisBeta)'=='test'">
+    <ClCompile>
+      <PreprocessorDefinitions>IRIS_BETA;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ResourceCompile>
+      <AdditionalIncludeDirectories>$(SolutionDir)t5\bin\$(Platform)\$(Configuration)Beta;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(IrisBeta)'=='test'">
+    <ClCompile>
+      <PreprocessorDefinitions>IRIS_BETA_TEST_KEY;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="src\App.cpp" />
+    <ClCompile Include="src\Controller.cpp" />
+    <ClCompile Include="src\Detect.cpp" />
+    <ClCompile Include="src\Launch.cpp" />
+    <ClCompile Include="src\Main.cpp" />
+    <ClCompile Include="src\Net.cpp" />
+    <ClCompile Include="src\Platform.cpp" />
+    <ClCompile Include="src\Settings.cpp" />
+    <ClCompile Include="src\Setup.cpp" />
+    <ClCompile Include="src\TexturePack.cpp" />
+    <ClCompile Include="..\core\src\Components\AnimationPackLogic.cpp" />
+    <ClCompile Include="..\core\src\Components\DemoModLogic.cpp" />
+    <ClCompile Include="..\core\src\Setup\PackWriter.cpp" />
+    <ClCompile Include="..\core\src\Components\TextureLogic.cpp" />
+    <ClCompile Include="..\core\src\Setup\TextureBuild.cpp" />
+    <ClCompile Include="..\core\src\Setup\SetupLogic.cpp" />
+    <ClCompile Include="..\core\src\Setup\Folders.cpp" />
+    <ClCompile Include="..\core\src\Beta\BetaKey.cpp" />
+    <ClCompile Include="..\core\src\Setup\Zip.cpp" />
+    <ClCompile Include="..\core\src\Utilities\Deflate.cpp" />
+    <ClCompile Include="..\core\src\Utilities\Inflate.cpp" />
+    <ClCompile Include="..\core\src\Utilities\Sha1.cpp" />
+    <ClCompile Include="..\tools\injector\src\Injector.cpp" />
+    <ClCompile Include="..\core\third-party\imgui\imgui.cpp" />
+    <ClCompile Include="..\core\third-party\imgui\imgui_draw.cpp" />
+    <ClCompile Include="..\core\third-party\imgui\imgui_tables.cpp" />
+    <ClCompile Include="..\core\third-party\imgui\imgui_widgets.cpp" />
+    <ClCompile Include="..\core\third-party\imgui\backends\imgui_impl_dx9.cpp" />
+    <ClCompile Include="..\core\third-party\imgui\backends\imgui_impl_win32.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\core\src\UI\Palettes.hpp" />
+    <ClInclude Include="src\App.hpp" />
+    <ClInclude Include="src\Controller.hpp" />
+    <ClInclude Include="src\Detect.hpp" />
+    <ClInclude Include="src\Launch.hpp" />
+    <ClInclude Include="src\Net.hpp" />
+    <ClInclude Include="src\Platform.hpp" />
+    <ClInclude Include="src\Setup.hpp" />
+    <ClInclude Include="..\core\src\Setup\SetupLogic.hpp" />
+    <ClInclude Include="..\core\src\Beta\BetaKey.hpp" />
+    <ClInclude Include="..\core\src\Beta\BetaKeys.hpp" />
+    <ClInclude Include="src\Settings.hpp" />
+    <ClInclude Include="src\TexturePack.hpp" />
+    <ClInclude Include="src\StdInclude.hpp" />
+    <ClInclude Include="src\Version.hpp" />
+    <ClInclude Include="res\resource.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="res\launcher.rc" />
+  </ItemGroup>
+  <ItemGroup>
+    <Manifest Include="res\launcher.manifest" />
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="res\IrisStudio.ico" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\t5\t5.vcxproj">
+      <Project>{8BCC2FFC-B42F-47E7-8408-6D63A2E7CC2F}</Project>
+      <LinkLibraryDependencies>false</LinkLibraryDependencies>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+    </ProjectReference>
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>

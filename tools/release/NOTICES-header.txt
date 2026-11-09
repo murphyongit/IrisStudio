@@ -1,0 +1,35 @@
+Iris Studio - notices
+=====================
+
+Iris Studio sets up and starts T5iris, a movie-making mod for Call of Duty demos: IWXMVM, ported to Call of Duty:
+Black Ops (Plutonium T5, LAN). It is free software under the GNU General Public License version 3 (LICENSE, next to
+this file). Its source is at https://github.com/yerbisonline/IrisStudio.
+
+IrisStudio.exe holds the mod (T5iris.dll) and the parts below, each under its own license, whose texts follow.
+
+  Dear ImGui                 Copyright (c) 2014-2023 Omar Cornut                      MIT
+  spdlog                     Copyright (c) 2016 Gabi Melman                           MIT
+  MinHook                    Copyright (C) 2009-2017 Tsuda Kageyu                     BSD 2-Clause
+  OpenGL Mathematics (GLM)   Copyright (c) 2005 G-Truc Creation                       Happy Bunny License / MIT
+  JSON for Modern C++        Copyright (c) 2013-2022 Niels Lohmann                    MIT
+  tinyobjloader              Copyright (c) 2012-2019 Syoyo Fujita and many contributors  MIT
+  magic_enum                 Copyright (c) 2019-2024 Daniil Goncharov                 MIT
+  incbin                     Dale Weiler                                              Unlicense (public domain)
+  IconFontCppHeaders         Copyright (c) 2017 Juliette Foucaut and Doug Binks       zlib
+  ReShade's add-on headers   Copyright 2014 Patrick Mours                             BSD 3-Clause
+    (the mod talks to the ReShade you installed; ReShade itself isn't shipped)
+  Rubik (font)               Copyright 2015 The Rubik Project Authors                 SIL Open Font License 1.1
+  Font Awesome 6 Free Solid  Copyright (c) Font Awesome (Fonticons, Inc.)             SIL Open Font License 1.1
+    (font)                   https://fontawesome.com/license/free
+
+Not in IrisStudio.exe, and never shipped with it:
+  - OpenAssetTools (https://github.com/Laupetin/OpenAssetTools, GPL-3): the launcher downloads its release v0.34.0
+    from GitHub when you allow it, and checks it, to build the character zones.
+  - FFmpeg (https://ffmpeg.org, GPL-3 in this build): when you accept the setup and the mod has none, the launcher
+    downloads gyan.dev's essentials build of FFmpeg 9.0.2 from GitHub (github.com/GyanD/codexffmpeg), checks it, and
+    keeps its ffmpeg.exe for capture.
+  - The character zones and the animation pack: the launcher builds them on your computer from your own copy of
+    Black Ops, whose files are Activision's.
+
+Call of Duty and Black Ops are trademarks of Activision Publishing, Inc. Iris Studio and T5iris aren't made or
+endorsed by Activision or by Plutonium. Use them offline only: never on online servers with the mod loaded.

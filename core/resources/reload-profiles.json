@@ -1,0 +1,44 @@
+// Reload profiles that are checked by eye, by animation (see core/src/Components/ReloadLogic.hpp): what each gives
+// takes the place of what the notetracks and the hand's motion would say, and the user's own overrides come before
+// these. Fields, each optional: "kind" (none, magazine, dropped, box, shells, rocket), "hand" (tag, left, right) and
+// "out", "swap", "in" (0 to 1 of a play of the animation). Filled by the harness sweep of
+// docs/t5-review-and-ux-plan.md 2.5 (R4, tools/t5-harness/reload-sweep.ps1): only where the profile the sweep found
+// was wrong. Every other reload animation is left to its notetracks and the hand's motion.
+{
+    "profiles": {
+        // The ballistic knife's reloads push a new blade into the handle, and the crossbow's pull the string back and
+        // lay a bolt on: no magazine. Their own guns have no magazine bone, but with a magazine gun in the hand the
+        // hand's motion made up a magazine change.
+        "pt_b_knife_crouch_reload": {"kind": "none"},
+        "pt_b_knife_prone_reload": {"kind": "none"},
+        "pt_b_knife_stand_reload": {"kind": "none"},
+        "pt_crossbow_crouch_reload": {"kind": "none"},
+        "pt_crossbow_prone_reload": {"kind": "none"},
+        "pt_crossbow_stand_reload": {"kind": "none"},
+
+        // The Death Machine's reloads turn the gun about without a magazine; with a magazine gun the stand one made up
+        // a magazine change (the crouch one is too long for T5 to decode, so nothing is worked out of it yet).
+        "pt_minigun_crouch_reload": {"kind": "none"},
+        "pt_minigun_stand_reload": {"kind": "none"},
+
+        // Launchers load a rocket. The M202's reloads say nothing (with a magazine gun the right hand, which holds the
+        // gun, made up a magazine change as the gun swings about), and the SP RPG reloads' attach and detach clip
+        // notetracks are the rocket's, as pt_reload_stand_rpg's are, not a magazine's (with a magazine gun they
+        // dropped one).
+        "pt_m202_crouch_reload": {"kind": "rocket"},
+        "pt_m202_prone_reload": {"kind": "rocket"},
+        "pt_m202_stand_reload": {"kind": "rocket"},
+        "rpg_crouch_reload": {"kind": "rocket"},
+        "rpg_stand_reload": {"kind": "rocket"},
+
+        // Dual wield: the magazines drop as the reload starts, and the guns go down to the hips, where they take the
+        // new ones and stay until those go in (magazine in sounds). The left hand holds the other gun and never comes
+        // to the right one's magazine (12 units at the nearest, 23 at in), so a new magazine held with it floated
+        // that far from it; held with the right hand, which holds the gun, it is in the gun from where the gun
+        // reaches the hip. The crouching one says nothing, so it got no reload at all: its moments are where its gun
+        // does the same.
+        "pt_dw_botharms_reload": {"kind": "dropped", "hand": "right", "swap": 0.42},
+        "pt_prone_dw_botharms_reload": {"kind": "dropped", "hand": "right", "swap": 0.35},
+        "pt_crouch_dw_botharms_reload": {"kind": "dropped", "hand": "right", "out": 0.05, "swap": 0.5, "in": 0.68}
+    }
+}

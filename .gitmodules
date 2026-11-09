@@ -1,0 +1,27 @@
+[submodule "core/third-party/spdlog"]
+	path = core/third-party/spdlog
+	url = https://github.com/gabime/spdlog.git
+[submodule "core/third-party/imgui"]
+	path = core/third-party/imgui
+	url = https://github.com/ocornut/imgui.git
+[submodule "core/third-party/incbin"]
+	path = core/third-party/incbin
+	url = https://github.com/graphitemaster/incbin.git
+[submodule "core/third-party/minhook"]
+	path = core/third-party/minhook
+	url = https://github.com/TsudaKageyu/minhook.git
+[submodule "core/third-party/glm"]
+	path = core/third-party/glm
+	url = https://github.com/g-truc/glm.git
+[submodule "core/third-party/IconFontCppHeaders"]
+	path = core/third-party/IconFontCppHeaders
+	url = https://github.com/juliettef/IconFontCppHeaders
+[submodule "core/third-party/json"]
+	path = core/third-party/json
+	url = https://github.com/nlohmann/json.git
+[submodule "core/third-party/tinyobjloader"]
+	path = core/third-party/tinyobjloader
+	url = https://github.com/tinyobjloader/tinyobjloader.git
+[submodule "core/third-party/magic_enum"]
+	path = core/third-party/magic_enum
+	url = https://github.com/Neargye/magic_enum.git

@@ -1,0 +1,68 @@
+#include "StdInclude.hpp"
+#include "Configuration.hpp"
+
+#include "Utilities/PathUtils.hpp"
+#include "InputConfiguration.hpp"
+#include "PreferencesConfiguration.hpp"
+
+namespace IWXMVM
+{
+    void Configuration::Initialize()
+    {
+        auto configPath = GetUserConfigPath();
+        if (!std::filesystem::exists(configPath.parent_path()))
+        {
+            std::filesystem::create_directories(configPath.parent_path());
+        }
+
+        std::ifstream configFile(configPath);
+        if (!configFile.is_open())
+        {
+            Write();
+            configFile.open(configPath);
+        }
+
+        try
+        {
+            nlohmann::json config = nlohmann::json::parse(configFile);
+            // (saved before there were versions: 1)
+            std::int32_t bindsVersion = 1;
+            ReadValueInto(config, NODE_KEYBINDS_VERSION, bindsVersion);
+            InputConfiguration::Get().Deserialize(config[NODE_KEYBINDS], bindsVersion);
+            PreferencesConfiguration::Get().Deserialize(config[NODE_PREFERENCES]);
+        }
+        catch (const std::exception& e)
+        {
+            LOG_ERROR("Failed to parse config file ({})", e.what());
+        }
+
+        configFile.close();
+
+        Write();
+    }
+
+    void Configuration::Write(bool quiet)
+    {
+        using json = nlohmann::json;
+
+        json config;
+
+        InputConfiguration::Get().Serialize(config[NODE_KEYBINDS]);
+        config[NODE_KEYBINDS_VERSION] = InputConfiguration::BINDS_VERSION;
+        PreferencesConfiguration::Get().Serialize(config[NODE_PREFERENCES]);
+
+        std::ofstream configFile(GetUserConfigPath());
+        configFile << config.dump(4);
+        configFile.close();
+
+        if (!quiet)
+        {
+            LOG_INFO("Wrote config to {}", GetUserConfigPath().string());
+        }
+    }
+
+    std::filesystem::path Configuration::GetUserConfigPath()
+    {
+        return PathUtils::GetModPath() / "config.json";
+    }
+}  // namespace IWXMVM

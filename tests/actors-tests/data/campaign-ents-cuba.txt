@@ -1,0 +1,230 @@
+{
+"origin" "0 0 0"
+"waterlightmapsamplesize" "10000000"
+"maxlightgridcolors" "48000"
+"exposure" "0.5"
+"sunshadowintensity" "25.5"
+"_sunshadowcolor" "0.45 0.45 0.52"
+"sunlight" "16.75"
+"suncolor" "1 0.813 0.7"
+"ambientintensity" "0.5"
+"_ambientcolor" "0.788235 0.870588 0.913725"
+"newsun" "1"
+"sundirection" "-33 21 0"
+"skyboxmodel" "skybox_sp_cuba"
+"classname" "worldspawn"
+}
+{
+"classname" "script_struct"
+"angles" "0 90 0"
+"targetname" "sugar_cane_field"
+"origin" "3259 2916.5 302"
+}
+{
+"angles" "0 180 0"
+"classname" "script_model"
+"targetname" "destructible"
+"destructibledef" "dest_airconditioner_01"
+"model" "dest_airconditioner_01_d0"
+"origin" "-14352 -2897.2 -808.4"
+}
+{
+"angles" "0 159.8 0"
+"classname" "script_model"
+"targetname" "destructible"
+"destructibledef" "dest_airconditioner_01"
+"model" "dest_airconditioner_01_d0"
+"origin" "-14289.9 -1974.4 -793"
+}
+{
+"origin" "-16019.5 -1475.2 -872"
+"angles" "0 339.8 0"
+"classname" "info_player_start"
+}
+{
+"angles" "0 180 0"
+"classname" "script_model"
+"targetname" "destructible"
+"destructibledef" "dest_airconditioner_01"
+"model" "dest_airconditioner_01_d0"
+"origin" "-12634 -1550 -802"
+}
+{
+"classname" "node_scripted"
+"origin" "-15876.6 -1417.9 -920"
+"targetname" "bar_node"
+"angles" "0 69.8 0"
+}
+{
+"angles" "0 69.8 0"
+"length_scale" "1.6"
+"material" "techrope_powerlines"
+"force_length" "1.2"
+"origin" "-15771.4 -1453.42 -728"
+"target" "pf585_auto2"
+"targetname" "pf585_auto1"
+"classname" "rope"
+}
+{
+"model" "*1"
+"origin" "-15716 -1389 -844"
+"classname" "script_brushmodel"
+"script_exploder" "585120"
+"targetname" "bar_window_left"
+}
+{
+"model" "*2"
+"origin" "-15771 -1536 -844"
+"classname" "script_brushmodel"
+"script_exploder" "585130"
+"targetname" "bar_window_right"
+}
+{
+"model" "*3"
+"origin" "-14644 -2171 -760"
+"classname" "trigger_damage"
+"spawnflags" "1056"
+"targetname" "trig_sparks"
+"target" "pf800_auto8"
+}
+{
+"model" "*4"
+"origin" "-14016 -2247 -745"
+"classname" "trigger_damage"
+"spawnflags" "1056"
+"targetname" "trig_sparks"
+"target" "pf801_auto8"
+}
+{
+"origin" "483.21 9229.7 -1102"
+"angles" "0 147 0"
+"model" "t5_veh_truck_gaz63"
+"vehicletype" "truck_gaz63_tanker"
+"classname" "script_vehicle"
+"spawnflags" "2"
+"targetname" "hutch_truck"
+}
+{
+"pl#" "44"
+"classname" "light"
+"angle" "0 0 0"
+"far_edge" "0"
+"near_edge" "0"
+"attenuation" "1 0 0"
+"falloffdistance" "100"
+"radius" "100"
+"cut_on" "0"
+"intensity" "15"
+"_color" "0.933333 0.827451 0.607843"
+"def" "white_light"
+"spawnflags" "141"
+"target" "pf1872_auto12390001"
+"fov_outer" "90"
+"fov_inner" "60"
+"roundness" "1"
+"superellipse" "0.75 1 0.75 1"
+"origin" "-15896 -1668 -836"
+"targetname" "fire_flicker"
+}
+{
+"classname" "actor_Bowman_Cuba"
+"model" "c_usa_specop_lmg_fb"
+"export" "1"
+"spawnflags" "23"
+"script_noteworthy" "squad"
+"script_friendname" "Bowman"
+"script_animname" "bowman"
+"origin" "-15932.6 -1331.6 -911.5"
+"targetname" "bowman"
+"angles" "0 171.8 0"
+"script_forcecolor" "b"
+"script_int" "3"
+}
+{
+"classname" "actor_Woods_Cuba"
+"model" "c_usa_specop_barnes_fb"
+"export" "3"
+"spawnflags" "23"
+"script_noteworthy" "squad"
+"script_friendname" "Woods"
+"script_animname" "woods"
+"origin" "-15953.5 -1393 -911.5"
+"targetname" "woods"
+"angles" "0 153.4 0"
+"script_forcecolor" "r"
+"script_int" "1"
+}
+{
+"classname" "spawn_manager"
+"targetname" "street_spawner_2"
+"target" "pf3386_auto10"
+"sm_count" "10"
+"origin" "-14124 -2365 -808"
+"sm_active_count" "6"
+}
+{
+"classname" "node_pathnode"
+"origin" "-15279 -1892 -928"
+}
+{
+"classname" "node_pathnode"
+"origin" "-15444 -1797 -924.6"
+}
+{
+"classname" "node_pathnode"
+"origin" "-15436 -2005 -928"
+}
+{
+"classname" "info_vehicle_node_rotate"
+"origin" "-13609.5 -3036.4 -897.2"
+"target" "pf3386_auto31"
+"spawnflags" "1"
+"lookahead" "1"
+"speed" "30"
+"targetname" "pf3386_auto73"
+"angles" "0 90 0"
+}
+{
+"spawnflags" "2"
+"script_vehicleride" "4"
+"script_vehiclestartmove" "3"
+"script_vehiclespawngroup" "3"
+"target" "pf3386_auto73"
+"classname" "script_vehicle"
+"vehicletype" "police"
+"model" "t5_veh_police_cuba"
+"angles" "0 90 0"
+"origin" "-13609.5 -3036.4 -911.2"
+"targetname" "police_cars"
+"script_badplace" "0"
+"script_avoidvehicles" "0"
+"script_team" "axis"
+"script_lights_on" "1"
+"script_sirens_on" "1"
+"script_noteworthy" "police_car_5"
+"destructibledef" "veh_cuban_police_destructible"
+}
+{
+"target" "pf3386_auto2108"
+"origin" "-11696 -592 -865"
+"animscript" "mantle_over_36"
+"angles" "0 180 0"
+"classname" "node_negotiation_begin"
+}
+{
+"script_int" "11"
+"target" "pf3399_auto2108"
+"origin" "-5034 -3182 180"
+"animscript" "stairs_down_8x12"
+"angles" "0 270 0"
+"spawnflags" "2048"
+"classname" "node_negotiation_begin"
+"targetname" "traverse"
+}
+{
+"classname" "weapon_skorpion_extclip_sp"
+"model" "t5_weapon_skorpion_world"
+"origin" "-2012.4 -2322.6 -88.5"
+"angles" "359.989 314.869 -89.159"
+"spawnflags" "1"
+}

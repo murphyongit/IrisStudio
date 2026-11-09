@@ -1,0 +1,11 @@
+name: Feature or change
+description: Something new, or something that should work differently
+labels: [enhancement]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What you want
+      description: What it should do and why. An example from your own work helps most (a video, a shot, another tool).
+    validations:
+      required: true
