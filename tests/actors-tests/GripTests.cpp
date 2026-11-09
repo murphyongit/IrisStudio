@@ -385,7 +385,7 @@ TEST("grip: a clip made for the AI goes to the place a player's hand goes, not t
     CHECK(Near(turned * glm::vec3(0, 1, 0), glm::vec3(-0.169f, 0.02f, 0.985f), 0.01f));
 }
 
-TEST("grip: the old rule on that clip is the palm up the owner saw, and each gun goes to its own place")
+TEST("grip: the old rule on that clip is the palm up seen in a film, and each gun goes to its own place")
 {
     const auto over = SolveAi(AK, 0.0f);
     CHECK(over.has_value());

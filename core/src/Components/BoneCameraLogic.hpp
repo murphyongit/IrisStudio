@@ -75,11 +75,12 @@ namespace IWXMVM::Components::BoneCameraLogic
 
     // Takes the view through the frames the game's clock stands still. The clock is whole milliseconds, so at a speed
     // under the frame rate / 1000 it moves on some frames only, and a bone with it, where a free camera moves on all of
-    // them. There the view is the average of the exact view over the real time of the last
-    // millisecond of the clock, which turns its stairs into a slope, whatever frame the bone takes each step on: the
-    // view is on the bone as a step comes and has the step to go after it. While the clock moves every frame it stays
-    // exact, on the bone as drawn. So it does after a jump (see MAX_STEADY_STEP), a cut, another bone or target, or Reset (a recording, whose
-    // frames all move), and with the clock standing (paused) anything that moves the view does so at once.
+    // them. There the view is the exact view averaged twice over the real time of a
+    // millisecond of the clock (as its steps take it), which turns its stairs into a slope, whatever frame the
+    // bone takes each step on, and keeps it moving through a step longer than the others: the view is a step and a half
+    // of the bone behind at most. While the clock moves every frame it stays exact, on the bone as drawn. So it does
+    // after a jump (see MAX_STEADY_STEP), a cut, another bone or target, or Reset (a recording, whose frames all move),
+    // and once the clock has stood two of its milliseconds (paused) anything that moves the view does so at once.
     class Glide
     {
        public:
@@ -102,9 +103,51 @@ namespace IWXMVM::Components::BoneCameraLogic
         double tickTime = 0.0;  // when the clock last moved
         double lastFrame = 0.0;
         double frameLength = 0.0;  // a frame's ms, averaged
+        double stepLength = 0.0;   // a millisecond of the clock in real time, averaged over its steps
         bool gliding = false;
         std::deque<Sample> samples;
+        std::deque<Sample> averaged;  // the first average's views, which the second averages
     };
+
+    // The view a frame's picture is drawn from. The game adds and poses a frame's models
+    // (CG_AddPacketEntities) before it builds the view (CG_CalcViewValues), and hands the two to the render thread
+    // together, so the camera placed from the bones as they were posed is the next view built's, and that one's only.
+    // Views are counted as they are built.
+    class HandOver
+    {
+       public:
+        // The camera placed once the frame's models were posed, with the views built so far
+        void Place(const View& view, std::uint32_t views);
+        // The view to build, the views built so far counting it: the camera placed since the view before, none when it
+        // wasn't (no models were posed, the camera was just chosen, a load)
+        std::optional<View> GetView(std::uint32_t views) const;
+        void Reset();
+
+       private:
+        std::optional<View> placed;
+        std::uint32_t placedAt = 0;
+    };
+
+    // How the pictures drawn followed the bone (the harness's check of the hand-over): each view built against the
+    // camera placed from the bones posed for it, and the views drawn against the views built, in order
+    struct ViewRecord
+    {
+        std::uint32_t views = 0;  // the views built so far
+        glm::vec3 position{0.0f};
+    };
+    struct DrawnCheck
+    {
+        int built = 0;
+        int offBone = 0;  // built from other bones than those of the models drawn with it, or from none
+        int stood = 0;    // built as the view before while the bones had moved: the picture stood, the models went on
+        int drawn = 0;
+        int unknown = 0;       // drawn from a view not built in the window
+        int repeated = 0;      // drawn from the view of the picture before: the camera stood while the models moved
+        int skipped = 0;       // built and never drawn
+        float largest = 0.0f;  // the furthest a picture was from the view it was drawn from
+    };
+    DrawnCheck CheckDrawn(std::span<const ViewRecord> placed, std::span<const ViewRecord> built,
+                          std::span<const glm::vec3> drawn, float tolerance);
 
     // The bones offered first when a target has them, by what they are
     struct NamedBone

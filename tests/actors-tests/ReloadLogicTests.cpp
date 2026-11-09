@@ -348,7 +348,7 @@ TEST("only a reload is worked out from where the hand goes: an animation named o
     CHECK(!ReloadLogic::IsReloadName("ai_viet_exposed_crouch_death_fetal"));
 }
 
-TEST("the owner's Actor 3 dies without a reload: its left hand flails by the magazine, which the hand's path read as one")
+TEST("a user's Actor 3 dies without a reload: its left hand flails by the magazine, which the hand's path read as one")
 {
     // recorded on intro_cinematic: the death of Actor 3's body holding an AK-47
     const auto recorded = ReadRecorded("ai_viet_exposed_crouch_death_fetal");

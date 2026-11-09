@@ -176,7 +176,9 @@ namespace
         Logic::View last;
     };
 
-    GlideRun RunGlide(Logic::Glide& glide, float speed, double frameMs, int frames, double& time, double& film)
+    // (played: how fast the film's clock really goes, when the game plays slower or faster than its speed says)
+    GlideRun RunGlide(Logic::Glide& glide, float speed, double frameMs, int frames, double& time, double& film,
+                      std::optional<float> played = std::nullopt)
     {
         GlideRun run;
         std::optional<glm::vec3> before;
@@ -197,7 +199,7 @@ namespace
             before = view.position;
             run.last = view;
             time += frameMs;
-            film += frameMs * speed;
+            film += frameMs * played.value_or(speed);
         }
         return run;
     }
@@ -231,11 +233,64 @@ TEST("the bone camera glides through the frames the clock stands still, and is e
         const auto expected = 0.2f * speed * static_cast<float>(frameMs);
         CHECK_NEAR(sum / static_cast<float>(run.steps.size()), expected, expected * 0.2f);
         CHECK(Uneven(run.steps) < 0.5f);
-        // it's a millisecond's move behind as the bone steps, and on it as the next step comes
-        CHECK(run.mostBehind < 0.2f * 1.3f);
+        // it's a millisecond and a half of the bone's move behind at most
+        CHECK(run.mostBehind < 0.2f * 1.6f);
         // the angles and FOV go with it
         CHECK(!glm::any(glm::isnan(run.last.angles)));
     }
+}
+
+TEST("the bone camera's glide keeps moving when the game plays slower or faster than its speed (#135)")
+{
+    // at 0.01 the game played 0.0088 (113 ms for each millisecond of the film): an average over 100 ms reached the
+    // bone 13 ms before the next step and stood there
+    for (const auto& [speed, played, frameMs] : {std::tuple(0.01f, 0.0088f, 10.5), std::tuple(0.01f, 0.0112f, 9.0),
+                                                 std::tuple(0.05f, 0.044f, 10.0), std::tuple(0.005f, 0.0044f, 8.0)})
+    {
+        Logic::Glide glide;
+        double time = 1000.0, film = 5000.0;
+        RunGlide(glide, speed, frameMs, 300, time, film, played);
+        const auto run = RunGlide(glide, speed, frameMs, 400, time, film, played);
+        CHECK(run.still == 0);
+        CHECK(Uneven(run.steps) < 0.5f);
+        CHECK(run.mostBehind < 0.2f * 1.6f);
+    }
+}
+
+TEST("the bone camera's glide keeps moving through a step of the clock longer than the others (#135)")
+{
+    // at 0.01 the game's steps came 90 to 128 ms apart, 101 on average: an average over one step got to the bone
+    // before a long one ended and stood a frame or two
+    const std::array<double, 12> stepMs = {90.0, 128.0, 101.0, 95.0, 122.0, 110.0,
+                                           92.0, 127.0, 99.0,  93.0, 118.0, 105.0};
+    Logic::Glide glide;
+    double time = 1000.0, film = 5000.0;
+    std::size_t step = 0;
+    std::vector<float> steps;
+    std::optional<glm::vec3> before;
+    float mostBehind = 0.0f;
+    for (int i = 0; i < 1500; ++i)
+    {
+        const auto tick = static_cast<std::uint32_t>(film);
+        const Logic::View exact{{static_cast<float>(tick) * 0.2f, 0.0f, 0.0f}, {}, 90.0f};
+        const auto view = glide.Step(exact, tick, time, 0.01f, GLIDE_KEY);
+        if (before && i > 300)
+        {
+            steps.push_back(glm::distance(*before, view.position));
+            mostBehind = std::max(mostBehind, glm::distance(view.position, exact.position));
+        }
+        before = view.position;
+        const double frameMs = (i % 7 == 3) ? 9.5 : 8.0;
+        time += frameMs;
+        const auto was = static_cast<std::uint32_t>(film);
+        film += frameMs / stepMs[step % stepMs.size()];
+        if (static_cast<std::uint32_t>(film) != was)
+            ++step;
+    }
+    CHECK(std::ranges::count_if(steps, [](float each) { return each < 1e-5f; }) == 0);
+    CHECK(Uneven(steps) < 0.5f);
+    // a step and a half of the bone behind at most
+    CHECK(mostBehind < 0.2f * 1.6f);
 }
 
 TEST("the bone camera's glide goes by when the bone moves: a player's move a frame after the tick")
@@ -321,11 +376,11 @@ TEST("the bone camera gets to the bone when paused, and a change while paused is
     double time = 1000.0, film = 5000.0;
     RunGlide(glide, 0.01f, 10.0, 200, time, film);
 
-    // the clock stands from here on: it gets there within a millisecond's real time
+    // the clock stands from here on: it gets there within two milliseconds' real time (the two averages)
     const auto tick = static_cast<std::uint32_t>(film);
     Logic::View exact{{static_cast<float>(tick) * 0.2f, 0.0f, 0.0f}, {0.0f, 10.0f, 0.0f}, 70.0f};
     Logic::View view;
-    for (int i = 0; i < 15; ++i, time += 10.0)
+    for (int i = 0; i < 25; ++i, time += 10.0)
         view = glide.Step(exact, tick + 1, time, 0.01f, GLIDE_KEY);
     CheckVector(view.position, exact.position, 0.00001f);
     CheckAngles(view.angles, exact.angles);
@@ -563,4 +618,125 @@ TEST("keys changing the bone camera's fields every frame are no edit, and an edi
     // without keys the FOV's change is an edit as it was
     CHECK(edit.Track(last, Logic::ApplyKeys(last, keys, 2000.0)));
     CHECK(edit.End(Logic::ApplyKeys(last, keys, 2000.0)).has_value());
+}
+
+TEST("the view built takes the camera placed from the bones posed just before it, and only that view")
+{
+    Logic::HandOver handOver;
+    CHECK(!handOver.GetView(1).has_value());
+
+    const Logic::View placed{{10, 20, 30}, {5, 90, 0}, 70};
+    handOver.Place(placed, 4);
+    const auto view = handOver.GetView(5);
+    CHECK(view.has_value());
+    CheckVector(view->position, placed.position);
+    CheckVector(view->angles, placed.angles);
+    CHECK_NEAR(view->fov, 70.0f, 0.001f);
+    // (asked again for the same view, as a view built twice in a frame would)
+    CHECK(handOver.GetView(5).has_value());
+    // a view after the next took no models from that frame, nor did one before it
+    CHECK(!handOver.GetView(6).has_value());
+    CHECK(!handOver.GetView(4).has_value());
+
+    handOver.Place(placed, 6);
+    handOver.Reset();
+    CHECK(!handOver.GetView(7).has_value());
+}
+
+namespace
+{
+    // The game's frames as the bone camera sees them: each poses its models (the bone a
+    // unit further on), places the camera on them, then builds the view that is drawn with them. Without the hand-over
+    // the view is the render thread's camera as its copy finds it, from the bones of the frame before or the one before
+    // that, as the two threads' frames fall (the lags given, one a frame).
+    struct HandOverRun
+    {
+        std::vector<Logic::ViewRecord> placed, built;
+        std::vector<glm::vec3> drawn;
+    };
+
+    HandOverRun RunHandOver(bool handOver, std::span<const int> lags)
+    {
+        Logic::HandOver logic;
+        HandOverRun run;
+        std::uint32_t views = 0;
+        for (std::size_t frame = 0; frame < lags.size(); ++frame)
+        {
+            const glm::vec3 bone(static_cast<float>(frame + 2), 0.0f, 0.0f);
+            logic.Place({bone, glm::vec3(0.0f), 90.0f}, views);
+            run.placed.push_back({views, bone});
+
+            ++views;
+            const auto copied = static_cast<float>(static_cast<int>(frame) + 2 - lags[frame]);
+            const auto view = handOver ? logic.GetView(views)->position : glm::vec3(copied, 0.0f, 0.0f);
+            run.built.push_back({views, view});
+            run.drawn.push_back(view);
+        }
+        return run;
+    }
+}  // namespace
+
+TEST("each picture is drawn from the bones posed for it, where the render thread's camera stood a frame or skipped one")
+{
+    // the lags of the bug's video: the copy a frame behind, now and then two
+    const std::array<int, 16> lags = {1, 1, 2, 1, 1, 2, 2, 1, 2, 1, 1, 1, 2, 1, 2, 1};
+    int stands = 0;
+    for (std::size_t i = 1; i < lags.size(); ++i)
+        stands += lags[i] > lags[i - 1] ? 1 : 0;
+
+    const auto before = RunHandOver(false, lags);
+    const auto beforeCheck = Logic::CheckDrawn(before.placed, before.built, before.drawn, 0.01f);
+    CHECK(beforeCheck.built == 16);
+    CHECK(beforeCheck.offBone == 16);
+    CHECK(beforeCheck.stood == stands);
+    CHECK(beforeCheck.stood > 0);
+
+    const auto now = RunHandOver(true, lags);
+    const auto check = Logic::CheckDrawn(now.placed, now.built, now.drawn, 0.01f);
+    CHECK(check.built == 16);
+    CHECK(check.offBone == 0);
+    CHECK(check.stood == 0);
+    CHECK(check.drawn == 16);
+    CHECK(check.repeated == 0);
+    CHECK(check.skipped == 0);
+    CHECK(check.unknown == 0);
+}
+
+TEST("the check of the pictures drawn tells one drawn twice, one never drawn and one of another camera")
+{
+    std::vector<Logic::ViewRecord> placed, built;
+    for (std::uint32_t views = 1; views <= 6; ++views)
+    {
+        placed.push_back({views - 1, glm::vec3(static_cast<float>(views), 0.0f, 0.0f)});
+        built.push_back({views, glm::vec3(static_cast<float>(views), 0.0f, 0.0f)});
+    }
+    const std::vector<glm::vec3> drawn = {{1, 0, 0}, {2, 0, 0}, {2, 0, 0}, {4, 0, 0}, {5, 0, 0}, {99, 0, 0}, {6, 0, 0}};
+    const auto check = Logic::CheckDrawn(placed, built, drawn, 0.01f);
+    CHECK(check.offBone == 0);
+    CHECK(check.stood == 0);
+    CHECK(check.drawn == 7);
+    CHECK(check.repeated == 1);
+    CHECK(check.skipped == 1);
+    CHECK(check.unknown == 1);
+
+    // paused, every view is the same and so are the bones: nothing stood or repeated
+    std::vector<Logic::ViewRecord> pausedPlaced, pausedBuilt;
+    std::vector<glm::vec3> pausedDrawn;
+    for (std::uint32_t views = 1; views <= 6; ++views)
+    {
+        pausedPlaced.push_back({views - 1, glm::vec3(3.0f)});
+        pausedBuilt.push_back({views, glm::vec3(3.0f)});
+        pausedDrawn.push_back(glm::vec3(3.0f));
+    }
+    const auto paused = Logic::CheckDrawn(pausedPlaced, pausedBuilt, pausedDrawn, 0.01f);
+    CHECK(paused.offBone == 0);
+    CHECK(paused.stood == 0);
+    CHECK(paused.repeated == 0);
+    CHECK(paused.skipped == 0);
+
+    // a view built from another frame's bones is off them
+    built[2].position = glm::vec3(2.0f, 0.0f, 0.0f);
+    const auto off = Logic::CheckDrawn(placed, built, std::vector<glm::vec3>{}, 0.01f);
+    CHECK(off.offBone == 1);
+    CHECK(off.stood == 1);
 }

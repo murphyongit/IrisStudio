@@ -209,7 +209,7 @@ TEST("an actor's models need the zone of its character, else of its burnt twin, 
            std::vector<std::string>{"t5c_khe_sanh_usa_jungmar_banres_khesanh"}));
 }
 
-TEST("a loose full body is a character of its level without a head: the field agent of The Defector (the owner's note 6)")
+TEST("a loose full body is a character of its level without a head: the field agent of The Defector")
 {
     // c_usa_jungmar_fieldagent_fb, which only hue_city's own script spawns (Reznov's reveal), no character script names
     const auto& agent = Get("hue_city/c_usa_jungmar_fieldagent_fb");
@@ -280,7 +280,7 @@ TEST("the map's multiplayer models make a character per body of each faction")
     CHECK(kinds.at("c_rus_spet_mp_body_flak") == ModelKind::Body);
 }
 
-TEST("the map's characters wear their body's own head, made for its cap or hood (the owner's hair through the cap)")
+TEST("the map's characters wear their body's own head, made for its cap or hood (no hair through the cap)")
 {
     using Components::CharacterLogic::GetOwnHead;
     CHECK(GetOwnHead("c_usa_cia_mp_body_armor") == "c_usa_cia_mp_head_1");
@@ -323,7 +323,7 @@ TEST("the map's characters wear their body's own head, made for its cap or hood 
     CHECK(partial.size() == 1 && partial.front().head == "c_usa_cia_mp_head_1");
 }
 
-TEST("an actor saved with the old head_1 gets its body's own, one with another head keeps it (the owner's pick G1)")
+TEST("an actor saved with the old head_1 gets its body's own, one with another head keeps it")
 {
     using Components::CharacterLogic::GiveOwnHead;
     std::vector<std::string> standard{"c_usa_cia_mp_body_standard", "c_usa_cia_mp_head_1"};

@@ -117,6 +117,11 @@ namespace IWXMVM::Components::BoneCameraLogic
         constexpr double GLIDE_ENDS = 0.95;
         // how far a frame's length moves its average
         constexpr double FRAME_AVERAGING = 0.1;
+        // how far a millisecond of the clock in real time moves its average, at each step of the clock; and the range,
+        // about what the speed says, it is taken in (a step further apart than that is a pause)
+        constexpr double STEP_AVERAGING = 0.2;
+        constexpr double STEP_LEAST = 0.5;
+        constexpr double STEP_MOST = 2.0;
         // a view further off than this is a cut (someone spawned): a bone does about 0.5 units in a millisecond
         constexpr float MAX_GLIDE_DISTANCE = 32.0f;
     }  // namespace
@@ -133,48 +138,152 @@ namespace IWXMVM::Components::BoneCameraLogic
             frameLength = frameLength > 0.0 ? frameLength + (frame - frameLength) * FRAME_AVERAGING : frame;
         }
         gliding = speed * frameLength < (gliding ? GLIDE_ENDS : GLIDE_STARTS);
+        // A millisecond of the clock in real time, as its steps take it: the game plays a little slower than its speed
+        // (0.0088 at 0.01), and an average over 1 / speed got to the bone before the next step and stood
+        const auto nominal = speed > 0.0f ? 1.0 / speed : 0.0;
+        if (jump)
+            stepLength = 0.0;
+        else if (now != tick)
+        {
+            const auto step = (time - tickTime) / static_cast<double>(now - tick);
+            if (step >= nominal * STEP_LEAST && step <= nominal * STEP_MOST)
+                stepLength = stepLength > 0.0 ? stepLength + (step - stepLength) * STEP_AVERAGING : step;
+        }
         if (jump || now != tick)
             tickTime = time;
         key = stepKey;
         tick = now;
         lastFrame = time;
 
-        // a millisecond of the clock in real time; once it has stood that long, nothing more is on its way
-        const auto window = speed > 0.0f ? 1.0 / speed : 0.0;
-        if (jump || !gliding || time - tickTime > window)
+        // The view is averaged over that window twice (the second time the first's views): a step of the clock longer
+        // than the others (90 to 128 ms at 0.01) is still on its way through the second when the first has got to the
+        // bone, so no frame stands; once the clock has stood both windows, nothing more is on its way
+        const auto window =
+            stepLength > 0.0 ? std::clamp(stepLength, nominal * STEP_LEAST, nominal * STEP_MOST) : nominal;
+        const Sample current{time, exact.position, rotation, exact.fov};
+        if (jump || !gliding || time - tickTime > 2.0 * window)
         {
-            samples.assign(1, {time, exact.position, rotation, exact.fov});
+            samples.assign(1, current);
+            averaged.assign(1, current);
             return exact;
         }
 
-        samples.push_back({time, exact.position, rotation, exact.fov});
-        const auto start = time - window;
-        while (samples.front().time <= start)
-            samples.pop_front();
-
-        auto position = glm::dvec3(0.0);
-        auto turned = glm::quat(0.0f, 0.0f, 0.0f, 0.0f);
-        double fov = 0.0;
-        auto from = start;
-        for (const auto& sample : samples)
-        {
-            const auto weight = sample.time - from;
-            from = sample.time;
-            position += glm::dvec3(sample.position) * weight;
-            fov += sample.fov * weight;
-            const auto share = static_cast<float>(weight / window);
-            turned += (glm::dot(sample.rotation, rotation) < 0.0f ? -sample.rotation : sample.rotation) * share;
-        }
-        return {glm::vec3(position / window), AxesToAngles(glm::mat3_cast(glm::normalize(turned))),
-                static_cast<float>(fov / window)};
+        // the average over the window of views that each stand for the time since the one before
+        const auto average = [&](std::deque<Sample>& views, const Sample& latest) {
+            views.push_back(latest);
+            const auto start = time - window;
+            while (views.front().time <= start)
+                views.pop_front();
+            auto position = glm::dvec3(0.0);
+            auto turned = glm::quat(0.0f, 0.0f, 0.0f, 0.0f);
+            double fov = 0.0;
+            auto from = start;
+            for (const auto& view : views)
+            {
+                const auto weight = view.time - from;
+                from = view.time;
+                position += glm::dvec3(view.position) * weight;
+                fov += view.fov * weight;
+                const auto share = static_cast<float>(weight / window);
+                turned += (glm::dot(view.rotation, rotation) < 0.0f ? -view.rotation : view.rotation) * share;
+            }
+            return Sample{time, glm::vec3(position / window), glm::normalize(turned), static_cast<float>(fov / window)};
+        };
+        const auto glided = average(averaged, average(samples, current));
+        return {glided.position, AxesToAngles(glm::mat3_cast(glided.rotation)), glided.fov};
     }
 
     void Glide::Reset()
     {
         key.reset();
         frameLength = 0.0;
+        stepLength = 0.0;
         gliding = false;
         samples.clear();
+        averaged.clear();
+    }
+
+    void HandOver::Place(const View& view, std::uint32_t views)
+    {
+        placed = view;
+        placedAt = views;
+    }
+
+    std::optional<View> HandOver::GetView(std::uint32_t views) const
+    {
+        if (!placed || placedAt + 1 != views)
+            return std::nullopt;
+        return placed;
+    }
+
+    void HandOver::Reset()
+    {
+        placed.reset();
+    }
+
+    DrawnCheck CheckDrawn(std::span<const ViewRecord> placed, std::span<const ViewRecord> built,
+                          std::span<const glm::vec3> drawn, float tolerance)
+    {
+        const auto same = [tolerance](const glm::vec3& a, const glm::vec3& b) {
+            return glm::distance(a, b) <= tolerance;
+        };
+        const auto placedFor = [&](std::uint32_t views) {
+            const auto it = std::ranges::find(placed, views - 1, &ViewRecord::views);
+            return it != placed.end() ? std::optional(it->position) : std::nullopt;
+        };
+        DrawnCheck check;
+        for (std::size_t i = 0; i < built.size(); ++i)
+        {
+            ++check.built;
+            const auto from = placedFor(built[i].views);
+            if (!from || !same(*from, built[i].position))
+                ++check.offBone;
+            if (i == 0 || built[i - 1].views + 1 != built[i].views || !same(built[i - 1].position, built[i].position))
+                continue;
+            const auto before = placedFor(built[i - 1].views);
+            if (from && before && !same(*from, *before))
+                ++check.stood;
+        }
+
+        // in order, each picture is drawn from the next view built, the same one again, or one further on (those
+        // between never drawn); the first from any
+        std::optional<std::size_t> current;
+        for (const auto& position : drawn)
+        {
+            ++check.drawn;
+            const auto next = current ? *current + 1 : 0;
+            const auto matched = [&](std::size_t index) {
+                check.largest = std::max(check.largest, glm::distance(built[index].position, position));
+            };
+            if (current && next < built.size() && same(built[next].position, position))
+            {
+                current = next;
+                matched(next);
+                continue;
+            }
+            if (current && same(built[*current].position, position))
+            {
+                ++check.repeated;
+                matched(*current);
+                continue;
+            }
+            std::optional<std::size_t> found;
+            for (auto i = next; i < built.size() && !found; ++i)
+            {
+                if (same(built[i].position, position))
+                    found = i;
+            }
+            if (!found)
+            {
+                ++check.unknown;
+                continue;
+            }
+            if (current)
+                check.skipped += static_cast<int>(*found - next);
+            current = found;
+            matched(*found);
+        }
+        return check;
     }
 
     std::span<const NamedBone> GetNamedBones()

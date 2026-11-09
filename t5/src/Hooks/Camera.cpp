@@ -206,18 +206,28 @@ namespace IWXMVM::T5::Hooks::Camera
         state.fov = value.cameraData.fov;
     }
 
-    // The bone camera follows its bone on the render thread, from the bones of the frame before, and the main thread
-    // would only take that position over in the frame after the next, which left the camera trailing the model it is
-    // attached to. Reading the bone while the view is built doesn't do either: the game works out a DObj's skeleton
-    // once a frame, and the frame it draws the models in starts after the view is built (an actor posed for the frame's
-    // tick there still gave the frame before's bones, 1.5 units behind a running one). So the camera is placed again
+    // The bone camera follows its bone on the render thread, from the bones of a frame before, which a copy then takes
+    // to the main thread at its sync: 1 to 3 frames behind the models, and as the two threads' frames fall, the same
+    // view twice in a row or one left out. So the camera is placed on the main thread
     // once the frame's players and actors are posed and added (CG_AddPacketEntities), from their bones as they are
-    // drawn, and the view built earlier in the frame (from the render thread's camera) is moved there before the scene
-    // is rendered: the camera is on the bone as drawn, at every tick a recording takes. A player that died is followed
-    // through its corpse. The sway is steadied here (BoneCameraLogic::Steady), by the ticks of what it follows, from
-    // the bone as it is when a recording starts, so a recording comes out the same each time.
+    // drawn. The game adds a frame's models before it builds the view it draws them from (CG_CalcViewValues, then the
+    // sync hands both to the render thread; a refdef written after the view was built is never drawn), so that
+    // placement is handed over to the next view built (BoneCameraLogic::HandOver): the camera is on the bone as drawn,
+    // in every picture played and every frame a recording takes. A player that died is followed through its corpse.
+    // The sway is steadied here (BoneCameraLogic::Steady), by the ticks of what it follows, from the bone as it is when
+    // a recording starts, so a recording comes out the same each time.
     Components::BoneCameraLogic::Steady steady;
     bool wasCapturing = false;
+    Components::BoneCameraLogic::HandOver handOver;
+    std::atomic<bool> handOverOn = true;
+    // a demo began to load: what was placed belongs to the demo before
+    std::atomic<bool> demoLoading = false;
+
+    void SetBoneCameraHandOver(bool on)
+    {
+        handOverOn = on;
+    }
+
     // Slowed down, the bone moves only on the frames the game's clock ticks (BoneCameraLogic::Glide). A recording's frames
     // all tick, whatever the speed, so it stays on the bone as drawn.
     Components::BoneCameraLogic::Glide glide;
@@ -239,15 +249,32 @@ namespace IWXMVM::T5::Hooks::Camera
         glideOn = on;
     }
 
-    // the latest frames' placements, for the harness (GetBoneCameraFrames)
+    // the latest frames' placements, the views built and the views drawn, for the harness (GetBoneCameraFrames,
+    // GetBuiltViews, GetDrawnViews)
     constexpr std::size_t KEPT_FRAMES = 512;
+    // the views built in demos so far (CG_CalcViewValues)
+    std::uint32_t viewsBuilt = 0;
     std::mutex framesMutex;
     std::deque<BoneCameraFrame> frames;
+    std::deque<BuiltView> builtViews;
+    std::deque<std::pair<double, glm::vec3>> drawnViews;
 
     std::vector<BoneCameraFrame> GetBoneCameraFrames()
     {
         std::lock_guard lock(framesMutex);
         return {frames.begin(), frames.end()};
+    }
+
+    std::vector<BuiltView> GetBuiltViews()
+    {
+        std::lock_guard lock(framesMutex);
+        return {builtViews.begin(), builtViews.end()};
+    }
+
+    std::vector<std::pair<double, glm::vec3>> GetDrawnViews()
+    {
+        std::lock_guard lock(framesMutex);
+        return {drawnViews.begin(), drawnViews.end()};
     }
 
     namespace
@@ -270,6 +297,12 @@ namespace IWXMVM::T5::Hooks::Camera
                        glm::make_vec3(reinterpret_cast<const float*>(viewInfo + VIEW_ORIGIN)), NowMs()};
         view.views = drawnView && view.time - drawnView->time < 1.0 ? drawnView->views + 1 : 1;
         drawnView = view;
+        if (view.views > 1)
+            return;
+        std::lock_guard lock(framesMutex);
+        drawnViews.push_back({view.time, view.origin});
+        if (drawnViews.size() > KEPT_FRAMES)
+            drawnViews.pop_front();
     }
 
     std::optional<DrawnView> GetDrawnMatrices()
@@ -317,6 +350,9 @@ namespace IWXMVM::T5::Hooks::Camera
         frame.capturing = capturing;
         frame.fromUi = *state.bone;
         frame.time = NowMs();
+        frame.views = viewsBuilt;
+        if (!bone || demoLoading.exchange(false))
+            handOver.Reset();
         if (bone)
         {
             Components::BoneCameraLogic::Transform at{bone->position, bone->axes};
@@ -338,12 +374,30 @@ namespace IWXMVM::T5::Hooks::Camera
             state.fov = view.fov;
             frame.position = view.position;
             frame.angles = view.angles;
+            handOver.Place(view, viewsBuilt);
         }
 
         std::lock_guard lock(framesMutex);
         frames.push_back(frame);
         if (frames.size() > KEPT_FRAMES)
             frames.pop_front();
+    }
+
+    // The view built for the frame's picture: the camera placed from the bones of the models drawn with it (see above)
+    void HandOverBoneCamera(CameraState& state)
+    {
+        if (demoLoading.exchange(false))
+            handOver.Reset();
+        if (const auto view = handOver.GetView(viewsBuilt); view && handOverOn)
+        {
+            state.position = view->position;
+            state.rotation = view->angles;
+            state.fov = view->fov;
+        }
+        std::lock_guard lock(framesMutex);
+        builtViews.push_back({viewsBuilt, state.position, Components::Playback::GetTimelineTick(), NowMs()});
+        if (builtViews.size() > KEPT_FRAMES)
+            builtViews.pop_front();
     }
 
     // cg_thirdPerson decides both the view CG_CalcViewValues builds and whether the player model is drawn, so it is
@@ -422,19 +476,24 @@ namespace IWXMVM::T5::Hooks::Camera
 
         if (Mod::GetGameInterface()->GetGameState() == Types::GameState::InDemo)
         {
+            ++viewsBuilt;
             RecordRenderedView();
             frameState = cameraState ? *cameraState : GetCameraState();
             if (Resampling::AppliesTo(frameState))
                 Resampling::Apply(frameState);
             if (frameState.mode == Components::Camera::Mode::Dolly)
                 ApplyDollyCamera(frameState);
-            // (the bone camera is placed once the frame's models are posed, see OnEntitiesAdded)
+            if (frameState.bone && frameState.isModControlled)
+                HandOverBoneCamera(frameState);
+            else
+                handOver.Reset();
 
             UpdateThirdPerson();
             Loadouts::ProcessPredictedPlayer();
         }
         else
         {
+            handOver.Reset();
             frameThirdPerson.reset();
             Loadouts::ProcessPredictedPlayer();
         }
@@ -717,6 +776,7 @@ namespace IWXMVM::T5::Hooks::Camera
 
         // registered after CameraManager's own listener, so this runs once the camera has been updated for the frame
         Events::RegisterListener(EventType::OnFrame, Resampling::AddSample);
+        Events::RegisterListener(EventType::PreDemoLoad, [] { demoLoading = true; });
     }
 
     void ApplyShellshock()

@@ -30,7 +30,7 @@ TEST("every killstreak is found by its script name, and nothing else is")
     CHECK(Logic::FindKillstreak("") == nullptr);
 }
 
-TEST("the guns the owner named are among the killstreaks, under the game's names")
+TEST("the guns asked for are among the killstreaks, under the game's names")
 {
     CHECK((Logic::FindKillstreak("minigun_mp")->name == "Death Machine"));
     CHECK((Logic::FindKillstreak("m220_tow_mp")->name == "Valkyrie Rockets"));

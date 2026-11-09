@@ -9142,6 +9142,96 @@ namespace IWXMVM::T5::Harness
         return true;
     }
 
+    // bonecam drawn <frames>|capture [label [expect <most off the bone> <most repeated> <most skipped>]]: over that
+    // many frames, or those of the last capture, how the pictures followed the bone: each
+    // view built against the camera placed from the bones of the models drawn with it, and the views the render thread
+    // drew against those built, in order (one drawn twice: the camera stood a picture while the models moved;
+    // one never drawn: it skipped); PASS when each is at most that and every picture was drawn from a view built. It
+    // also logs how many views were built at the timeline tick their placement had.
+    void RunBoneCameraDrawn(std::istringstream& args)
+    {
+        std::string what, label, expect;
+        int mostOff = 0, mostRepeated = 0, mostSkipped = 0;
+        args >> what >> label >> expect >> mostOff >> mostRepeated >> mostSkipped;
+        std::vector<Hooks::Camera::BuiltView> built;
+        auto placedFrames = Hooks::Camera::GetBoneCameraFrames();
+        if (what == "capture")
+        {
+            // (the views built while the last capture ran: those that took a placement it made)
+            const auto end = std::find_if(placedFrames.rbegin(), placedFrames.rend(), [](const auto& frame) {
+                                 return frame.capturing;
+                             }).base();
+            const auto first =
+                std::find_if(std::make_reverse_iterator(end), placedFrames.rend(), [](const auto& frame) {
+                    return !frame.capturing;
+                }).base();
+            built = Hooks::Camera::GetBuiltViews();
+            std::erase_if(built, [&](const auto& view) {
+                return std::none_of(first, end, [&](const auto& frame) { return frame.views + 1 == view.views; });
+            });
+        }
+        else
+        {
+            const auto count = static_cast<std::uint32_t>(std::atoi(what.c_str()));
+            const auto start = mainThreadFrames.load();
+            // (and a few frames more, for the last views built to be drawn)
+            while (mainThreadFrames.load() < start + count + 4)
+                Sleep(5);
+            built = Hooks::Camera::GetBuiltViews();
+            placedFrames = Hooks::Camera::GetBoneCameraFrames();
+            if (built.size() > count + 3)
+                built.erase(built.begin(), built.end() - (count + 3));
+        }
+        if (built.size() < 8)
+            return Log("FAIL bonecam drawn: too few views built");
+        // (pictures drawn before the next view built after these, which can only be of these)
+        double until = std::numeric_limits<double>::max();
+        for (const auto& view : Hooks::Camera::GetBuiltViews())
+        {
+            if (view.views > built.back().views)
+            {
+                until = view.time;
+                break;
+            }
+        }
+
+        std::vector<Components::BoneCameraLogic::ViewRecord> placed, builtRecords;
+        for (const auto& frame : placedFrames)
+            if (frame.placedFrom)
+                placed.push_back({frame.views, frame.position});
+        for (const auto& view : built)
+            builtRecords.push_back({view.views, view.position});
+        // (the pictures drawn from the third view built on: the render thread draws a frame or more behind)
+        std::vector<glm::vec3> drawn;
+        for (const auto& [time, origin] : Hooks::Camera::GetDrawnViews())
+            if (time > built[2].time && time < until)
+                drawn.push_back(origin);
+        const auto check = Components::BoneCameraLogic::CheckDrawn(placed, builtRecords, drawn, 0.002f);
+
+        int sameTick = 0;
+        for (const auto& view : built)
+        {
+            const auto frame = std::ranges::find_if(
+                placedFrames, [&](const auto& each) { return each.placedFrom && each.views + 1 == view.views; });
+            sameTick += frame != placedFrames.end() && frame->timelineTick == view.timelineTick ? 1 : 0;
+        }
+        Log(std::format(
+            "DRAWN {} views built {} | off the bone {}, stood while the bone moved {} | pictures {}, repeated "
+            "{}, skipped {}, not built {}, apart at most {:.4f} | built at their placement's tick {} of {}",
+            label, check.built, check.offBone, check.stood, check.drawn, check.repeated, check.skipped, check.unknown,
+            check.largest, sameTick, built.size()));
+        if (expect == "expect")
+            Log(std::format(
+                "{} bonecam drawn {}: {} off the bone (at most {}), {} repeated (at most {}), {} skipped (at "
+                "most {}), {} not built",
+                check.offBone <= mostOff && check.repeated <= mostRepeated && check.skipped <= mostSkipped &&
+                        check.unknown == 0 && check.drawn > 0
+                    ? "PASS"
+                    : "FAIL",
+                label, check.offBone, mostOff, check.repeated, mostRepeated, check.skipped, mostSkipped,
+                check.unknown));
+    }
+
     // bonecam steps <frames>|capture [label [expect <most uneven> <most still frames> [<most behind>] | dump]]: over that
     // many frames, or those of the last capture, how the camera moved: the frames' rate, the speed that played, the ms
     // each frame gave, and per frame the distance and turn of the camera and the distance of the bone as drawn: their
@@ -9227,6 +9317,9 @@ namespace IWXMVM::T5::Harness
         float behind = 0.0f;
         for (const auto& frame : frames)
         {
+            if (expect == "dump" && !frame.placedFrom)
+                Log(std::format("STEP views {} tick {} time {:.1f} no bone", frame.views, frame.timelineTick,
+                                frame.time));
             if (!frame.placedFrom || frame.settings.steady > 0.0f)
                 continue;
             const auto placed = Components::BoneCameraLogic::Place(
@@ -9234,12 +9327,25 @@ namespace IWXMVM::T5::Harness
                 Components::BoneCameraLogic::MakeFrame(frame.placedFrom->origin, frame.placedFrom->yaw), frame.settings);
             behind = std::max(behind, glm::distance(placed.position, frame.position));
             if (expect == "dump")
-                Log(std::format("STEP tick {} time {:.1f} bone {:.3f} {:.3f} {:.3f} origin {:.3f} {:.3f} {:.3f} camera {:.3f} "
-                                "{:.3f} {:.3f}",
-                                frame.timelineTick, frame.time, frame.placedFrom->position.x,
-                                frame.placedFrom->position.y, frame.placedFrom->position.z, frame.placedFrom->origin.x,
-                                frame.placedFrom->origin.y, frame.placedFrom->origin.z, frame.position.x, frame.position.y,
-                                frame.position.z));
+            {
+                const auto rendered = frame.rendered.value_or(glm::vec3(0.0f));
+                Log(std::format(
+                    "STEP views {} tick {} actor {} time {:.1f} bone {:.3f} {:.3f} {:.3f} origin {:.3f} {:.3f} "
+                    "{:.3f} camera {:.3f} {:.3f} {:.3f} rendered {:.3f} {:.3f} {:.3f}",
+                    frame.views, frame.timelineTick, frame.tick, frame.time, frame.placedFrom->position.x,
+                    frame.placedFrom->position.y, frame.placedFrom->position.z, frame.placedFrom->origin.x,
+                    frame.placedFrom->origin.y, frame.placedFrom->origin.z, frame.position.x, frame.position.y,
+                    frame.position.z, rendered.x, rendered.y, rendered.z));
+            }
+        }
+        if (expect == "dump")
+        {
+            for (const auto& [time, origin] : Hooks::Camera::GetDrawnViews())
+            {
+                if (time >= frames.front().time && time <= frames.back().time + 50.0)
+                    Log(std::format("DRAWN time {:.1f} origin {:.3f} {:.3f} {:.3f}", time, origin.x, origin.y,
+                                    origin.z));
+            }
         }
         const auto camera = summarize(moved);
         Log(std::format("STEPS {} fps {:.0f} played {:.4f} ms{} | moved {} | turned {} | bone {} | behind {:.4f}", label,
@@ -9449,6 +9555,18 @@ namespace IWXMVM::T5::Harness
             std::string state;
             args >> state;
             Hooks::Camera::SetBoneCameraGlide(state != "off");
+        }
+        else if (action == "handover")
+        {
+            // bonecam handover on|off: the view built from the camera placed on the bones drawn with it, or from the
+            // render thread's camera, as it was before the hand-over
+            std::string state;
+            args >> state;
+            Hooks::Camera::SetBoneCameraHandOver(state != "off");
+        }
+        else if (action == "drawn")
+        {
+            RunBoneCameraDrawn(args);
         }
         else if (action == "reset")
         {

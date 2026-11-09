@@ -416,7 +416,7 @@ TEST("vehicles: a long flight cruises at its speed, a short one peaks lower, and
     CHECK(GetSteps(car, RCXD, 900, car.clips[1].start + car.clips[1].blendIn + 200).speed < 10.0f);
 }
 
-TEST("vehicles: the owner's two flights have no speed step over 10 u/s in 10 ms nor a pitch step over 1 degree")
+TEST("vehicles: two recorded flights have no speed step over 10 u/s in 10 ms nor a pitch step over 1 degree")
 {
     const auto animations = Animations();
     // the first: a start, its second point placed 788 units on and 150 up (it set off at full speed and stopped dead)
@@ -624,7 +624,7 @@ TEST("vehicles: a flight's clips too short for its path never fly it faster than
     CHECK(Killstreaks::GetTopSpeed(COBRA) == Killstreaks::FromMph(60.0f));
 }
 
-TEST("vehicles: the owner's loop fitted again to its path flies it at its cruise, its yaw, pitch and roll smooth")
+TEST("vehicles: a loop fitted again to its path flies it at its cruise, its yaw, pitch and roll smooth")
 {
     // a change of its path fits its flight again (as placing its points does): speeding up over 3.5 s, cruising, slowing
     // to rest at its end, its corners at no more than a 1.3 degree turn, a degree of pitch and 1.25 of roll a frame
