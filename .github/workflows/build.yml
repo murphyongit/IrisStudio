@@ -1,0 +1,70 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # The DirectX SDK (June 2010): only its headers and 32-bit libraries, out of Microsoft's installer
+      - name: DirectX SDK
+        shell: pwsh
+        run: |
+          curl.exe -L --retry 3 -o dxsdk.exe https://download.microsoft.com/download/A/E/7/AE743F1F-632B-4809-87A9-AA1BB3458E31/DXSDK_Jun10.exe
+          7z x dxsdk.exe DXSDK/Include -odxsdk -y | Out-Null
+          7z x dxsdk.exe DXSDK/Lib/x86 -odxsdk -y | Out-Null
+          "DXSDK_DIR=$env:GITHUB_WORKSPACE\dxsdk\DXSDK\" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - uses: microsoft/setup-msbuild@v2
+
+      - name: Build
+        shell: pwsh
+        run: |
+          msbuild IWXMVM.sln /t:launcher /p:Configuration=Release /p:Platform=x86 /m /v:minimal /nologo
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          msbuild IWXMVM.sln /t:injector /p:Configuration=Release /p:Platform=x86 /m /v:minimal /nologo
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Unit tests
+        shell: pwsh
+        run: |
+          msbuild IWXMVM.sln /t:actors-tests /p:Configuration=Release /p:Platform=x86 /m /v:minimal /nologo
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          & tests\bin\Win32\Release\actors-tests.exe
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory dist | Out-Null
+          Copy-Item launcher\bin\Win32\Release\IrisStudio.exe dist\
+          Copy-Item t5\bin\Win32\Release\T5iris.dll dist\
+          Copy-Item tools\injector\bin\Win32\Release\injector.exe dist\ -ErrorAction SilentlyContinue
+          Get-ChildItem dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: IrisStudio
+          path: dist/
+
+      # IrisStudio.exe as a plain file on the Releases page:
+      # https://github.com/murphyongit/IrisStudio/releases/latest/download/IrisStudio.exe
+      - name: Publish release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view latest *> $null
+          if ($LASTEXITCODE -eq 0) { gh release delete latest --yes --cleanup-tag }
+          $notes = "Build of commit ${{ github.sha }}. Replace your IrisStudio.exe with this one (settings, scenes and keyframes are kept)."
+          gh release create latest dist/IrisStudio.exe dist/T5iris.dll --title "Latest build (sky controls)" --notes $notes --target ${{ github.sha }}
