@@ -132,6 +132,7 @@
     <ClCompile Include="src\Hooks\Loadouts.cpp" />
     <ClCompile Include="src\CampaignMaps.cpp" />
     <ClCompile Include="src\MapMenu.cpp" />
+    <ClCompile Include="src\Sky.cpp" />
     <ClCompile Include="src\Surfaces.cpp" />
     <ClCompile Include="src\Textures.cpp" />
     <ClCompile Include="src\ContentPacks.cpp" />
@@ -173,6 +174,7 @@
     <ClInclude Include="src\Hooks\Loadouts.hpp" />
     <ClInclude Include="src\CampaignMaps.hpp" />
     <ClInclude Include="src\MapMenu.hpp" />
+    <ClInclude Include="src\Sky.hpp" />
     <ClInclude Include="src\Surfaces.hpp" />
     <ClInclude Include="src\Textures.hpp" />
     <ClInclude Include="src\ContentPacks.hpp" />

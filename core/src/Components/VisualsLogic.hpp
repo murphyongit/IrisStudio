@@ -70,14 +70,15 @@ namespace IWXMVM::Components::VisualsLogic
         Hud,
         MapEffects,
         Sun,
+        Sky,
         Quality,
         Filmtweaks,
         ReShade,
         DepthOfField,
     };
     inline constexpr std::array SECTIONS = {Section::Hud,        Section::MapEffects, Section::Sun,
-                                            Section::Quality,    Section::Filmtweaks, Section::ReShade,
-                                            Section::DepthOfField};
+                                            Section::Sky,        Section::Quality,    Section::Filmtweaks,
+                                            Section::ReShade,    Section::DepthOfField};
     // as config.json keeps it and the harness names it (visuals.section.<name>)
     std::string_view GetSectionName(Section section);
     // the section that shows a property's row, none for a property that isn't the tab's
@@ -101,7 +102,7 @@ namespace IWXMVM::Components::VisualsLogic
 
     // Whether a game shows a control for a property: Black Ops' per range filmtweaks only with
     // Features_FilmtweakRanges, the one contrast, Brightness, Desaturation and Invert of the other games only without
-    // (Black Ops registers their dvars but never reads them), Shadow Distance only with Features_ShadowQuality, Surface Depth and Bump Strength only with Features_SurfaceDepth; ReShade's values none (keyed in its own section)
+    // (Black Ops registers their dvars but never reads them), Shadow Distance only with Features_ShadowQuality, Surface Depth and Bump Strength only with Features_SurfaceDepth, the Sky's only with Features_Sky; ReShade's values none (keyed in its own section)
     bool IsUsed(Types::KeyframeablePropertyType property, Types::Features features);
 
     // An edit of the settings on the tab: from the frame a control first changes them until no control is active (a

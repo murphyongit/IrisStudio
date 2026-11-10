@@ -6,6 +6,7 @@
 
 #include "Events.hpp"
 #include "Mod.hpp"
+#include "Skybox.hpp"
 #include "SurfaceLogic.hpp"
 #include "TextureLogic.hpp"
 #include "TexturePack.hpp"
@@ -129,6 +130,13 @@ namespace IWXMVM::Components::SurfaceDepth
         typedef HRESULT(__stdcall* CreatePixelShader_t)(IDirect3DDevice9* device, const DWORD* function,
                                                          IDirect3DPixelShader9** shader);
         CreatePixelShader_t CreatePixelShader;
+
+        // what to draw for a texture the game sets: a texture pack's in place of the game's, and the sky turned and
+        // graded in place of the map's (Skybox, which bakes from what the pack would draw)
+        IDirect3DBaseTexture9* Drawn(IDirect3DBaseTexture9* texture)
+        {
+            return Skybox::Swap(texture, TexturePack::Swap(texture));
+        }
 
         // shaders made since the render thread last looked (on any thread, as zones load): one made where a released
         // one was isn't that one, so what was made for the old one goes
@@ -421,7 +429,7 @@ namespace IWXMVM::Components::SurfaceDepth
             if (!takenSampler)
                 return;
             const auto stage = static_cast<DWORD>(*takenSampler);
-            SetTexture(device, stage, TexturePack::Swap(gameTextures[stage]));
+            SetTexture(device, stage, Drawn(gameTextures[stage]));
             for (std::size_t i = 0; i < HEIGHT_SAMPLER_STATES.size(); ++i)
                 device->SetSamplerState(stage, HEIGHT_SAMPLER_STATES[i], takenStates[i]);
             takenSampler.reset();
@@ -499,8 +507,8 @@ namespace IWXMVM::Components::SurfaceDepth
             if (stage >= gameTextures.size() || GetCurrentThreadId() != renderThread)
                 return SetTexture(device, stage, texture);
             gameTextures[stage] = texture;
-            // (a texture pack's in place of the game's)
-            const auto result = SetTexture(device, stage, TexturePack::Swap(texture));
+            // (a texture pack's in place of the game's, the turned and graded sky in place of the map's)
+            const auto result = SetTexture(device, stage, Drawn(texture));
             if (current && (static_cast<std::int32_t>(stage) == current->normalSampler || takenSampler == stage))
                 Bind(device);
             return result;
@@ -685,6 +693,11 @@ namespace IWXMVM::Components::SurfaceDepth
             if (const auto device = D3D9::GetDevice(); device && !stopped)
                 OnFrame(device);
         });
+    }
+
+    HRESULT SetTextureDirect(IDirect3DDevice9* device, DWORD stage, IDirect3DBaseTexture9* texture)
+    {
+        return SetTexture ? SetTexture(device, stage, texture) : device->SetTexture(stage, texture);
     }
 
     void Shutdown(IDirect3DDevice9* device)

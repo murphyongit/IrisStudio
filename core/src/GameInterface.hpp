@@ -27,6 +27,7 @@
 #include "Types/MapEffects.hpp"
 #include "Types/NormalMap.hpp"
 #include "Types/PackImages.hpp"
+#include "Types/SkyImage.hpp"
 #include "Utilities/PathUtils.hpp"
 
 namespace IWXMVM
@@ -211,6 +212,12 @@ namespace IWXMVM
         // The normal maps of the map's surfaces and props (Components::SurfaceDepth), none in
         // a game that can't tell
         virtual std::vector<Types::NormalMap> GetMapNormalMaps()
+        {
+            return {};
+        }
+        // The images of the map's sky (Components::Skybox): those of the map's materials drawn as sky; none in a game
+        // that can't tell. Read after each demo's load, as GetMapNormalMaps is.
+        virtual std::vector<Types::SkyImage> GetSkyImages()
         {
             return {};
         }

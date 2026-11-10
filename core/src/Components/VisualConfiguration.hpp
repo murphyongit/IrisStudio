@@ -2,6 +2,7 @@
 #include "Types/Filmtweaks.hpp"
 #include "Types/Dof.hpp"
 #include "Types/HudInfo.hpp"
+#include "Components/SkyLogic.hpp"
 
 namespace IWXMVM::Components
 {
@@ -32,6 +33,9 @@ namespace IWXMVM::Components
             bool surfaceDepth = false;
             float surfaceDepthAmount = 1.0f;
             float bumpStrength = 1.0f;
+
+            // SKY (Features_Sky, Components::Skybox): the map's sky turned and graded; at the defaults, the game's own
+            SkyLogic::Grade sky;
         };
 
         static bool Load(std::filesystem::path file, Settings& visuals);

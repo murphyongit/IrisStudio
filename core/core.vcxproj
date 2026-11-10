@@ -173,6 +173,8 @@
     <ClCompile Include="src\Components\AddressSpaceLogic.cpp" />
     <ClCompile Include="src\Components\QualityLogic.cpp" />
     <ClCompile Include="src\Components\RestartLogic.cpp" />
+    <ClCompile Include="src\Components\SkyLogic.cpp" />
+    <ClCompile Include="src\Components\Skybox.cpp" />
     <ClCompile Include="src\Components\SurfaceDepth.cpp" />
     <ClCompile Include="src\Components\SurfaceLogic.cpp" />
     <ClCompile Include="src\Components\TexturePack.cpp" />
@@ -319,11 +321,14 @@
     <ClInclude Include="src\Components\AddressSpaceLogic.hpp" />
     <ClInclude Include="src\Components\QualityLogic.hpp" />
     <ClInclude Include="src\Components\RestartLogic.hpp" />
+    <ClInclude Include="src\Components\SkyLogic.hpp" />
+    <ClInclude Include="src\Components\Skybox.hpp" />
     <ClInclude Include="src\Components\SurfaceDepth.hpp" />
     <ClInclude Include="src\Components\SurfaceLogic.hpp" />
     <ClInclude Include="src\Components\TexturePack.hpp" />
     <ClInclude Include="src\Components\TextureLogic.hpp" />
     <ClInclude Include="src\Types\NormalMap.hpp" />
+    <ClInclude Include="src\Types\SkyImage.hpp" />
     <ClInclude Include="src\Components\DemoModLogic.hpp" />
     <ClInclude Include="src\Components\CaptureWatch.hpp" />
     <ClInclude Include="src\Configuration\Configuration.hpp" />

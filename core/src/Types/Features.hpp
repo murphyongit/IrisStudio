@@ -35,5 +35,8 @@ namespace IWXMVM::Types
         // GetPackImages gives the images the game has registered with the groups of what uses them, for texture packs
         // (Components::TexturePack and the Look tab's Textures)
         Features_TexturePack = 1 << 8,
+
+        // GetSkyImages gives the images of the map's sky, for the Look tab's Sky (Components::Skybox)
+        Features_Sky = 1 << 9,
     };
 }  // namespace IWXMVM::Types

@@ -147,6 +147,20 @@ namespace IWXMVM::Components::VisualsLogic
             MakeSetting("iris_bumpstrength", "Bump Strength", Kind::Number, Property::BumpStrength,
                         [](Settings& s) -> float& { return s.bumpStrength; }),
 
+            // SKY: the map's sky turned and graded (names of the mod's, as the game has none)
+            MakeSetting("iris_skyhue", "Sky Hue", Kind::Number, Property::SkyHue,
+                        [](Settings& s) -> float& { return s.sky.hue; }),
+            MakeSetting("iris_skysaturation", "Sky Saturation", Kind::Number, Property::SkySaturation,
+                        [](Settings& s) -> float& { return s.sky.saturation; }),
+            MakeSetting("iris_skybrightness", "Sky Brightness", Kind::Number, Property::SkyBrightness,
+                        [](Settings& s) -> float& { return s.sky.brightness; }),
+            MakeSetting("iris_skycontrast", "Sky Contrast", Kind::Number, Property::SkyContrast,
+                        [](Settings& s) -> float& { return s.sky.contrast; }),
+            MakeSetting("iris_skytint", "Sky Tint", Kind::Color, Property::SkyTint,
+                        [](Settings& s) -> glm::vec3& { return s.sky.tint; }),
+            MakeSetting("iris_skyrotation", "Sky Rotation", Kind::Values, Property::SkyRotation,
+                        [](Settings& s) -> glm::vec3& { return s.sky.rotation; }),
+
             // MISC
             MakeSetting("cg_draw2d", "2D Elements", Kind::Shown, std::nullopt,
                         [](Settings& s) -> bool& { return s.hudInfo.show2DElements; }),
@@ -185,6 +199,8 @@ namespace IWXMVM::Components::VisualsLogic
                 return Section::Sun;
             if (setting.dvar.starts_with("r_filmtweak"))
                 return Section::Filmtweaks;
+            if (setting.dvar.starts_with("iris_sky"))
+                return Section::Sky;
             if (setting.dvar.starts_with("iris_"))
                 return Section::Quality;
             return Section::Hud;
@@ -201,6 +217,8 @@ namespace IWXMVM::Components::VisualsLogic
                 return "mapeffects";
             case Section::Sun:
                 return "sun";
+            case Section::Sky:
+                return "sky";
             case Section::Quality:
                 return "quality";
             case Section::Filmtweaks:
@@ -401,6 +419,13 @@ namespace IWXMVM::Components::VisualsLogic
             case Property::SurfaceDepth:
             case Property::BumpStrength:
                 return features & Types::Features_SurfaceDepth;
+            case Property::SkyHue:
+            case Property::SkySaturation:
+            case Property::SkyBrightness:
+            case Property::SkyContrast:
+            case Property::SkyTint:
+            case Property::SkyRotation:
+                return features & Types::Features_Sky;
             default:
                 return true;
         }

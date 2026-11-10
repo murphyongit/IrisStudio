@@ -4,6 +4,7 @@
 #include "MinHook.h"
 
 #include "Components/CaptureManager.hpp"
+#include "Components/Skybox.hpp"
 #include "Components/SurfaceDepth.hpp"
 #include "Components/TexturePack.hpp"
 #include "Events.hpp"
@@ -122,6 +123,7 @@ namespace IWXMVM::D3D9
 
         Components::SurfaceDepth::OnNewDevice();
         Components::TexturePack::OnReset();
+        Components::Skybox::OnNewDevice();
         ReShade::OnDeviceCreated();
         HRESULT hr = CreateDevice(pInterface, Adapter, DeviceType, hFocusWindow, BehaviorFlags, pPresentationParameters,
             ppReturnedDeviceInterface);
@@ -189,6 +191,7 @@ namespace IWXMVM::D3D9
             ReShade::Shutdown();
             Components::SurfaceDepth::Shutdown(GetDevice());
             Components::TexturePack::Shutdown();
+            Components::Skybox::Shutdown();
             if (UI::UIManager::Get().IsInitialized())
             {
                 GFX::GraphicsManager::Get().Uninitialize();
@@ -525,6 +528,7 @@ namespace IWXMVM::D3D9
 
         Components::SurfaceDepth::OnReset(pDevice);
         Components::TexturePack::OnReset();
+        Components::Skybox::OnReset();
         ReShade::OnDeviceReset();
         const bool restarting = Components::CaptureManager::Get().IsRestarting();
         const auto resetStarted = GetTickCount64();
@@ -731,6 +735,7 @@ namespace IWXMVM::D3D9
             (std::uintptr_t*)&SetDepthStencilSurface);
         Components::SurfaceDepth::Install(d3d9DeviceVTable);
         Components::TexturePack::Install();
+        Components::Skybox::Install();
         
         if (reshadeEndSceneAddress.has_value())
         {

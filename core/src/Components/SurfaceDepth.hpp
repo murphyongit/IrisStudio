@@ -44,6 +44,10 @@ namespace IWXMVM::Components::SurfaceDepth
     void SetShadow(float shadow);
     float GetShadow();
 
+    // Sets a texture past the hook, for the mod's own drawing (Skybox's bake): neither swapped nor taken for one the
+    // game set
+    HRESULT SetTextureDirect(IDirect3DDevice9* device, DWORD stage, IDirect3DBaseTexture9* texture);
+
     // before the device resets, on the render thread: the heights on the card go, and come back from their files
     void OnReset(IDirect3DDevice9* device);
     // before the game makes a new device (a mod loaded with loadmod): what was made on the old one goes, as drawing

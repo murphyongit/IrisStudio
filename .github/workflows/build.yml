@@ -49,7 +49,7 @@ jobs:
           New-Item -ItemType Directory dist | Out-Null
           Copy-Item launcher\bin\Win32\Release\IrisStudio.exe dist\
           Copy-Item t5\bin\Win32\Release\T5iris.dll dist\
-          Copy-Item tools\injector\bin\Win32\Release\injector.exe dist\ -ErrorAction SilentlyContinue
+          Copy-Item tools\bin\Win32\Release\injector.exe dist\ -ErrorAction SilentlyContinue
           Get-ChildItem dist
 
       - uses: actions/upload-artifact@v4

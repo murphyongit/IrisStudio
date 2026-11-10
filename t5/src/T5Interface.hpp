@@ -11,6 +11,7 @@
 #include "ContentPacks.hpp"
 #include "PoolGrowth.hpp"
 #include "CampaignMaps.hpp"
+#include "Sky.hpp"
 #include "Surfaces.hpp"
 #include "Textures.hpp"
 #include "Actors.hpp"
@@ -892,7 +893,7 @@ namespace IWXMVM::T5
                                                 Types::Features_DemoEvents | Types::Features_RenderSize |
                                                 Types::Features_ChangeLoadouts | Types::Features_Actors |
                                                 Types::Features_ShadowQuality | Types::Features_SurfaceDepth |
-                                                Types::Features_TexturePack);
+                                                Types::Features_TexturePack | Types::Features_Sky);
         }
 
         void LoadContentPack(const std::string& name) final
@@ -935,6 +936,11 @@ namespace IWXMVM::T5
         std::vector<Types::NormalMap> GetMapNormalMaps() final
         {
             return Surfaces::GetMapNormalMaps();
+        }
+
+        std::vector<Types::SkyImage> GetSkyImages() final
+        {
+            return Sky::GetSkyImages();
         }
 
         std::optional<Types::PackImages> GetPackImages() final

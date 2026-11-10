@@ -66,6 +66,9 @@ namespace IWXMVM::UI
         void SetHiddenMapEffects(const std::string& level, const std::set<std::string>& hidden);
         void RenderDOF();
         void RenderSun();
+        // The Sky section (Features_Sky): the map's sky turned (yaw, pitch, roll) and graded (hue, saturation,
+        // brightness, contrast, tint), settings of the tab, keyed and in presets (Components::Skybox draws them)
+        void RenderSky();
         // The Quality section (Features_ShadowQuality): Shadow distance, a setting of
         // the tab (keyed and in presets), the same while working and while Record runs; Shadow quality this PC's, with
         // a value for each (Components::QualityLogic); with Features_SurfaceDepth, Surface depth's On or Off, its Depth
@@ -96,6 +99,8 @@ namespace IWXMVM::UI
         void ApplySceneShadows();
         // Surface depth's rows, to the game's drawing (Components::SurfaceDepth); each frame, as keys change them
         void UpdateSurfaces();
+        // the Sky's grade, to the game's drawing (Components::Skybox); each frame, as keys change it
+        void UpdateSky();
         void SetQuality(const Components::QualityLogic::Settings& settings);
 
         // Keyed settings take their keys' values at the playhead, those the tab doesn't show now too (a range's tab

@@ -314,7 +314,7 @@ TEST("an edit's step undoes and redoes only what it changed, and joins a key's e
 TEST("every setting of the tab is in presets, as before: names, values and the colors' fourth value")
 {
     const auto& settings = VisualsLogic::GetSettings();
-    CHECK(settings.size() == 42);
+    CHECK(settings.size() == 48);
     // (the Quality section's Shadow Distance in units, and Surface depth's three rows, under names of the mod's: not
     // the game's dvars)
     CHECK(VisualsLogic::FindSetting("iris_shadowdistance")->valueCount == 1);
@@ -396,6 +396,8 @@ TEST("Visuals: a key's row is in its section")
     CHECK(Logic::GetSection(Property::FilmtweakTintMid) == Logic::Section::Filmtweaks);
     CHECK(Logic::GetSection(Property::ShadowDistance) == Logic::Section::Quality);
     CHECK(Logic::GetSection(Property::BumpStrength) == Logic::Section::Quality);
+    CHECK(Logic::GetSection(Property::SkyHue) == Logic::Section::Sky);
+    CHECK(Logic::GetSection(Property::SkyRotation) == Logic::Section::Sky);
     // (not the tab's)
     CHECK(!Logic::GetSection(Property::CampathCamera).has_value());
 }
@@ -436,4 +438,45 @@ TEST("Visuals: the Sun's Brightness bar holds the map's own")
     CHECK(VisualsLogic::GetSunBrightnessMax(13.0f) == 26.0f);
     // (a dim map keeps a bar to drag on)
     CHECK(VisualsLogic::GetSunBrightnessMax(1.0f) == 4.0f);
+}
+
+TEST("the Sky's settings are in presets under names of the mod's, keyed, and shown only where the game has a sky")
+{
+    const auto hue = VisualsLogic::FindSetting("iris_skyhue");
+    const auto tint = VisualsLogic::FindSetting("iris_skytint");
+    const auto rotation = VisualsLogic::FindSetting("iris_skyrotation");
+    CHECK(hue && hue->valueCount == 1 && hue->property == Property::SkyHue);
+    CHECK(tint && tint->valueCount == 4 && tint->property == Property::SkyTint);
+    CHECK(rotation && rotation->valueCount == 3 && rotation->property == Property::SkyRotation);
+
+    // written and read back: the same sky
+    auto settings = MakeSettings();
+    settings.sky.hue = -40.0f;
+    settings.sky.saturation = 1.4f;
+    settings.sky.tint = glm::vec3(1.0f, 0.8f, 0.6f);
+    settings.sky.rotation = glm::vec3(90.0f, 5.0f, -2.0f);
+    Settings read{};
+    for (const auto& setting : VisualsLogic::GetSettings())
+    {
+        std::array<float, 4> values{};
+        setting.write(settings, values.data());
+        setting.read(read, values.data());
+    }
+    CHECK(read.sky == settings.sky);
+
+    // a key's value sets the grade
+    CHECK(VisualsLogic::SetValue(read, Property::SkyRotation, Types::KeyframeValue(glm::vec3(180.0f, 0.0f, 0.0f))));
+    CHECK(read.sky.rotation.x == 180.0f);
+    CHECK(VisualsLogic::GetValue(read, Property::SkyHue)->floatingPoint == -40.0f);
+
+    // a changed sky marks its section, and only it
+    const auto defaults = MakeSettings();
+    auto changed = defaults;
+    changed.sky.brightness = 2.0f;
+    CHECK(VisualsLogic::GetMarks(VisualsLogic::Section::Sky, changed, defaults, {}).changed);
+    CHECK(!VisualsLogic::GetMarks(VisualsLogic::Section::Quality, changed, defaults, {}).changed);
+    CHECK(VisualsLogic::DescribeChange(VisualsLogic::GetChanged(defaults, changed), changed) == "change Sky Brightness");
+
+    CHECK(VisualsLogic::IsUsed(Property::SkyTint, Types::Features_Sky));
+    CHECK(!VisualsLogic::IsUsed(Property::SkyTint, Types::Features_SurfaceDepth));
 }

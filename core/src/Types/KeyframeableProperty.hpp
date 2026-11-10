@@ -53,6 +53,15 @@ namespace IWXMVM::Types
         BoneCameraRotation,
         BoneCameraFov,
 
+        // The Look tab's Sky (Features_Sky, Components::SkyLogic::Grade): the sky's hue (degrees), saturation,
+        // brightness and contrast, its tint (R, G, B) and its rotation (yaw, pitch, roll in degrees)
+        SkyHue,
+        SkySaturation,
+        SkyBrightness,
+        SkyContrast,
+        SkyTint,
+        SkyRotation,
+
         // Properties made at run time (Components::RuntimeProperties): ReShade's values and
         // effects, ReShade and up, one type each. Past magic_enum's range, so they have no enum name and aren't among
         // its values; keyframe files name them by their id.

@@ -5,6 +5,7 @@
 #include "Utilities/MathUtils.hpp"
 #include "KeyframeSerializer.hpp"
 #include "RuntimeProperties.hpp"
+#include "SkyLogic.hpp"
 #include "../UI/Components/TimelineGraph.hpp"
 #include "../UI/TimelineSelection.hpp"
 #include "Markers.hpp"
@@ -188,6 +189,31 @@ namespace IWXMVM::Components
                                                       ICON_FA_BONE " Bone Camera FOV",
                                                       Types::KeyframeValueType::FloatingPoint, 1, 160);
 
+    // the Look tab's Sky (the sliders' ranges, Components::SkyLogic)
+    Types::KeyframeableProperty skyHueProperty(Types::KeyframeablePropertyType::SkyHue, ICON_FA_CLOUD_SUN " Sky Hue",
+                                               Types::KeyframeValueType::FloatingPoint, Components::SkyLogic::MIN_HUE,
+                                               Components::SkyLogic::MAX_HUE);
+    Types::KeyframeableProperty skySaturationProperty(Types::KeyframeablePropertyType::SkySaturation,
+                                                      ICON_FA_CLOUD_SUN " Sky Saturation",
+                                                      Types::KeyframeValueType::FloatingPoint, 0,
+                                                      Components::SkyLogic::MAX_SATURATION);
+    Types::KeyframeableProperty skyBrightnessProperty(Types::KeyframeablePropertyType::SkyBrightness,
+                                                      ICON_FA_CLOUD_SUN " Sky Brightness",
+                                                      Types::KeyframeValueType::FloatingPoint, 0,
+                                                      Components::SkyLogic::MAX_BRIGHTNESS);
+    Types::KeyframeableProperty skyContrastProperty(Types::KeyframeablePropertyType::SkyContrast,
+                                                    ICON_FA_CLOUD_SUN " Sky Contrast",
+                                                    Types::KeyframeValueType::FloatingPoint, 0,
+                                                    Components::SkyLogic::MAX_CONTRAST);
+    Types::KeyframeableProperty skyTintProperty(Types::KeyframeablePropertyType::SkyTint, ICON_FA_CLOUD_SUN " Sky Tint",
+                                                Types::KeyframeValueType::Vector3, 0, Components::SkyLogic::MAX_TINT,
+                                                {"R", "G", "B"});
+    Types::KeyframeableProperty skyRotationProperty(Types::KeyframeablePropertyType::SkyRotation,
+                                                    ICON_FA_CLOUD_SUN " Sky Rotation",
+                                                    Types::KeyframeValueType::Vector3,
+                                                    -Components::SkyLogic::MAX_ROTATION,
+                                                    Components::SkyLogic::MAX_ROTATION, {"Yaw", "Pitch", "Roll"});
+
     void KeyframeManager::Initialize()
     {
         auto InitializeProperty = [&](auto property) {
@@ -230,6 +256,12 @@ namespace IWXMVM::Components
         InitializeProperty(boneCameraOffsetProperty);
         InitializeProperty(boneCameraRotationProperty);
         InitializeProperty(boneCameraFovProperty);
+        InitializeProperty(skyHueProperty);
+        InitializeProperty(skySaturationProperty);
+        InitializeProperty(skyBrightnessProperty);
+        InitializeProperty(skyContrastProperty);
+        InitializeProperty(skyTintProperty);
+        InitializeProperty(skyRotationProperty);
 
         static bool justLoadedDemo = false;
 

@@ -12,6 +12,8 @@
 #include "Components/KeyframeLogic.hpp"
 #include "Components/ReShadeKeys.hpp"
 #include "Components/RuntimeProperties.hpp"
+#include "Components/Skybox.hpp"
+#include "Components/SkyLogic.hpp"
 #include "Components/SurfaceDepth.hpp"
 #include "Components/SurfaceLogic.hpp"
 #include "Components/TexturePack.hpp"
@@ -130,6 +132,7 @@ namespace IWXMVM::UI
             ApplyKeyed();
             UpdateShadows();
             UpdateSurfaces();
+            UpdateSky();
             // as RenderHud does: the game brings parts of the HUD back now and then
             if (UIManager::Get().GetSelectedTab() != Tab::Look && !UIManager::Get().IsOverlayHidden())
                 UpdateHudInfo();
@@ -172,6 +175,7 @@ namespace IWXMVM::UI
             RenderHud();
             RenderMapEffects();
             RenderSun();
+            RenderSky();
             RenderQuality();
             RenderFilmtweaks();
             RenderReShade();
@@ -1021,6 +1025,95 @@ namespace IWXMVM::UI
         }
 
         EndSection(Section::Sun);
+    }
+
+    void VisualsMenu::RenderSky()
+    {
+        namespace SkyLogic = Components::SkyLogic;
+        using Components::VisualsLogic::Section;
+        using Property = Types::KeyframeablePropertyType;
+        if (!(Mod::GetGameInterface()->GetSupportedFeatures() & Types::Features_Sky))
+            return;
+
+        bool reset = false;
+        const bool open = DrawSection(Section::Sky, ICON_FA_CLOUD_SUN "  Sky", "Back to the map's sky", &reset);
+        if (reset)
+        {
+            visuals.sky = defaultVisuals.sky;
+            NameChange("reset the Sky", "The Sky back to the map's");
+        }
+        if (!open)
+            return;
+
+        // what the map's sky is, and whether it can be drawn
+        const auto status = Components::Skybox::GetStatus();
+        if (status.images == 0)
+            ImGui::TextDisabled(ICON_FA_TRIANGLE_EXCLAMATION " This map's sky wasn't found");
+        else if (status.cubes == 0)
+            ImGui::TextDisabled(ICON_FA_TRIANGLE_EXCLAMATION " This map's sky isn't a cube map");
+        else if (status.shaderFailed || status.failed > 0)
+            ImGui::TextColored(Theme::Note(), ICON_FA_TRIANGLE_EXCLAMATION " The sky couldn't be redrawn (see the log)");
+        else
+            ImGui::TextDisabled("%s", std::format("{}, {} × {}{}", status.name, status.size, status.size,
+                                                  status.active ? "" : " (the map's own)")
+                                          .c_str());
+        ImGuiEx::Keyframeable::Record("visuals.sky.status");
+
+        auto& sky = visuals.sky;
+        ImGuiEx::Keyframeable::SliderFloat("Hue", &sky.hue, SkyLogic::MIN_HUE, SkyLogic::MAX_HUE, Property::SkyHue,
+                                           "%.0f°", {.origin = 0.0f, .resetValue = 0.0f}, "Sky Hue");
+        ImGuiEx::Keyframeable::SliderFloat("Saturation", &sky.saturation, 0.0f, SkyLogic::MAX_SATURATION,
+                                           Property::SkySaturation, "%.2f", {.origin = 1.0f, .resetValue = 1.0f},
+                                           "Sky Saturation");
+        ImGuiEx::Keyframeable::SliderFloat("Brightness", &sky.brightness, 0.0f, SkyLogic::MAX_BRIGHTNESS,
+                                           Property::SkyBrightness, "%.2f", {.origin = 1.0f, .resetValue = 1.0f},
+                                           "Sky Brightness");
+        ImGuiEx::Keyframeable::SliderFloat("Contrast", &sky.contrast, 0.0f, SkyLogic::MAX_CONTRAST,
+                                           Property::SkyContrast, "%.2f", {.origin = 1.0f, .resetValue = 1.0f},
+                                           "Sky Contrast");
+        ImGuiEx::Keyframeable::ColorEdit3("Tint", glm::value_ptr(sky.tint), Property::SkyTint, glm::vec3(1.0f),
+                                          "Sky Tint");
+
+        // yaw, pitch and roll side by side, each with its name in its field
+        Types::KeyframeValue rotation(sky.rotation);
+        ImGuiEx::Keyframeable::Row(
+            "Rotation", Property::SkyRotation, rotation,
+            [](const char* id, Types::KeyframeValue& value) {
+                constexpr std::array<const char*, 3> FORMATS = {"Yaw %.1f°", "Pitch %.1f°", "Roll %.1f°"};
+                constexpr std::array<const char*, 3> NAMES = {"yaw", "pitch", "roll"};
+                constexpr std::array<const char*, 3> IDS = {"##yaw", "##pitch", "##roll"};
+                const auto spacing = ImGui::GetStyle().ItemInnerSpacing.x;
+                const auto each = (ImGui::CalcItemWidth() - spacing * 2.0f) / 3.0f;
+                bool changed = false;
+                ImGui::PushID(id);
+                for (std::size_t i = 0; i < 3; ++i)
+                {
+                    if (i > 0)
+                        ImGui::SameLine(0.0f, spacing);
+                    ImGui::SetNextItemWidth(each);
+                    changed = ImGui::DragFloat(IDS[i], &value.vector3[static_cast<glm::length_t>(i)], 0.5f,
+                                               -SkyLogic::MAX_ROTATION, SkyLogic::MAX_ROTATION, FORMATS[i],
+                                               ImGuiSliderFlags_AlwaysClamp) ||
+                              changed;
+                    ImGuiEx::Keyframeable::Record(std::format("visuals.sky.rotation.{}", NAMES[i]));
+                    ImGui::SetItemTooltip(i == 0   ? "Turns the sky around (keys from 0 to 360 spin it once)"
+                                          : i == 1 ? "Tilts the sky forward or back"
+                                                   : "Tilts the sky to the side");
+                }
+                ImGui::PopID();
+                return changed;
+            },
+            "Sky Rotation");
+        sky.rotation = rotation.vector3;
+
+        EndSection(Section::Sky);
+    }
+
+    void VisualsMenu::UpdateSky()
+    {
+        if (!visualsInitialized || !(Mod::GetGameInterface()->GetSupportedFeatures() & Types::Features_Sky))
+            return;
+        Components::Skybox::SetGrade(visuals.sky);
     }
 
     namespace
