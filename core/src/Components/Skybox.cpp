@@ -1,6 +1,7 @@
 #include "StdInclude.hpp"
 #include "Skybox.hpp"
 
+#include <format>
 #include <mutex>
 #include <optional>
 #include <unordered_map>
@@ -111,6 +112,10 @@ float4 main(float2 st : TEXCOORD0) : COLOR
 
         std::mutex statusMutex;
         Status lastStatus;
+        // the last read back of a bake, and the frames since (a read back waits for the card: not every frame)
+        std::optional<std::uint32_t> bakedTop;
+        std::uint32_t framesSinceCheck = 0;
+        bool bakedSinceCheck = false;
 
         // the texture the game has for an image now, nothing if it can't be read
         IDirect3DBaseTexture9* ReadSlot(IDirect3DBaseTexture9* const* slot)
@@ -257,6 +262,14 @@ float4 main(float2 st : TEXCOORD0) : COLOR
                      {D3DRS_COLORWRITEENABLE, 0xF},
                  })
                 device->SetRenderState(renderState, value);
+            // (the game instances its static models: a stream's frequency left set draws nothing of a plain draw)
+            std::array<UINT, 2> frequencies{1, 1};
+            for (UINT stream = 0; stream < frequencies.size(); ++stream)
+            {
+                if (FAILED(device->GetStreamSourceFreq(stream, &frequencies[stream])))
+                    frequencies[stream] = 1;
+                device->SetStreamSourceFreq(stream, 1);
+            }
             device->SetVertexShader(vertexShader);
             device->SetPixelShader(pixelShader);
             device->SetVertexDeclaration(declaration);
@@ -315,6 +328,8 @@ float4 main(float2 st : TEXCOORD0) : COLOR
                 if (targets[i] || i == 0)
                     device->SetRenderTarget(i, targets[i]);
             device->SetDepthStencilSurface(depthStencil);
+            for (UINT stream = 0; stream < frequencies.size(); ++stream)
+                device->SetStreamSourceFreq(stream, frequencies[stream]);
             state->Apply();
             state->Release();
             for (const auto target : targets)
@@ -324,6 +339,34 @@ float4 main(float2 st : TEXCOORD0) : COLOR
                 depthStencil->Release();
             baking = false;
             return drawn;
+        }
+
+        // the first texel of a face's level of a baked cube, as 0xRRGGBB (8 bits a channel only)
+        std::optional<std::uint32_t> ReadTexel(IDirect3DDevice9* device, IDirect3DCubeTexture9* cube,
+                                               D3DCUBEMAP_FACES face, UINT level)
+        {
+            IDirect3DSurface9* surface = nullptr;
+            if (FAILED(cube->GetCubeMapSurface(face, level, &surface)))
+                return std::nullopt;
+            D3DSURFACE_DESC desc{};
+            surface->GetDesc(&desc);
+            std::optional<std::uint32_t> texel;
+            IDirect3DSurface9* copy = nullptr;
+            if ((desc.Format == D3DFMT_A8R8G8B8 || desc.Format == D3DFMT_X8R8G8B8) &&
+                SUCCEEDED(device->CreateOffscreenPlainSurface(desc.Width, desc.Height, desc.Format, D3DPOOL_SYSTEMMEM,
+                                                              &copy, nullptr)))
+            {
+                D3DLOCKED_RECT rect{};
+                if (SUCCEEDED(device->GetRenderTargetData(surface, copy)) &&
+                    SUCCEEDED(copy->LockRect(&rect, nullptr, D3DLOCK_READONLY)))
+                {
+                    texel = *static_cast<const std::uint32_t*>(rect.pBits) & 0xFFFFFF;
+                    copy->UnlockRect();
+                }
+                copy->Release();
+            }
+            surface->Release();
+            return texel;
         }
 
         void PublishStatus(const Status& status)
@@ -370,7 +413,10 @@ float4 main(float2 st : TEXCOORD0) : COLOR
                     status.name = entry.name;
                     D3DSURFACE_DESC desc{};
                     if (SUCCEEDED(static_cast<IDirect3DCubeTexture9*>(entry.game)->GetLevelDesc(0, &desc)))
+                    {
                         status.size = desc.Width;
+                        status.format = static_cast<std::int32_t>(desc.Format);
+                    }
                 }
                 if (!entry.logged)
                 {
@@ -441,6 +487,7 @@ float4 main(float2 st : TEXCOORD0) : COLOR
                 {
                     entry.bakedGrade = grade;
                     ++status.baked;
+                    bakedSinceCheck = true;
                 }
                 else
                 {
@@ -450,6 +497,24 @@ float4 main(float2 st : TEXCOORD0) : COLOR
                     ++status.failed;
                 }
             }
+
+            // now and then, the first baked cube's top read back: what the Look tab's line shows
+            ++framesSinceCheck;
+            if (bakedSinceCheck && framesSinceCheck >= 30)
+            {
+                for (const auto& entry : entries)
+                    if (entry.baked && entry.bakedGrade)
+                    {
+                        bakedTop = ReadTexel(device, entry.baked, D3DCUBEMAP_FACE_POSITIVE_Z,
+                                             entry.baked->GetLevelCount() - 1);
+                        LOG_INFO("Sky: the baked top of {} is {}", entry.name,
+                                 bakedTop ? std::format("#{:06X}", *bakedTop) : std::string("unreadable"));
+                        break;
+                    }
+                framesSinceCheck = 0;
+                bakedSinceCheck = false;
+            }
+            status.bakedTop = bakedTop;
             PublishStatus(status);
         }
     }  // namespace

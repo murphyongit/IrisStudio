@@ -1,5 +1,7 @@
 #pragma once
 
+#include <optional>
+
 #include "SkyLogic.hpp"
 #include "Types/SkyImage.hpp"
 
@@ -51,6 +53,10 @@ namespace IWXMVM::Components::Skybox
         std::uint32_t size = 0;    // its faces', in texels
         bool active = false;       // a grade to draw
         bool shaderFailed = false; // the bake's shaders didn't compile
+        std::int32_t format = 0;   // the first cube's D3DFORMAT
+        // the baked sky's top face read back at its smallest level (0xRRGGBB), when its format can be read: a check
+        // that the bake drew
+        std::optional<std::uint32_t> bakedTop;
     };
     Status GetStatus();
 }  // namespace IWXMVM::Components::Skybox

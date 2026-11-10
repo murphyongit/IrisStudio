@@ -1054,8 +1054,11 @@ namespace IWXMVM::UI
         else if (status.shaderFailed || status.failed > 0)
             ImGui::TextColored(Theme::Note(), ICON_FA_TRIANGLE_EXCLAMATION " The sky couldn't be redrawn (see the log)");
         else
-            ImGui::TextDisabled("%s", std::format("{}, {} × {}{}", status.name, status.size, status.size,
-                                                  status.active ? "" : " (the map's own)")
+            ImGui::TextDisabled("%s", std::format("{}, {} × {}, format {}{}{}", status.name, status.size, status.size,
+                                                  status.format, status.active ? "" : " (the map's own)",
+                                                  status.active && status.bakedTop
+                                                      ? std::format(", top #{:06X}", *status.bakedTop)
+                                                      : std::string())
                                           .c_str());
         ImGuiEx::Keyframeable::Record("visuals.sky.status");
 
