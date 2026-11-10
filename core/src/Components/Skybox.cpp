@@ -273,6 +273,12 @@ float4 main(float2 st : TEXCOORD0) : COLOR
             device->SetVertexShader(vertexShader);
             device->SetPixelShader(pixelShader);
             device->SetVertexDeclaration(declaration);
+            // (nothing else bound: a texture drawn into while bound draws nothing, and the game may have left a baked
+            // cube on a stage as it drew the sky)
+            for (DWORD stage = 1; stage < 16; ++stage)
+                SurfaceDepth::SetTextureDirect(device, stage, nullptr);
+            for (DWORD stage = D3DVERTEXTEXTURESAMPLER0; stage <= D3DVERTEXTEXTURESAMPLER3; ++stage)
+                SurfaceDepth::SetTextureDirect(device, stage, nullptr);
             SurfaceDepth::SetTextureDirect(device, 0, source);
             for (const auto& [samplerState, value] : std::initializer_list<std::pair<D3DSAMPLERSTATETYPE, DWORD>>{
                      {D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP},
@@ -310,6 +316,8 @@ float4 main(float2 st : TEXCOORD0) : COLOR
                         drawn = false;
                         break;
                     }
+                    // (magenta first: a face left so wasn't drawn, which the Look tab's check shows)
+                    device->ColorFill(surface, nullptr, D3DCOLOR_XRGB(255, 0, 255));
                     device->SetRenderTarget(0, surface);
                     const D3DVIEWPORT9 viewport{0, 0, faceSize, faceSize, 0.0f, 1.0f};
                     device->SetViewport(&viewport);
@@ -408,6 +416,13 @@ float4 main(float2 st : TEXCOORD0) : COLOR
                 entriesByGame.try_emplace(entry.game, &entry);
                 const bool cube = entry.game->GetType() == D3DRTYPE_CUBETEXTURE;
                 status.cubes += cube;
+                if (cube)
+                {
+                    D3DSURFACE_DESC each{};
+                    static_cast<IDirect3DCubeTexture9*>(entry.game)->GetLevelDesc(0, &each);
+                    status.cubeList += std::format("{}{} ({}, format {})", status.cubeList.empty() ? "" : "\n",
+                                                   entry.name, each.Width, static_cast<std::int32_t>(each.Format));
+                }
                 if (cube && status.name.empty())
                 {
                     status.name = entry.name;

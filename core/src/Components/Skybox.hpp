@@ -50,6 +50,7 @@ namespace IWXMVM::Components::Skybox
         std::uint32_t baked = 0;   // drawn turned and graded now
         std::uint32_t failed = 0;  // whose bake couldn't be made
         std::string name;          // the first cube's image
+        std::string cubeList;      // every cube's image, size and format
         std::uint32_t size = 0;    // its faces', in texels
         bool active = false;       // a grade to draw
         bool shaderFailed = false; // the bake's shaders didn't compile

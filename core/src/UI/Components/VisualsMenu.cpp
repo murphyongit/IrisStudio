@@ -1061,6 +1061,8 @@ namespace IWXMVM::UI
                                                       : std::string())
                                           .c_str());
         ImGuiEx::Keyframeable::Record("visuals.sky.status");
+        if (status.cubes > 1)
+            ImGui::TextDisabled("%s", status.cubeList.c_str());
 
         auto& sky = visuals.sky;
         ImGuiEx::Keyframeable::SliderFloat("Hue", &sky.hue, SkyLogic::MIN_HUE, SkyLogic::MAX_HUE, Property::SkyHue,
