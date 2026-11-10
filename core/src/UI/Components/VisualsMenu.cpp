@@ -1051,6 +1051,11 @@ namespace IWXMVM::UI
             ImGui::TextDisabled(ICON_FA_TRIANGLE_EXCLAMATION " This map's sky wasn't found");
         else if (status.cubes == 0)
             ImGui::TextDisabled(ICON_FA_TRIANGLE_EXCLAMATION " This map's sky isn't a cube map");
+        else if (status.faultStep > 0)
+            ImGui::TextColored(Theme::Note(), "%s",
+                               std::format(ICON_FA_TRIANGLE_EXCLAMATION " The sky's redraw failed (step {}): the map's sky",
+                                           status.faultStep)
+                                   .c_str());
         else if (status.shaderFailed || status.failed > 0)
             ImGui::TextColored(Theme::Note(), ICON_FA_TRIANGLE_EXCLAMATION " The sky couldn't be redrawn (see the log)");
         else

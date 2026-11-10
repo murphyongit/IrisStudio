@@ -54,6 +54,7 @@ namespace IWXMVM::Components::Skybox
         std::uint32_t size = 0;    // its faces', in texels
         bool active = false;       // a grade to draw
         bool shaderFailed = false; // the bake's shaders didn't compile
+        int faultStep = 0;         // the step a bake faulted at (the sky is the game's until a new device), 0 none
         std::int32_t format = 0;   // the first cube's D3DFORMAT
         // the baked sky's top face read back at its smallest level (0xRRGGBB), when its format can be read: a check
         // that the bake drew

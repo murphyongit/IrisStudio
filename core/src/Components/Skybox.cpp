@@ -109,6 +109,9 @@ float4 main(float2 st : TEXCOORD0) : COLOR
         IDirect3DPixelShader9* pixelShader = nullptr;
         IDirect3DVertexDeclaration9* declaration = nullptr;
         bool shaderFailed = false;
+        // where Bake got to (0 outside it), and the step a fault stopped it at: the bake is off for the device then
+        int bakeStep = 0;
+        int faultStep = 0;
 
         std::mutex statusMutex;
         Status lastStatus;
@@ -230,6 +233,7 @@ float4 main(float2 st : TEXCOORD0) : COLOR
         // Draws every face and level of the entry's cube from the game's, the device's state as the game had it after
         bool Bake(IDirect3DDevice9* device, Entry& entry, IDirect3DCubeTexture9* source, const SkyLogic::Grade& grade)
         {
+            bakeStep = 1;
             IDirect3DStateBlock9* state = nullptr;
             if (FAILED(device->CreateStateBlock(D3DSBT_ALL, &state)))
                 return false;
@@ -273,12 +277,24 @@ float4 main(float2 st : TEXCOORD0) : COLOR
             device->SetVertexShader(vertexShader);
             device->SetPixelShader(pixelShader);
             device->SetVertexDeclaration(declaration);
-            // (nothing else bound: a texture drawn into while bound draws nothing, and the game may have left a baked
-            // cube on a stage as it drew the sky)
-            for (DWORD stage = 1; stage < 16; ++stage)
-                SurfaceDepth::SetTextureDirect(device, stage, nullptr);
-            for (DWORD stage = D3DVERTEXTEXTURESAMPLER0; stage <= D3DVERTEXTEXTURESAMPLER3; ++stage)
-                SurfaceDepth::SetTextureDirect(device, stage, nullptr);
+            // (the cube drawn into isn't bound anywhere: a texture drawn into while bound draws nothing, and the game
+            // may have left it on a stage as it drew the sky; only those stages, put back after)
+            bakeStep = 2;
+            std::array<IDirect3DBaseTexture9*, 16> unbound{};
+            for (DWORD stage = 0; stage < unbound.size(); ++stage)
+            {
+                IDirect3DBaseTexture9* bound = nullptr;
+                if (FAILED(device->GetTexture(stage, &bound)) || !bound)
+                    continue;
+                if (bound == entry.baked)
+                {
+                    unbound[stage] = bound;
+                    bound->AddRef();
+                    SurfaceDepth::SetTextureDirect(device, stage, nullptr);
+                }
+                bound->Release();
+            }
+            bakeStep = 3;
             SurfaceDepth::SetTextureDirect(device, 0, source);
             for (const auto& [samplerState, value] : std::initializer_list<std::pair<D3DSAMPLERSTATETYPE, DWORD>>{
                      {D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP},
@@ -298,6 +314,7 @@ float4 main(float2 st : TEXCOORD0) : COLOR
             const auto rotation = SkyLogic::GetRotation(grade);
 
             // (the game's level of the same size: the bake has as many levels as the game's, from the same size)
+            bakeStep = 4;
             bool drawn = true;
             const auto size = entry.bakedSize;
             for (DWORD level = 0; level < entry.baked->GetLevelCount() && drawn; ++level)
@@ -332,21 +349,46 @@ float4 main(float2 st : TEXCOORD0) : COLOR
             }
 
             // the game's targets back, then the rest of its state (a target resets the viewport)
+            bakeStep = 5;
             for (DWORD i = 0; i < targets.size(); ++i)
                 if (targets[i] || i == 0)
                     device->SetRenderTarget(i, targets[i]);
             device->SetDepthStencilSurface(depthStencil);
             for (UINT stream = 0; stream < frequencies.size(); ++stream)
                 device->SetStreamSourceFreq(stream, frequencies[stream]);
+            bakeStep = 6;
             state->Apply();
             state->Release();
+            bakeStep = 7;
+            for (DWORD stage = 0; stage < unbound.size(); ++stage)
+                if (unbound[stage])
+                {
+                    SurfaceDepth::SetTextureDirect(device, stage, unbound[stage]);
+                    unbound[stage]->Release();
+                }
             for (const auto target : targets)
                 if (target)
                     target->Release();
             if (depthStencil)
                 depthStencil->Release();
             baking = false;
+            bakeStep = 0;
             return drawn;
+        }
+
+        // Bake, its fault (an access violation in the driver or the game's hooks) caught: the sky is then the game's
+        // and the bake isn't tried again on this device, rather than the game's fatal error. 1 drawn, 0 not, -1 fault.
+        int GuardedBake(IDirect3DDevice9* device, Entry* entry, IDirect3DCubeTexture9* source,
+                        const SkyLogic::Grade* grade)
+        {
+            __try
+            {
+                return Bake(device, *entry, source, *grade) ? 1 : 0;
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+                return -1;
+            }
         }
 
         // the first texel of a face's level of a baked cube, as 0xRRGGBB (8 bits a channel only)
@@ -442,13 +484,14 @@ float4 main(float2 st : TEXCOORD0) : COLOR
             }
 
             // nothing to draw: the game's own sky, and the card's memory back
-            active = !SkyLogic::IsGameSky(grade) && !stopped;
+            active = !SkyLogic::IsGameSky(grade) && !stopped && faultStep == 0;
             status.active = active;
             if (!active || !MakeShaders(device))
             {
                 if (!active)
                     ReleaseBakes();
                 status.shaderFailed = shaderFailed;
+                status.faultStep = faultStep;
                 PublishStatus(status);
                 return;
             }
@@ -498,7 +541,24 @@ float4 main(float2 st : TEXCOORD0) : COLOR
                     LOG_INFO("Sky: baking {} ({} × {}, format {}, {} levels)", entry.name, desc.Width, desc.Width,
                              static_cast<std::int32_t>(desc.Format), levels);
                 }
-                if (Bake(device, entry, source, grade))
+                const auto result = GuardedBake(device, &entry, source, &grade);
+                if (result < 0)
+                {
+                    faultStep = std::max(1, bakeStep);
+                    baking = false;
+                    bakeStep = 0;
+                    LOG_ERROR("Sky: the bake of {} faulted at step {}; the game's sky is drawn", entry.name, faultStep);
+                    // (what the fault left drawing into the baked cube: the back buffer for the rest of the frame)
+                    IDirect3DSurface9* backBuffer = nullptr;
+                    if (SUCCEEDED(device->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &backBuffer)))
+                    {
+                        device->SetRenderTarget(0, backBuffer);
+                        backBuffer->Release();
+                    }
+                    ReleaseBakes();
+                    break;
+                }
+                if (result > 0)
                 {
                     entry.bakedGrade = grade;
                     ++status.baked;
@@ -530,6 +590,7 @@ float4 main(float2 st : TEXCOORD0) : COLOR
                 bakedSinceCheck = false;
             }
             status.bakedTop = bakedTop;
+            status.faultStep = faultStep;
             PublishStatus(status);
         }
     }  // namespace
@@ -596,6 +657,7 @@ float4 main(float2 st : TEXCOORD0) : COLOR
         entriesByGame.clear();
         ReleaseShaders();
         shaderFailed = false;
+        faultStep = 0;
         std::lock_guard lock(mapMutex);
         mapImages.clear();
         entries.clear();
