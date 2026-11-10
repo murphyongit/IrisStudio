@@ -1,70 +1,21 @@
 #include "StdInclude.hpp"
 #include "Skybox.hpp"
 
+#include <chrono>
 #include <format>
 #include <mutex>
 #include <optional>
+#include <thread>
 #include <unordered_map>
 
 #include "D3D9.hpp"
 #include "Events.hpp"
 #include "Mod.hpp"
-#include "SurfaceDepth.hpp"
 
 namespace IWXMVM::Components::Skybox
 {
     namespace
     {
-        // the bake's pass: a quad over the face (moved half a texel so its texels' middles are sampled), handing the
-        // pixel shader where on the face (s right, t down, -1 to 1) each texel is
-        constexpr std::string_view VERTEX_SHADER = R"(
-float4 halfTexel : register(c0);
-
-struct Out
-{
-    float4 position : POSITION;
-    float2 st : TEXCOORD0;
-};
-
-Out main(float4 position : POSITION)
-{
-    Out result;
-    result.position = float4(position.xy + halfTexel.xy, 0.0, 1.0);
-    result.st = float2(position.x, -position.y);
-    return result;
-}
-)";
-
-        // a texel of a face: the game's sky sampled along the face's direction (turned back by the grade's rotation, on
-        // the CPU), at the level being made, its colour through the grade's rows; alpha (the HDR skies' scale) as it
-        // was. Raw values in and out: no sRGB either way, so the game reads them as it read its own.
-        constexpr std::string_view PIXEL_SHADER = R"(
-samplerCUBE sky : register(s0);
-float4 colorRows[3] : register(c0);
-float4 faceMiddle : register(c3);
-float4 faceRight : register(c4);
-float4 faceDown : register(c5);
-float4 level : register(c6);
-
-float4 main(float2 st : TEXCOORD0) : COLOR
-{
-    float3 direction = faceMiddle.xyz + st.x * faceRight.xyz + st.y * faceDown.xyz;
-    float4 texel = texCUBElod(sky, float4(direction, level.x));
-    float3 color = float3(dot(colorRows[0].xyz, texel.rgb) + colorRows[0].w,
-                          dot(colorRows[1].xyz, texel.rgb) + colorRows[1].w,
-                          dot(colorRows[2].xyz, texel.rgb) + colorRows[2].w);
-    return float4(max(color, 0.0), texel.a);
-}
-)";
-
-        struct Vertex
-        {
-            float x, y, z, w;
-        };
-        constexpr std::array<Vertex, 4> QUAD = {
-            Vertex{-1.0f, 1.0f, 0.0f, 1.0f}, Vertex{1.0f, 1.0f, 0.0f, 1.0f}, Vertex{-1.0f, -1.0f, 0.0f, 1.0f},
-            Vertex{1.0f, -1.0f, 0.0f, 1.0f}};
-
         // an image of the map's sky, with its bake
         struct Entry
         {
@@ -79,15 +30,22 @@ float4 main(float2 st : TEXCOORD0) : COLOR
             IDirect3DBaseTexture9* drawnFor = nullptr;
             bool logged = false;
 
-            // what the bake was made of and with
+            // the game's cube read into memory, each level (the first as the game has it, the rest halved from it)
+            std::vector<SkyLogic::Cube> source;
+            IDirect3DBaseTexture9* sourceFrom = nullptr;
+
+            // the turned and graded cube (in the managed pool: it stays through a device reset), and what it was
+            // made of and with
             IDirect3DCubeTexture9* baked = nullptr;
             IDirect3DBaseTexture9* bakedFrom = nullptr;
-            UINT bakedSize = 0;
-            D3DFORMAT bakedFormat = D3DFMT_UNKNOWN;
-            DWORD bakedLevels = 0;
             std::optional<SkyLogic::Grade> bakedGrade;
-            // a source whose cube couldn't be made, not tried again each frame
+            // a source that couldn't be read or baked, not tried again each frame, and why
             IDirect3DBaseTexture9* failedFrom = nullptr;
+            std::string error;
+            // the middle of the top face, the game's and the baked (0xRRGGBB), and how long the bake took
+            std::uint32_t sourceTop = 0;
+            std::uint32_t bakedTop = 0;
+            std::uint32_t bakeMs = 0;
         };
 
         std::atomic<bool> stopped = false;
@@ -104,21 +62,9 @@ float4 main(float2 st : TEXCOORD0) : COLOR
         std::vector<Entry> entries;
         std::unordered_map<IDirect3DBaseTexture9*, Entry*> entriesByGame;
         bool active = false;
-        bool baking = false;
-        IDirect3DVertexShader9* vertexShader = nullptr;
-        IDirect3DPixelShader9* pixelShader = nullptr;
-        IDirect3DVertexDeclaration9* declaration = nullptr;
-        bool shaderFailed = false;
-        // where Bake got to (0 outside it), and the step a fault stopped it at: the bake is off for the device then
-        int bakeStep = 0;
-        int faultStep = 0;
 
         std::mutex statusMutex;
         Status lastStatus;
-        // the last read back of a bake, and the frames since (a read back waits for the card: not every frame)
-        std::optional<std::uint32_t> bakedTop;
-        std::uint32_t framesSinceCheck = 0;
-        bool bakedSinceCheck = false;
 
         // the texture the game has for an image now, nothing if it can't be read
         IDirect3DBaseTexture9* ReadSlot(IDirect3DBaseTexture9* const* slot)
@@ -133,10 +79,22 @@ float4 main(float2 st : TEXCOORD0) : COLOR
             }
         }
 
-        bool IsCompressed(D3DFORMAT format)
+        std::string FormatName(D3DFORMAT format)
         {
-            return format == D3DFMT_DXT1 || format == D3DFMT_DXT2 || format == D3DFMT_DXT3 || format == D3DFMT_DXT4 ||
-                   format == D3DFMT_DXT5;
+            const auto value = static_cast<std::uint32_t>(format);
+            if (format == D3DFMT_A8R8G8B8)
+                return "A8R8G8B8";
+            if (format == D3DFMT_X8R8G8B8)
+                return "X8R8G8B8";
+            std::string fourCC;
+            for (int i = 0; i < 4; ++i)
+            {
+                const auto c = static_cast<char>((value >> (i * 8)) & 0xFF);
+                if (c < 0x20 || c > 0x7E)
+                    return std::format("format {}", value);
+                fourCC += c;
+            }
+            return fourCC;
         }
 
         void ReleaseBake(Entry& entry)
@@ -154,269 +112,121 @@ float4 main(float2 st : TEXCOORD0) : COLOR
                 ReleaseBake(entry);
         }
 
-        void ReleaseShaders()
+        // The first level of the game's cube into memory, 8 bits a channel whatever its format (D3DX reads and
+        // converts it, DXT too). What failed otherwise.
+        std::string ReadSource(IDirect3DDevice9* device, IDirect3DCubeTexture9* texture, SkyLogic::Cube& cube)
         {
-            if (vertexShader)
-                vertexShader->Release();
-            if (pixelShader)
-                pixelShader->Release();
-            if (declaration)
-                declaration->Release();
-            vertexShader = nullptr;
-            pixelShader = nullptr;
-            declaration = nullptr;
-        }
-
-        template <typename Make>
-        bool Compile(std::string_view source, const char* profile, Make make)
-        {
-            ID3DXBuffer* code = nullptr;
-            ID3DXBuffer* errors = nullptr;
-            const auto hr = D3DXCompileShader(source.data(), static_cast<UINT>(source.size()), nullptr, nullptr, "main",
-                                              profile, 0, &code, &errors, nullptr);
-            if (FAILED(hr))
-            {
-                LOG_ERROR("Sky: the bake's {} shader didn't compile: {}", profile,
-                          errors ? static_cast<const char*>(errors->GetBufferPointer()) : "no message");
-                if (errors)
-                    errors->Release();
-                if (code)
-                    code->Release();
-                return false;
-            }
-            if (errors)
-                errors->Release();
-            const bool made = SUCCEEDED(make(static_cast<const DWORD*>(code->GetBufferPointer())));
-            code->Release();
-            return made;
-        }
-
-        bool MakeShaders(IDirect3DDevice9* device)
-        {
-            if (vertexShader && pixelShader && declaration)
-                return true;
-            if (shaderFailed)
-                return false;
-            ReleaseShaders();
-            const D3DVERTEXELEMENT9 elements[] = {
-                {0, 0, D3DDECLTYPE_FLOAT4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_POSITION, 0}, D3DDECL_END()};
-            const bool made =
-                Compile(VERTEX_SHADER, "vs_3_0",
-                        [&](const DWORD* code) { return device->CreateVertexShader(code, &vertexShader); }) &&
-                Compile(PIXEL_SHADER, "ps_3_0",
-                        [&](const DWORD* code) { return device->CreatePixelShader(code, &pixelShader); }) &&
-                SUCCEEDED(device->CreateVertexDeclaration(elements, &declaration));
-            if (!made)
-            {
-                LOG_ERROR("Sky: the bake's shaders couldn't be made; the game's sky is drawn");
-                ReleaseShaders();
-                shaderFailed = true;
-            }
-            return made;
-        }
-
-        // a cube for the bake of a game's cube of this size and format: the same format where the card draws into it,
-        // 8 bits a channel for a compressed one (DXT can't be drawn into) or when it doesn't
-        IDirect3DCubeTexture9* MakeCube(IDirect3DDevice9* device, UINT size, D3DFORMAT format, DWORD levels)
-        {
-            IDirect3DCubeTexture9* cube = nullptr;
-            if (!IsCompressed(format) &&
-                SUCCEEDED(device->CreateCubeTexture(size, levels, D3DUSAGE_RENDERTARGET, format, D3DPOOL_DEFAULT,
-                                                    &cube, nullptr)))
-                return cube;
-            if (SUCCEEDED(device->CreateCubeTexture(size, levels, D3DUSAGE_RENDERTARGET, D3DFMT_A8R8G8B8,
-                                                    D3DPOOL_DEFAULT, &cube, nullptr)))
-                return cube;
-            return nullptr;
-        }
-
-        // Draws every face and level of the entry's cube from the game's, the device's state as the game had it after
-        bool Bake(IDirect3DDevice9* device, Entry& entry, IDirect3DCubeTexture9* source, const SkyLogic::Grade& grade)
-        {
-            bakeStep = 1;
-            IDirect3DStateBlock9* state = nullptr;
-            if (FAILED(device->CreateStateBlock(D3DSBT_ALL, &state)))
-                return false;
-            std::array<IDirect3DSurface9*, 4> targets{};
-            for (DWORD i = 0; i < targets.size(); ++i)
-                if (FAILED(device->GetRenderTarget(i, &targets[i])))
-                    targets[i] = nullptr;
-            IDirect3DSurface9* depthStencil = nullptr;
-            if (FAILED(device->GetDepthStencilSurface(&depthStencil)))
-                depthStencil = nullptr;
-
-            baking = true;
-            for (DWORD i = 1; i < targets.size(); ++i)
-                if (targets[i])
-                    device->SetRenderTarget(i, nullptr);
-            device->SetDepthStencilSurface(nullptr);
-            for (const auto& [renderState, value] : std::initializer_list<std::pair<D3DRENDERSTATETYPE, DWORD>>{
-                     {D3DRS_ZENABLE, FALSE},
-                     {D3DRS_ZWRITEENABLE, FALSE},
-                     {D3DRS_STENCILENABLE, FALSE},
-                     {D3DRS_ALPHABLENDENABLE, FALSE},
-                     {D3DRS_SEPARATEALPHABLENDENABLE, FALSE},
-                     {D3DRS_ALPHATESTENABLE, FALSE},
-                     {D3DRS_CULLMODE, D3DCULL_NONE},
-                     {D3DRS_FILLMODE, D3DFILL_SOLID},
-                     {D3DRS_SCISSORTESTENABLE, FALSE},
-                     {D3DRS_CLIPPLANEENABLE, 0},
-                     {D3DRS_FOGENABLE, FALSE},
-                     {D3DRS_SRGBWRITEENABLE, FALSE},
-                     {D3DRS_COLORWRITEENABLE, 0xF},
-                 })
-                device->SetRenderState(renderState, value);
-            // (the game instances its static models: a stream's frequency left set draws nothing of a plain draw)
-            std::array<UINT, 2> frequencies{1, 1};
-            for (UINT stream = 0; stream < frequencies.size(); ++stream)
-            {
-                if (FAILED(device->GetStreamSourceFreq(stream, &frequencies[stream])))
-                    frequencies[stream] = 1;
-                device->SetStreamSourceFreq(stream, 1);
-            }
-            device->SetVertexShader(vertexShader);
-            device->SetPixelShader(pixelShader);
-            device->SetVertexDeclaration(declaration);
-            // (the cube drawn into isn't bound anywhere: a texture drawn into while bound draws nothing, and the game
-            // may have left it on a stage as it drew the sky; only those stages, put back after)
-            bakeStep = 2;
-            std::array<IDirect3DBaseTexture9*, 16> unbound{};
-            for (DWORD stage = 0; stage < unbound.size(); ++stage)
-            {
-                IDirect3DBaseTexture9* bound = nullptr;
-                if (FAILED(device->GetTexture(stage, &bound)) || !bound)
-                    continue;
-                if (bound == entry.baked)
-                {
-                    unbound[stage] = bound;
-                    bound->AddRef();
-                    SurfaceDepth::SetTextureDirect(device, stage, nullptr);
-                }
-                bound->Release();
-            }
-            bakeStep = 3;
-            SurfaceDepth::SetTextureDirect(device, 0, source);
-            for (const auto& [samplerState, value] : std::initializer_list<std::pair<D3DSAMPLERSTATETYPE, DWORD>>{
-                     {D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP},
-                     {D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP},
-                     {D3DSAMP_ADDRESSW, D3DTADDRESS_CLAMP},
-                     {D3DSAMP_MAGFILTER, D3DTEXF_LINEAR},
-                     {D3DSAMP_MINFILTER, D3DTEXF_LINEAR},
-                     {D3DSAMP_MIPFILTER, D3DTEXF_LINEAR},
-                     {D3DSAMP_MIPMAPLODBIAS, 0},
-                     {D3DSAMP_MAXMIPLEVEL, 0},
-                     {D3DSAMP_SRGBTEXTURE, FALSE},
-                 })
-                device->SetSamplerState(0, samplerState, value);
-
-            const auto rows = SkyLogic::GetColorRows(grade);
-            device->SetPixelShaderConstantF(0, glm::value_ptr(rows[0]), 3);
-            const auto rotation = SkyLogic::GetRotation(grade);
-
-            // (the game's level of the same size: the bake has as many levels as the game's, from the same size)
-            bakeStep = 4;
-            bool drawn = true;
-            const auto size = entry.bakedSize;
-            for (DWORD level = 0; level < entry.baked->GetLevelCount() && drawn; ++level)
-            {
-                const auto faceSize = std::max<UINT>(1, size >> level);
-                const std::array<float, 4> halfTexel = {-1.0f / static_cast<float>(faceSize),
-                                                        1.0f / static_cast<float>(faceSize), 0.0f, 0.0f};
-                device->SetVertexShaderConstantF(0, halfTexel.data(), 1);
-                const std::array<float, 4> lod = {static_cast<float>(level), 0.0f, 0.0f, 0.0f};
-                device->SetPixelShaderConstantF(6, lod.data(), 1);
-                for (std::size_t face = 0; face < SkyLogic::FACE_COUNT; ++face)
-                {
-                    IDirect3DSurface9* surface = nullptr;
-                    if (FAILED(entry.baked->GetCubeMapSurface(static_cast<D3DCUBEMAP_FACES>(face), level, &surface)))
-                    {
-                        drawn = false;
-                        break;
-                    }
-                    // (magenta first: a face left so wasn't drawn, which the Look tab's check shows)
-                    device->ColorFill(surface, nullptr, D3DCOLOR_XRGB(255, 0, 255));
-                    device->SetRenderTarget(0, surface);
-                    const D3DVIEWPORT9 viewport{0, 0, faceSize, faceSize, 0.0f, 1.0f};
-                    device->SetViewport(&viewport);
-                    const auto axes = SkyLogic::GetSampleFace(face, rotation);
-                    const std::array<glm::vec4, 3> faceConstants = {glm::vec4(axes.middle, 0.0f),
-                                                                    glm::vec4(axes.right, 0.0f),
-                                                                    glm::vec4(axes.down, 0.0f)};
-                    device->SetPixelShaderConstantF(3, glm::value_ptr(faceConstants[0]), 3);
-                    drawn = SUCCEEDED(device->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, QUAD.data(), sizeof(Vertex)));
-                    surface->Release();
-                }
-            }
-
-            // the game's targets back, then the rest of its state (a target resets the viewport)
-            bakeStep = 5;
-            for (DWORD i = 0; i < targets.size(); ++i)
-                if (targets[i] || i == 0)
-                    device->SetRenderTarget(i, targets[i]);
-            device->SetDepthStencilSurface(depthStencil);
-            for (UINT stream = 0; stream < frequencies.size(); ++stream)
-                device->SetStreamSourceFreq(stream, frequencies[stream]);
-            bakeStep = 6;
-            state->Apply();
-            state->Release();
-            bakeStep = 7;
-            for (DWORD stage = 0; stage < unbound.size(); ++stage)
-                if (unbound[stage])
-                {
-                    SurfaceDepth::SetTextureDirect(device, stage, unbound[stage]);
-                    unbound[stage]->Release();
-                }
-            for (const auto target : targets)
-                if (target)
-                    target->Release();
-            if (depthStencil)
-                depthStencil->Release();
-            baking = false;
-            bakeStep = 0;
-            return drawn;
-        }
-
-        // Bake, its fault (an access violation in the driver or the game's hooks) caught: the sky is then the game's
-        // and the bake isn't tried again on this device, rather than the game's fatal error. 1 drawn, 0 not, -1 fault.
-        int GuardedBake(IDirect3DDevice9* device, Entry* entry, IDirect3DCubeTexture9* source,
-                        const SkyLogic::Grade* grade)
-        {
-            __try
-            {
-                return Bake(device, *entry, source, *grade) ? 1 : 0;
-            }
-            __except (EXCEPTION_EXECUTE_HANDLER)
-            {
-                return -1;
-            }
-        }
-
-        // the first texel of a face's level of a baked cube, as 0xRRGGBB (8 bits a channel only)
-        std::optional<std::uint32_t> ReadTexel(IDirect3DDevice9* device, IDirect3DCubeTexture9* cube,
-                                               D3DCUBEMAP_FACES face, UINT level)
-        {
-            IDirect3DSurface9* surface = nullptr;
-            if (FAILED(cube->GetCubeMapSurface(face, level, &surface)))
-                return std::nullopt;
             D3DSURFACE_DESC desc{};
-            surface->GetDesc(&desc);
-            std::optional<std::uint32_t> texel;
+            if (FAILED(texture->GetLevelDesc(0, &desc)) || desc.Width == 0)
+                return "its size couldn't be read";
+            cube.size = desc.Width;
             IDirect3DSurface9* copy = nullptr;
-            if ((desc.Format == D3DFMT_A8R8G8B8 || desc.Format == D3DFMT_X8R8G8B8) &&
-                SUCCEEDED(device->CreateOffscreenPlainSurface(desc.Width, desc.Height, desc.Format, D3DPOOL_SYSTEMMEM,
-                                                              &copy, nullptr)))
+            auto hr = device->CreateOffscreenPlainSurface(desc.Width, desc.Width, D3DFMT_A8R8G8B8, D3DPOOL_SYSTEMMEM,
+                                                          &copy, nullptr);
+            if (FAILED(hr))
+                return std::format("no surface to read it into ({:#010x})", static_cast<std::uint32_t>(hr));
+            std::string error;
+            for (std::size_t face = 0; face < SkyLogic::FACE_COUNT && error.empty(); ++face)
             {
-                D3DLOCKED_RECT rect{};
-                if (SUCCEEDED(device->GetRenderTargetData(surface, copy)) &&
-                    SUCCEEDED(copy->LockRect(&rect, nullptr, D3DLOCK_READONLY)))
+                IDirect3DSurface9* surface = nullptr;
+                hr = texture->GetCubeMapSurface(static_cast<D3DCUBEMAP_FACES>(face), 0, &surface);
+                if (FAILED(hr))
                 {
-                    texel = *static_cast<const std::uint32_t*>(rect.pBits) & 0xFFFFFF;
+                    error = std::format("face {} couldn't be got ({:#010x})", face, static_cast<std::uint32_t>(hr));
+                    break;
+                }
+                hr = D3DXLoadSurfaceFromSurface(copy, nullptr, nullptr, surface, nullptr, nullptr, D3DX_FILTER_NONE, 0);
+                surface->Release();
+                D3DLOCKED_RECT rect{};
+                if (FAILED(hr))
+                    error = std::format("face {} couldn't be read ({:#010x})", face, static_cast<std::uint32_t>(hr));
+                else if (FAILED(hr = copy->LockRect(&rect, nullptr, D3DLOCK_READONLY)))
+                    error = std::format("face {} couldn't be locked ({:#010x})", face, static_cast<std::uint32_t>(hr));
+                else
+                {
+                    auto& texels = cube.faces[face];
+                    texels.resize(static_cast<std::size_t>(desc.Width) * desc.Width);
+                    for (UINT y = 0; y < desc.Width; ++y)
+                        std::memcpy(texels.data() + static_cast<std::size_t>(y) * desc.Width,
+                                    static_cast<const std::uint8_t*>(rect.pBits) + static_cast<std::size_t>(y) * rect.Pitch,
+                                    static_cast<std::size_t>(desc.Width) * sizeof(SkyLogic::Texel));
                     copy->UnlockRect();
                 }
-                copy->Release();
             }
-            surface->Release();
-            return texel;
+            copy->Release();
+            return error;
+        }
+
+        // Makes the entry's cube from the game's with the grade: every level and face on the CPU (a thread a face),
+        // then into a cube of the mod's. What failed otherwise.
+        std::string Bake(IDirect3DDevice9* device, Entry& entry, IDirect3DCubeTexture9* source,
+                         const SkyLogic::Grade& grade)
+        {
+            const auto start = std::chrono::steady_clock::now();
+            if (entry.sourceFrom != source || entry.source.empty())
+            {
+                entry.source.clear();
+                entry.sourceFrom = nullptr;
+                SkyLogic::Cube first;
+                if (auto error = ReadSource(device, source, first); !error.empty())
+                    return error;
+                const auto levels = SkyLogic::GetLevelCount(first.size, source->GetLevelCount());
+                entry.source.push_back(std::move(first));
+                while (entry.source.size() < levels)
+                    entry.source.push_back(SkyLogic::Halve(entry.source.back()));
+                entry.sourceFrom = source;
+                ReleaseBake(entry);
+            }
+            const auto size = entry.source.front().size;
+            const auto levels = static_cast<UINT>(entry.source.size());
+            if (!entry.baked)
+            {
+                const auto hr = device->CreateCubeTexture(size, levels, 0, D3DFMT_A8R8G8B8, D3DPOOL_MANAGED,
+                                                          &entry.baked, nullptr);
+                if (FAILED(hr))
+                {
+                    entry.baked = nullptr;
+                    return std::format("no cube of {} could be made ({:#010x})", size, static_cast<std::uint32_t>(hr));
+                }
+            }
+
+            // every face's levels, each face on a thread of its own
+            std::array<std::vector<std::vector<SkyLogic::Texel>>, SkyLogic::FACE_COUNT> made;
+            {
+                std::vector<std::jthread> threads;
+                for (std::size_t face = 0; face < SkyLogic::FACE_COUNT; ++face)
+                    threads.emplace_back([&, face] {
+                        made[face].resize(levels);
+                        for (UINT level = 0; level < levels; ++level)
+                        {
+                            const auto& from = entry.source[level];
+                            made[face][level].resize(static_cast<std::size_t>(from.size) * from.size);
+                            SkyLogic::BakeFace(from, face, grade, made[face][level].data());
+                        }
+                    });
+            }
+
+            for (std::size_t face = 0; face < SkyLogic::FACE_COUNT; ++face)
+                for (UINT level = 0; level < levels; ++level)
+                {
+                    const auto levelSize = entry.source[level].size;
+                    D3DLOCKED_RECT rect{};
+                    const auto hr = entry.baked->LockRect(static_cast<D3DCUBEMAP_FACES>(face), level, &rect, nullptr, 0);
+                    if (FAILED(hr))
+                        return std::format("the cube couldn't be written ({:#010x})", static_cast<std::uint32_t>(hr));
+                    for (UINT y = 0; y < levelSize; ++y)
+                        std::memcpy(static_cast<std::uint8_t*>(rect.pBits) + static_cast<std::size_t>(y) * rect.Pitch,
+                                    made[face][level].data() + static_cast<std::size_t>(y) * levelSize,
+                                    static_cast<std::size_t>(levelSize) * sizeof(SkyLogic::Texel));
+                    entry.baked->UnlockRect(static_cast<D3DCUBEMAP_FACES>(face), level);
+                }
+
+            const auto middle = static_cast<std::size_t>(size / 2) * size + size / 2;
+            entry.sourceTop = entry.source.front().faces[4][middle] & 0xFFFFFF;
+            entry.bakedTop = made[4][0][middle] & 0xFFFFFF;
+            entry.bakeMs = static_cast<std::uint32_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count());
+            return {};
         }
 
         void PublishStatus(const Status& status)
@@ -436,7 +246,13 @@ float4 main(float2 st : TEXCOORD0) : COLOR
                     entries.clear();
                     entriesByGame.clear();
                     for (const auto& image : mapImages)
-                        entries.push_back({image.texture, image.name, image.material, image.techniqueSet});
+                    {
+                        auto& entry = entries.emplace_back();
+                        entry.slot = image.texture;
+                        entry.name = image.name;
+                        entry.material = image.material;
+                        entry.techniqueSet = image.techniqueSet;
+                    }
                     mapChanged = false;
                 }
             }
@@ -450,6 +266,7 @@ float4 main(float2 st : TEXCOORD0) : COLOR
             entriesByGame.clear();
             Status status;
             status.images = static_cast<std::uint32_t>(entries.size());
+            const Entry* main = nullptr;
             for (auto& entry : entries)
             {
                 entry.game = ReadSlot(entry.slot);
@@ -457,22 +274,19 @@ float4 main(float2 st : TEXCOORD0) : COLOR
                     continue;
                 entriesByGame.try_emplace(entry.game, &entry);
                 const bool cube = entry.game->GetType() == D3DRTYPE_CUBETEXTURE;
-                status.cubes += cube;
-                if (cube)
+                D3DSURFACE_DESC desc{};
+                if (cube && SUCCEEDED(static_cast<IDirect3DCubeTexture9*>(entry.game)->GetLevelDesc(0, &desc)))
                 {
-                    D3DSURFACE_DESC each{};
-                    static_cast<IDirect3DCubeTexture9*>(entry.game)->GetLevelDesc(0, &each);
-                    status.cubeList += std::format("{}{} ({}, format {})", status.cubeList.empty() ? "" : "\n",
-                                                   entry.name, each.Width, static_cast<std::int32_t>(each.Format));
-                }
-                if (cube && status.name.empty())
-                {
-                    status.name = entry.name;
-                    D3DSURFACE_DESC desc{};
-                    if (SUCCEEDED(static_cast<IDirect3DCubeTexture9*>(entry.game)->GetLevelDesc(0, &desc)))
+                    ++status.cubes;
+                    status.cubeList += std::format("{}{} ({}, {})", status.cubeList.empty() ? "" : "\n", entry.name,
+                                                   desc.Width, FormatName(desc.Format));
+                    // the sky itself: the largest cube
+                    if (desc.Width > status.size)
                     {
+                        main = &entry;
+                        status.name = entry.name;
                         status.size = desc.Width;
-                        status.format = static_cast<std::int32_t>(desc.Format);
+                        status.format = FormatName(desc.Format);
                     }
                 }
                 if (!entry.logged)
@@ -483,15 +297,12 @@ float4 main(float2 st : TEXCOORD0) : COLOR
                 }
             }
 
-            // nothing to draw: the game's own sky, and the card's memory back
-            active = !SkyLogic::IsGameSky(grade) && !stopped && faultStep == 0;
+            // nothing to draw: the game's own sky, and the memory back
+            active = !SkyLogic::IsGameSky(grade) && !stopped;
             status.active = active;
-            if (!active || !MakeShaders(device))
+            if (!active)
             {
-                if (!active)
-                    ReleaseBakes();
-                status.shaderFailed = shaderFailed;
-                status.faultStep = faultStep;
+                ReleaseBakes();
                 PublishStatus(status);
                 return;
             }
@@ -504,14 +315,7 @@ float4 main(float2 st : TEXCOORD0) : COLOR
                 const auto sourceTexture = entry.drawnFor == entry.game && entry.drawn ? entry.drawn : entry.game;
                 if (sourceTexture->GetType() != D3DRTYPE_CUBETEXTURE)
                     continue;
-                const auto source = static_cast<IDirect3DCubeTexture9*>(sourceTexture);
-                D3DSURFACE_DESC desc{};
-                if (FAILED(source->GetLevelDesc(0, &desc)))
-                    continue;
-                const auto levels = source->GetLevelCount();
-                const bool sameSource = entry.baked && entry.bakedFrom == sourceTexture && entry.bakedSize == desc.Width &&
-                                        entry.bakedFormat == desc.Format && entry.bakedLevels == levels;
-                if (sameSource && entry.bakedGrade == grade)
+                if (entry.baked && entry.bakedFrom == sourceTexture && entry.bakedGrade == grade)
                 {
                     ++status.baked;
                     continue;
@@ -519,78 +323,38 @@ float4 main(float2 st : TEXCOORD0) : COLOR
                 if (entry.failedFrom == sourceTexture)
                 {
                     ++status.failed;
+                    if (status.error.empty())
+                        status.error = std::format("{}: {}", entry.name, entry.error);
                     continue;
                 }
-                if (!sameSource)
+                const auto error = Bake(device, entry, static_cast<IDirect3DCubeTexture9*>(sourceTexture), grade);
+                if (error.empty())
                 {
-                    ReleaseBake(entry);
-                    entry.baked =
-                        MakeCube(device, desc.Width, desc.Format, SkyLogic::GetLevelCount(desc.Width, levels));
-                    if (!entry.baked)
-                    {
-                        LOG_ERROR("Sky: no cube of {} × {} ({}) could be made for {}", desc.Width, desc.Width,
-                                  static_cast<std::int32_t>(desc.Format), entry.name);
-                        entry.failedFrom = sourceTexture;
-                        ++status.failed;
-                        continue;
-                    }
+                    if (entry.bakedFrom != sourceTexture)
+                        LOG_INFO("Sky: {} baked on the CPU ({} × {}, {} levels, {} ms)", entry.name,
+                                 entry.source.front().size, entry.source.front().size, entry.source.size(),
+                                 entry.bakeMs);
                     entry.bakedFrom = sourceTexture;
-                    entry.bakedSize = desc.Width;
-                    entry.bakedFormat = desc.Format;
-                    entry.bakedLevels = levels;
-                    LOG_INFO("Sky: baking {} ({} × {}, format {}, {} levels)", entry.name, desc.Width, desc.Width,
-                             static_cast<std::int32_t>(desc.Format), levels);
-                }
-                const auto result = GuardedBake(device, &entry, source, &grade);
-                if (result < 0)
-                {
-                    faultStep = std::max(1, bakeStep);
-                    baking = false;
-                    bakeStep = 0;
-                    LOG_ERROR("Sky: the bake of {} faulted at step {}; the game's sky is drawn", entry.name, faultStep);
-                    // (what the fault left drawing into the baked cube: the back buffer for the rest of the frame)
-                    IDirect3DSurface9* backBuffer = nullptr;
-                    if (SUCCEEDED(device->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &backBuffer)))
-                    {
-                        device->SetRenderTarget(0, backBuffer);
-                        backBuffer->Release();
-                    }
-                    ReleaseBakes();
-                    break;
-                }
-                if (result > 0)
-                {
                     entry.bakedGrade = grade;
                     ++status.baked;
-                    bakedSinceCheck = true;
                 }
                 else
                 {
-                    LOG_ERROR("Sky: the bake of {} didn't draw", entry.name);
+                    LOG_ERROR("Sky: the bake of {} failed: {}", entry.name, error);
                     ReleaseBake(entry);
                     entry.failedFrom = sourceTexture;
+                    entry.error = error;
                     ++status.failed;
+                    if (status.error.empty())
+                        status.error = std::format("{}: {}", entry.name, error);
                 }
             }
-
-            // now and then, the first baked cube's top read back: what the Look tab's line shows
-            ++framesSinceCheck;
-            if (bakedSinceCheck && framesSinceCheck >= 30)
+            if (main && main->baked && main->bakedGrade)
             {
-                for (const auto& entry : entries)
-                    if (entry.baked && entry.bakedGrade)
-                    {
-                        bakedTop = ReadTexel(device, entry.baked, D3DCUBEMAP_FACE_POSITIVE_Z,
-                                             entry.baked->GetLevelCount() - 1);
-                        LOG_INFO("Sky: the baked top of {} is {}", entry.name,
-                                 bakedTop ? std::format("#{:06X}", *bakedTop) : std::string("unreadable"));
-                        break;
-                    }
-                framesSinceCheck = 0;
-                bakedSinceCheck = false;
+                status.sourceTop = main->sourceTop;
+                status.bakedTop = main->bakedTop;
+                status.bakeMs = main->bakeMs;
             }
-            status.bakedTop = bakedTop;
-            status.faultStep = faultStep;
             PublishStatus(status);
         }
     }  // namespace
@@ -633,7 +397,7 @@ float4 main(float2 st : TEXCOORD0) : COLOR
 
     IDirect3DBaseTexture9* Swap(IDirect3DBaseTexture9* game, IDirect3DBaseTexture9* drawn)
     {
-        if (!game || baking || entriesByGame.empty() || GetCurrentThreadId() != renderThread)
+        if (!game || entriesByGame.empty() || GetCurrentThreadId() != renderThread)
             return drawn;
         const auto found = entriesByGame.find(game);
         if (found == entriesByGame.end())
@@ -646,7 +410,7 @@ float4 main(float2 st : TEXCOORD0) : COLOR
 
     void OnReset()
     {
-        ReleaseBakes();
+        // (the baked cubes are in the managed pool and stay; what failed is tried again)
         for (auto& entry : entries)
             entry.failedFrom = nullptr;
     }
@@ -655,9 +419,6 @@ float4 main(float2 st : TEXCOORD0) : COLOR
     {
         ReleaseBakes();
         entriesByGame.clear();
-        ReleaseShaders();
-        shaderFailed = false;
-        faultStep = 0;
         std::lock_guard lock(mapMutex);
         mapImages.clear();
         entries.clear();
@@ -670,7 +431,6 @@ float4 main(float2 st : TEXCOORD0) : COLOR
         active = false;
         entriesByGame.clear();
         ReleaseBakes();
-        ReleaseShaders();
     }
 
     Status GetStatus()

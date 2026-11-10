@@ -155,3 +155,69 @@ TEST("a baked cube has the game's levels, down to 1 x 1 at most")
     CHECK(SkyLogic::GetLevelCount(512, 0) == 1);
     CHECK(SkyLogic::GetLevelCount(1, 5) == 1);
 }
+
+namespace
+{
+    // a cube whose faces are each one colour
+    SkyLogic::Cube MakeCube(std::uint32_t size)
+    {
+        constexpr std::array<SkyLogic::Texel, 6> COLORS = {0xFFFF0000, 0xFF00FF00, 0xFF0000FF,
+                                                           0xFFFFFF00, 0xFF00FFFF, 0x80404040};
+        SkyLogic::Cube cube;
+        cube.size = size;
+        for (std::size_t face = 0; face < SkyLogic::FACE_COUNT; ++face)
+            cube.faces[face].assign(static_cast<std::size_t>(size) * size, COLORS[face]);
+        return cube;
+    }
+}  // namespace
+
+TEST("the bake on the CPU: the default grade copies the game's sky, texel for texel")
+{
+    auto cube = MakeCube(8);
+    cube.faces[0][3] = 0x12345678;
+    for (std::size_t face = 0; face < SkyLogic::FACE_COUNT; ++face)
+    {
+        std::vector<SkyLogic::Texel> out(64);
+        SkyLogic::BakeFace(cube, face, Grade{}, out.data());
+        CHECK(out == cube.faces[face]);
+    }
+}
+
+TEST("the bake on the CPU: a hue of 120 turns red to green and keeps alpha; brightness 0 is black")
+{
+    const auto cube = MakeCube(4);
+    Grade grade;
+    grade.hue = 120.0f;
+    std::vector<SkyLogic::Texel> out(16);
+    SkyLogic::BakeFace(cube, 0, grade, out.data());
+    CHECK(out[5] == 0xFF00FF00);
+    grade = {};
+    grade.brightness = 0.0f;
+    SkyLogic::BakeFace(cube, 5, grade, out.data());
+    CHECK(out[0] == 0x80000000);
+}
+
+TEST("the bake on the CPU: a yaw of 90 shows the game's +x where +y was, and up stays up")
+{
+    const auto cube = MakeCube(8);
+    Grade grade;
+    grade.rotation.x = 90.0f;
+    std::vector<SkyLogic::Texel> out(64);
+    SkyLogic::BakeFace(cube, 2, grade, out.data());
+    CHECK(out[3 * 8 + 3] == cube.faces[0][0]);
+    SkyLogic::BakeFace(cube, 4, grade, out.data());
+    CHECK(out[4 * 8 + 4] == cube.faces[4][0]);
+    // a sample at a face's edge blends with the face next to it
+    const auto edge = SkyLogic::Sample(cube, glm::vec3(1.0f, 1.0f, 0.0f));
+    CHECK(((edge >> 16) & 0xFF) > 100 && (edge & 0xFF) > 100);
+}
+
+TEST("a cube's smaller level is the mean of four texels")
+{
+    auto cube = MakeCube(2);
+    cube.faces[0] = {0xFF000000, 0xFF000000, 0xFFFFFFFF, 0xFFFFFFFF};
+    const auto half = SkyLogic::Halve(cube);
+    CHECK(half.size == 1);
+    CHECK(half.faces[0][0] == 0xFF808080);
+    CHECK(SkyLogic::Halve(half).size == 1);
+}

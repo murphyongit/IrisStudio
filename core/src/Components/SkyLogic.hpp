@@ -1,5 +1,9 @@
 #pragma once
 
+#include <array>
+#include <cstdint>
+#include <vector>
+
 namespace IWXMVM::Components::SkyLogic
 {
     // The Look tab's Sky section, apart from the game and the device so the tests build it on their own
@@ -67,6 +71,21 @@ namespace IWXMVM::Components::SkyLogic
     glm::vec3 GetDirection(const Face& face, float s, float t);
     // the face and texel coordinates (s, t in [-1, 1]) a direction looks up, as D3D picks them: the largest axis
     std::pair<std::size_t, glm::vec2> FindTexel(glm::vec3 direction);
+
+    // A cube map's level in memory, for the bake on the CPU: each face's texels as 0xAARRGGBB, rows from the top
+    using Texel = std::uint32_t;
+    struct Cube
+    {
+        std::uint32_t size = 0;
+        std::array<std::vector<Texel>, FACE_COUNT> faces;
+    };
+    // the next smaller level: each texel the mean of four (a 1 × 1 cube stays)
+    Cube Halve(const Cube& cube);
+    // a cube's colour along a direction: its four nearest texels blended, across the faces' edges too
+    Texel Sample(const Cube& cube, glm::vec3 direction);
+    // A face of the turned and graded sky from the game's (source, of the size to make): out has size × size texels.
+    // Not turned, each texel is the game's own, graded; alpha is the game's.
+    void BakeFace(const Cube& source, std::size_t face, const Grade& grade, Texel* out);
 
     // the levels a baked cube of this size has: down to 1 × 1, no more than the game's texture has
     std::uint32_t GetLevelCount(std::uint32_t size, std::uint32_t sourceLevels);

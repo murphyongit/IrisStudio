@@ -140,6 +140,100 @@ namespace IWXMVM::Components::SkyLogic
         return {face, glm::vec2(glm::dot(onPlane, axes.right), glm::dot(onPlane, axes.down))};
     }
 
+    namespace
+    {
+        glm::vec4 Unpack(Texel texel)
+        {
+            return glm::vec4(static_cast<float>((texel >> 16) & 0xFF), static_cast<float>((texel >> 8) & 0xFF),
+                             static_cast<float>(texel & 0xFF), static_cast<float>(texel >> 24));
+        }
+
+        Texel Pack(glm::vec4 color)
+        {
+            const auto channel = [](float value) {
+                return static_cast<Texel>(std::clamp(value, 0.0f, 255.0f) + 0.5f);
+            };
+            return (channel(color.a) << 24) | (channel(color.r) << 16) | (channel(color.g) << 8) | channel(color.b);
+        }
+
+        // a texel of a face, one off its edge taken from the face next to it
+        Texel Fetch(const Cube& cube, std::size_t face, std::int32_t x, std::int32_t y)
+        {
+            const auto size = static_cast<std::int32_t>(cube.size);
+            if (x < 0 || y < 0 || x >= size || y >= size)
+            {
+                const float s = (static_cast<float>(x) + 0.5f) / static_cast<float>(size) * 2.0f - 1.0f;
+                const float t = (static_cast<float>(y) + 0.5f) / static_cast<float>(size) * 2.0f - 1.0f;
+                const auto [other, st] = FindTexel(GetDirection(GetFace(face), s, t));
+                face = other;
+                x = std::clamp(static_cast<std::int32_t>((st.x + 1.0f) * 0.5f * static_cast<float>(size)), 0, size - 1);
+                y = std::clamp(static_cast<std::int32_t>((st.y + 1.0f) * 0.5f * static_cast<float>(size)), 0, size - 1);
+            }
+            return cube.faces[face][static_cast<std::size_t>(y) * cube.size + static_cast<std::size_t>(x)];
+        }
+    }  // namespace
+
+    Cube Halve(const Cube& cube)
+    {
+        if (cube.size <= 1)
+            return cube;
+        Cube half;
+        half.size = cube.size / 2;
+        for (std::size_t face = 0; face < FACE_COUNT; ++face)
+        {
+            half.faces[face].resize(static_cast<std::size_t>(half.size) * half.size);
+            for (std::uint32_t y = 0; y < half.size; ++y)
+                for (std::uint32_t x = 0; x < half.size; ++x)
+                {
+                    const auto at = [&](std::uint32_t dx, std::uint32_t dy) {
+                        return Unpack(cube.faces[face][static_cast<std::size_t>(y * 2 + dy) * cube.size + x * 2 + dx]);
+                    };
+                    half.faces[face][static_cast<std::size_t>(y) * half.size + x] =
+                        Pack((at(0, 0) + at(1, 0) + at(0, 1) + at(1, 1)) * 0.25f);
+                }
+        }
+        return half;
+    }
+
+    Texel Sample(const Cube& cube, glm::vec3 direction)
+    {
+        const auto [face, st] = FindTexel(direction);
+        const float x = (st.x + 1.0f) * 0.5f * static_cast<float>(cube.size) - 0.5f;
+        const float y = (st.y + 1.0f) * 0.5f * static_cast<float>(cube.size) - 0.5f;
+        const auto x0 = static_cast<std::int32_t>(std::floor(x));
+        const auto y0 = static_cast<std::int32_t>(std::floor(y));
+        const float fx = x - static_cast<float>(x0);
+        const float fy = y - static_cast<float>(y0);
+        const auto top = glm::mix(Unpack(Fetch(cube, face, x0, y0)), Unpack(Fetch(cube, face, x0 + 1, y0)), fx);
+        const auto bottom =
+            glm::mix(Unpack(Fetch(cube, face, x0, y0 + 1)), Unpack(Fetch(cube, face, x0 + 1, y0 + 1)), fx);
+        return Pack(glm::mix(top, bottom, fy));
+    }
+
+    void BakeFace(const Cube& source, std::size_t face, const Grade& grade, Texel* out)
+    {
+        const auto rows = GetColorRows(grade);
+        const bool turned = IsTurned(grade);
+        const auto axes = GetSampleFace(face, GetRotation(grade));
+        const auto size = source.size;
+        for (std::uint32_t y = 0; y < size; ++y)
+            for (std::uint32_t x = 0; x < size; ++x)
+            {
+                Texel texel;
+                if (turned)
+                {
+                    const float s = (static_cast<float>(x) + 0.5f) / static_cast<float>(size) * 2.0f - 1.0f;
+                    const float t = (static_cast<float>(y) + 0.5f) / static_cast<float>(size) * 2.0f - 1.0f;
+                    texel = Sample(source, GetDirection(axes, s, t));
+                }
+                else
+                    texel = source.faces[face][static_cast<std::size_t>(y) * size + x];
+                const auto color = Unpack(texel);
+                const auto graded = ApplyColor(rows, glm::vec3(color) / 255.0f) * 255.0f;
+                out[static_cast<std::size_t>(y) * size + x] = Pack(glm::vec4(graded, color.a));
+            }
+    }
+
     std::uint32_t GetLevelCount(std::uint32_t size, std::uint32_t sourceLevels)
     {
         std::uint32_t levels = 1;

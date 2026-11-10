@@ -1051,19 +1051,18 @@ namespace IWXMVM::UI
             ImGui::TextDisabled(ICON_FA_TRIANGLE_EXCLAMATION " This map's sky wasn't found");
         else if (status.cubes == 0)
             ImGui::TextDisabled(ICON_FA_TRIANGLE_EXCLAMATION " This map's sky isn't a cube map");
-        else if (status.faultStep > 0)
+        else if (!status.error.empty())
             ImGui::TextColored(Theme::Note(), "%s",
-                               std::format(ICON_FA_TRIANGLE_EXCLAMATION " The sky's redraw failed (step {}): the map's sky",
-                                           status.faultStep)
+                               std::format(ICON_FA_TRIANGLE_EXCLAMATION " The sky couldn't be remade. {}", status.error)
                                    .c_str());
-        else if (status.shaderFailed || status.failed > 0)
-            ImGui::TextColored(Theme::Note(), ICON_FA_TRIANGLE_EXCLAMATION " The sky couldn't be redrawn (see the log)");
         else
-            ImGui::TextDisabled("%s", std::format("{}, {} × {}, format {}{}{}", status.name, status.size, status.size,
-                                                  status.format, status.active ? "" : " (the map's own)",
-                                                  status.active && status.bakedTop
-                                                      ? std::format(", top #{:06X}", *status.bakedTop)
-                                                      : std::string())
+            ImGui::TextDisabled("%s", std::format("{}, {} × {}, {}{}", status.name, status.size, status.size,
+                                                  status.format,
+                                                  !status.active ? std::string(" (the map's own)")
+                                                  : status.baked ? std::format(", top #{:06X} > #{:06X}, {} ms",
+                                                                               status.sourceTop, status.bakedTop,
+                                                                               status.bakeMs)
+                                                                 : std::string())
                                           .c_str());
         ImGuiEx::Keyframeable::Record("visuals.sky.status");
         if (status.cubes > 1)
