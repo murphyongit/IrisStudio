@@ -9,6 +9,7 @@ permissions:
   contents: write
 
 jobs:
+  # The launcher (with T5iris.dll in it), published as soon as it's built
   build:
     runs-on: windows-2022
     steps:
@@ -16,14 +17,22 @@ jobs:
         with:
           submodules: recursive
 
-      # The DirectX SDK (June 2010): only its headers and 32-bit libraries, out of Microsoft's installer
+      # The DirectX SDK (June 2010): only its headers and 32-bit libraries, kept between builds
+      - uses: actions/cache@v4
+        id: dxsdk
+        with:
+          path: dxsdk
+          key: dxsdk-jun10-x86
       - name: DirectX SDK
+        if: steps.dxsdk.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
           curl.exe -L --retry 3 -o dxsdk.exe https://download.microsoft.com/download/A/E/7/AE743F1F-632B-4809-87A9-AA1BB3458E31/DXSDK_Jun10.exe
           7z x dxsdk.exe DXSDK/Include -odxsdk -y | Out-Null
           7z x dxsdk.exe DXSDK/Lib/x86 -odxsdk -y | Out-Null
-          "DXSDK_DIR=$env:GITHUB_WORKSPACE\dxsdk\DXSDK\" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: DirectX SDK path
+        shell: pwsh
+        run: '"DXSDK_DIR=$env:GITHUB_WORKSPACE\dxsdk\DXSDK\" | Out-File -FilePath $env:GITHUB_ENV -Append'
 
       - uses: microsoft/setup-msbuild@v2
 
@@ -32,16 +41,6 @@ jobs:
         run: |
           msbuild IWXMVM.sln /t:launcher /p:Configuration=Release /p:Platform=x86 /m /v:minimal /nologo
           if ($LASTEXITCODE -ne 0) { exit 1 }
-          msbuild IWXMVM.sln /t:injector /p:Configuration=Release /p:Platform=x86 /m /v:minimal /nologo
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-
-      - name: Unit tests
-        shell: pwsh
-        run: |
-          msbuild IWXMVM.sln /t:actors-tests /p:Configuration=Release /p:Platform=x86 /m /v:minimal /nologo
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-          & tests\bin\Win32\Release\actors-tests.exe
-          if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: Package
         shell: pwsh
@@ -49,8 +48,6 @@ jobs:
           New-Item -ItemType Directory dist | Out-Null
           Copy-Item launcher\bin\Win32\Release\IrisStudio.exe dist\
           Copy-Item t5\bin\Win32\Release\T5iris.dll dist\
-          Copy-Item tools\bin\Win32\Release\injector.exe dist\ -ErrorAction SilentlyContinue
-          Get-ChildItem dist
 
       - uses: actions/upload-artifact@v4
         with:
@@ -68,3 +65,19 @@ jobs:
           if ($LASTEXITCODE -eq 0) { gh release delete latest --yes --cleanup-tag }
           $notes = "Build of commit ${{ github.sha }}. Replace your IrisStudio.exe with this one (settings, scenes and keyframes are kept)."
           gh release create latest dist/IrisStudio.exe dist/T5iris.dll --title "Latest build (sky controls)" --notes $notes --target ${{ github.sha }}
+
+  # The unit tests, at the same time on another machine (they don't hold up the release)
+  tests:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: microsoft/setup-msbuild@v2
+      - name: Unit tests
+        shell: pwsh
+        run: |
+          msbuild IWXMVM.sln /t:actors-tests /p:Configuration=Release /p:Platform=x86 /m /v:minimal /nologo
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          & tests\bin\Win32\Release\actors-tests.exe
+          if ($LASTEXITCODE -ne 0) { exit 1 }
