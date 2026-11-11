@@ -30,7 +30,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.5 (recorder, first playback)";
+	constexpr char VERSION[] = "0.6 (recorder, first playback)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -41,9 +41,10 @@ namespace
 	constexpr uintptr_t CL_WRITE_PACKET = 0x1402058F0;
 	// void Cbuf_AddText(int localClientNum, const char* text) (s1-mod)
 	constexpr uintptr_t CBUF_ADD_TEXT = 0x1403AED70;
-	// dvar_t* Dvar_FindVar(const char* name) (s1-mod); a dvar's current value is at +0x18
+	// dvar_t* Dvar_FindVar(const char* name) (s1-mod); a dvar's current value is at +0x10 (after its name,
+	// its flags, and its type and modified flag of a byte each)
 	constexpr uintptr_t DVAR_FIND_VAR = 0x1404BF8B0;
-	constexpr size_t DVAR_CURRENT = 0x18;
+	constexpr size_t DVAR_CURRENT = 0x10;
 	// clientUIActive.connectionState (s1-mod's rcon.cpp; CL_PacketEvent tests it)
 	constexpr uintptr_t CONNECTION_STATE = 0x1417E1690;
 	constexpr int CA_CONNECTING = 3, CA_LOADING = 8, CA_PRIMED = 9;
@@ -214,6 +215,12 @@ namespace
 	{
 		const auto map = dvar_string("mapname");
 		const auto type = dvar_string("g_gametype");
+		if (map.empty())
+		{
+			log_line("recording: the game would not say its map; this recording cannot be played back");
+			return;
+		}
+
 		char path[MAX_PATH];
 		sprintf_s(path, "%s.txt", g_file_path);
 		FILE* info = nullptr;
