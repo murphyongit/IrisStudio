@@ -20,7 +20,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.1 (recorder tap)";
+	constexpr char VERSION[] = "0.2 (recorder tap)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -219,17 +219,37 @@ namespace
 		g_reserved_count = 0;
 	}
 
-	bool is_multiplayer()
+	// The program's name as Windows has it now, in lower case. S1x starts as s1x.exe and names the game's
+	// program only once it has loaded it, which can be after this DLL is loaded.
+	void get_program(char* exe)
 	{
-		char exe[MAX_PATH] = {};
+		exe[0] = 0;
 		GetModuleFileNameA(nullptr, exe, MAX_PATH);
-		_strlwr_s(exe);
-		return strstr(exe, "s1_mp64_ship") != nullptr;
+		_strlwr_s(exe, MAX_PATH);
 	}
 
 	DWORD WINAPI worker(LPVOID)
 	{
-		// the game unpacks its code as it starts: wait for the function to be there
+		// which game this is, once S1x has said
+		char exe[MAX_PATH];
+		get_program(exe);
+		log_line("program at load: %s", exe);
+		for (int i = 0; i < 600 && !strstr(exe, "s1_mp64_ship") && !strstr(exe, "s1_sp64_ship"); ++i)
+		{
+			Sleep(50);
+			get_program(exe);
+		}
+
+		log_line("program now: %s", exe);
+		if (strstr(exe, "s1_sp64_ship"))
+		{
+			log_line("single player: nothing to do");
+			release_hook_memory();
+			return 0;
+		}
+
+		// the game unpacks its code as it starts: wait for the function to be there (whatever the
+		// program is called: the function's bytes are the multiplayer game's alone)
 		bool unpacked = false;
 		for (int i = 0; i < 2400 && !unpacked; ++i)
 		{
@@ -276,27 +296,27 @@ namespace
 
 void theater_start(const HMODULE self)
 {
-	if (g_started.exchange(true) || !is_multiplayer())
+	if (g_started.exchange(true))
 	{
 		return;
 	}
 
-	char exe[MAX_PATH] = {};
-	GetModuleFileNameA(nullptr, exe, MAX_PATH);
-	if (char* slash = strrchr(exe, '\\'))
+	// the folder this DLL is in is the game's
+	char folder[MAX_PATH] = {};
+	GetModuleFileNameA(self, folder, MAX_PATH);
+	if (char* slash = strrchr(folder, '\\'))
 	{
 		*slash = 0;
 	}
 
-	sprintf_s(g_folder, "%s\\theater", exe);
+	sprintf_s(g_folder, "%s\\theater", folder);
 	CreateDirectoryA(g_folder, nullptr);
 	char log_path[MAX_PATH];
 	sprintf_s(log_path, "%s\\s1iris.log", g_folder);
 	fopen_s(&g_log, log_path, "a");
 	InitializeCriticalSection(&g_lock);
-	log_line("---- S1iris %s loaded in multiplayer ----", VERSION);
+	log_line("---- S1iris %s loaded ----", VERSION);
 	reserve_hook_memory();
-	(void)self;
 	if (HANDLE thread = CreateThread(nullptr, 0, &worker, nullptr, 0, nullptr))
 	{
 		CloseHandle(thread);
