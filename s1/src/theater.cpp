@@ -30,7 +30,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.9 (recorder, playback with the player's own view)";
+	constexpr char VERSION[] = "0.10 (recorder, playback with pause and speed)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -55,6 +55,15 @@ namespace
 	// being watched: the view is the recorded player's, and the viewer's mouse and keys are not his
 	constexpr uintptr_t CG_DRAW_ACTIVE_FRAME = 0x1401D4710;
 	constexpr int DEMO_TYPE_CLIENT = 1;
+	// int Com_TimeScaleMsec(int msec): a frame's real milliseconds made the game's, once a frame; never less
+	// than 1, so the game cannot be slowed far or stopped by its own time scale
+	constexpr uintptr_t COM_TIME_SCALE_MSEC = 0x1403D1E20;
+	// void CG_GameMessage(int localClientNum, const char* message) (s1-mod): a line in the game's message feed
+	constexpr uintptr_t CG_GAME_MESSAGE = 0x1401A3050;
+	constexpr int CA_ACTIVE = 10;
+	constexpr float SPEEDS[] = {0.1f, 0.25f, 0.5f, 1.0f, 2.0f, 4.0f};
+	constexpr int NORMAL_SPEED = 3;
+	constexpr std::uint32_t SKIP_MS = 10000;
 	// void SV_Frame(int msec): the local server's step, from the game's frame
 	constexpr uintptr_t SV_FRAME = 0x1404425B0;
 	// gentity_s* SV_AddBot(const char* name), gentity_s* SV_AddTestClient(int) (s1-mod)
@@ -153,6 +162,14 @@ namespace
 	std::vector<Predicted> g_predicted;
 	// the game's own demo mode while a recording plays (F8)
 	std::atomic<bool> g_demo_mode{true};
+	// Playback's clock: the game's own milliseconds since the recording took over, as playback's
+	// Com_TimeScaleMsec gave them out, so that the messages come at the pace the game's time runs at.
+	std::atomic<std::uint64_t> g_clock{0};
+	float g_clock_fraction = 0.0f;
+	std::atomic<int> g_speed{NORMAL_SPEED};
+	std::atomic<bool> g_paused{false};
+	// the key thread's requests, taken on the main thread
+	std::atomic<bool> g_pause_request{false}, g_slower_request{false}, g_faster_request{false}, g_skip_request{false};
 	std::atomic<std::uint64_t> g_predicted_given{0}, g_predicted_missed{0};
 	size_t g_next_record = 0;
 	ULONGLONG g_play_start = 0, g_play_asked = 0, g_play_report = 0;
@@ -244,6 +261,22 @@ namespace
 		__try
 		{
 			reinterpret_cast<void (*)(int, const char*)>(CBUF_ADD_TEXT)(0, text);
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+		}
+	}
+
+	// A line on screen, where the game shows its own messages (main thread, in a match).
+	void show(const char* text)
+	{
+		log_line("shown: %s", text);
+		__try
+		{
+			if (connection_state() == CA_ACTIVE)
+			{
+				reinterpret_cast<void (*)(int, const char*)>(CG_GAME_MESSAGE)(0, text);
+			}
 		}
 		__except (EXCEPTION_EXECUTE_HANDLER)
 		{
@@ -601,6 +634,11 @@ namespace
 
 			if (g_seen_loading && main && state >= CA_PRIMED)
 			{
+				g_clock = 0;
+				g_clock_fraction = 0.0f;
+				g_speed = NORMAL_SPEED;
+				g_paused = false;
+				g_pause_request = g_slower_request = g_faster_request = g_skip_request = false;
 				g_play = Play::Playing;
 				g_play_start = now;
 				g_play_report = now;
@@ -628,7 +666,30 @@ namespace
 			return;
 		}
 
-		const auto elapsed = static_cast<std::uint32_t>(now - g_play_start);
+		if (g_pause_request.exchange(false))
+		{
+			g_paused = !g_paused;
+			show(g_paused ? "S1iris: paused" : "S1iris: playing");
+		}
+
+		const bool slower = g_slower_request.exchange(false), faster = g_faster_request.exchange(false);
+		if (slower != faster)
+		{
+			const int count = static_cast<int>(sizeof(SPEEDS) / sizeof(SPEEDS[0]));
+			const int speed = g_speed + (faster ? 1 : -1);
+			g_speed = speed < 0 ? 0 : speed >= count ? count - 1 : speed;
+			char text[64];
+			sprintf_s(text, "S1iris: speed %gx", SPEEDS[g_speed]);
+			show(text);
+		}
+
+		if (g_skip_request.exchange(false))
+		{
+			g_clock += SKIP_MS;
+			show("S1iris: 10 seconds on");
+		}
+
+		const auto elapsed = static_cast<std::uint32_t>(g_clock.load());
 		for (int given = 0; given < 100 && g_next_record < g_records.size() && g_records[g_next_record].ms <= elapsed; ++given)
 		{
 			if (!feed_guarded(g_records[g_next_record]))
@@ -644,9 +705,10 @@ namespace
 		if (now - g_play_report > 5000)
 		{
 			g_play_report = now;
-			log_line("playback: %.0f s, %zu of %zu messages given, connection state %d, %llu local messages dropped, "
+			log_line("playback: %.0f s (speed %gx%s), %zu of %zu messages given, connection state %d, %llu local messages dropped, "
 			         "%llu bots refused, %llu server steps skipped; the player's position given %llu times, not found %llu; demo mode %s",
-			         elapsed / 1000.0, g_next_record, g_records.size(), connection_state(), g_dropped, g_bots_refused.load(),
+			         elapsed / 1000.0, SPEEDS[g_speed], g_paused ? ", paused" : "", g_next_record, g_records.size(),
+			         connection_state(), g_dropped, g_bots_refused.load(),
 			         g_server_frames_skipped.load(), g_predicted_given.load(), g_predicted_missed.load(),
 			         g_demo_mode ? "on" : "off");
 		}
@@ -764,6 +826,30 @@ namespace
 		}
 
 		return g_original_add_test_client(index);
+	}
+
+	using time_scale_msec_t = int (*)(int);
+	time_scale_msec_t g_original_time_scale_msec = nullptr;
+
+	// While a recording plays, the game's time is playback's: a frame's milliseconds times the speed, none
+	// when paused, the fractions kept; and what is given out is what playback's clock counts.
+	int hooked_time_scale_msec(const int msec)
+	{
+		if (g_play != Play::Playing)
+		{
+			return g_original_time_scale_msec(msec);
+		}
+
+		if (g_paused || msec <= 0)
+		{
+			return 0;
+		}
+
+		g_clock_fraction += static_cast<float>(msec > 200 ? 200 : msec) * SPEEDS[g_speed];
+		const int whole = static_cast<int>(g_clock_fraction);
+		g_clock_fraction -= static_cast<float>(whole);
+		g_clock += static_cast<std::uint64_t>(whole);
+		return whole;
 	}
 
 	using save_predicted_t = void (*)(unsigned char*, int);
@@ -899,6 +985,36 @@ namespace
 				g_stop_request = true;
 			}
 
+			static bool down = false, left = false, right = false, up = false;
+			const bool playing = focus && g_play == Play::Playing;
+			const bool down_now = playing && (GetAsyncKeyState(VK_DOWN) & 0x8000) != 0;
+			const bool left_now = playing && (GetAsyncKeyState(VK_LEFT) & 0x8000) != 0;
+			const bool right_now = playing && (GetAsyncKeyState(VK_RIGHT) & 0x8000) != 0;
+			const bool up_now = playing && (GetAsyncKeyState(VK_UP) & 0x8000) != 0;
+			if (down_now && !down)
+			{
+				g_pause_request = true;
+			}
+
+			if (left_now && !left)
+			{
+				g_slower_request = true;
+			}
+
+			if (right_now && !right)
+			{
+				g_faster_request = true;
+			}
+
+			if (up_now && !up)
+			{
+				g_skip_request = true;
+			}
+
+			down = down_now;
+			left = left_now;
+			right = right_now;
+			up = up_now;
 			const bool f8_now = focus && (GetAsyncKeyState(VK_F8) & 0x8000) != 0;
 			if (f8_now && !f8 && g_play == Play::Playing)
 			{
@@ -1128,6 +1244,9 @@ namespace
 					hook(SV_ADD_TEST_CLIENT, &hooked_add_test_client, &g_original_add_test_client, "test clients");
 				log_line("hook: playback's local match: server step %s, bots %s", server ? "held" : "NOT held",
 				         bots ? "kept out" : "NOT kept out");
+				const bool time = hook(COM_TIME_SCALE_MSEC, &hooked_time_scale_msec, &g_original_time_scale_msec, "the game's time");
+				log_line("hook: playback's pause and speed %s (down arrow pauses, left and right change speed, up skips 10 s)",
+				         time ? "yes" : "NO");
 				const bool save = hook(CL_SAVE_PREDICTED, &hooked_save_predicted, &g_original_save_predicted, "the player's position, kept");
 				const bool get = hook(CL_GET_PREDICTED, &hooked_get_predicted, &g_original_get_predicted, "the player's position, asked for");
 				const bool draw = hook(CG_DRAW_ACTIVE_FRAME, &hooked_draw_active_frame, &g_original_draw_active_frame, "the frame");
