@@ -20,7 +20,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.2 (recorder tap)";
+	constexpr char VERSION[] = "0.3 (recorder tap)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -33,6 +33,7 @@ namespace
 	constexpr size_t MSG_CURSIZE = 0x1C;
 	constexpr size_t MSG_READCOUNT = 0x24;
 	constexpr unsigned MAX_MESSAGE = 0x20000;
+	constexpr int HOOK_DELAY_S = 25;
 
 	// a pause this long between messages is a new match: a new file
 	constexpr ULONGLONG NEW_FILE_GAP_MS = 5000;
@@ -44,6 +45,7 @@ namespace
 	ULONGLONG g_file_start = 0, g_last_message = 0, g_last_flush = 0, g_last_report = 0;
 	std::uint64_t g_file_messages = 0, g_file_bytes = 0, g_faults = 0;
 	std::atomic<bool> g_started{false};
+	std::atomic<std::uint64_t> g_calls{0};
 
 	using parse_t = void (*)(int, void*);
 	parse_t g_original_parse = nullptr;
@@ -178,6 +180,7 @@ namespace
 
 	void hooked_parse(const int client, void* msg)
 	{
+		++g_calls;
 		EnterCriticalSection(&g_lock);
 		record(client, msg);
 		LeaveCriticalSection(&g_lock);
@@ -272,6 +275,23 @@ namespace
 			return 0;
 		}
 
+		// 0.2 hooked the moment the code was unpacked, and the game crashed while starting: its start
+		// is left alone now (as the debug overlay, which hooks later, leaves it), and the function is
+		// only patched once it has stayed the same for a while
+		log_line("the game's code is unpacked; waiting %d s for the game to finish starting", HOOK_DELAY_S);
+		for (int i = 0; i < HOOK_DELAY_S; ++i)
+		{
+			Sleep(1000);
+		}
+
+		unsigned char now[sizeof(PROLOGUE)];
+		if (!read_bytes(CL_PARSE_SERVER_MESSAGE, now, sizeof(now)) || memcmp(now, PROLOGUE, sizeof(now)) != 0)
+		{
+			log_line("the game's message function changed while the game started: nothing was hooked");
+			release_hook_memory();
+			return 0;
+		}
+
 		release_hook_memory();
 		MH_STATUS status = MH_Initialize();
 		if (status != MH_OK && status != MH_ERROR_ALREADY_INITIALIZED)
@@ -290,6 +310,13 @@ namespace
 		log_line(status == MH_OK ? "hook: server messages installed. Play a private match; it is recorded by itself."
 		                         : "hook: server messages FAILED (%s)",
 		         MH_StatusToString(status));
+		// how long the game lives with the hook in, for the log
+		for (int i = 1; i <= 12 && status == MH_OK; ++i)
+		{
+			Sleep(5000);
+			log_line("still running %d s after the hook (%llu calls so far)", i * 5, g_calls.load());
+		}
+
 		return 0;
 	}
 }
