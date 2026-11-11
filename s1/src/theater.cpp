@@ -30,7 +30,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.6 (recorder, first playback)";
+	constexpr char VERSION[] = "0.7 (recorder, first playback)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -613,8 +613,26 @@ namespace
 
 		if (g_play == Play::Idle)
 		{
+			// The menu's own level (the virtual lobby) is a connection too, with messages of its own 20
+			// times a second: a match's recording ends where it begins, and it is not recorded.
+			static bool was_lobby = false;
+			const bool lobby = *reinterpret_cast<const unsigned char*>(VIRTUAL_LOBBY_LOADED) != 0;
 			EnterCriticalSection(&g_lock);
-			record(client, msg);
+			if (lobby != was_lobby)
+			{
+				was_lobby = lobby;
+				log_line(lobby ? "the menu's lobby is loaded: not recording" : "the menu's lobby is gone: recording what comes");
+				if (lobby)
+				{
+					close_file();
+				}
+			}
+
+			if (!lobby)
+			{
+				record(client, msg);
+			}
+
 			LeaveCriticalSection(&g_lock);
 		}
 
