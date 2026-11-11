@@ -127,6 +127,7 @@ namespace
 	// thread's runs here while a map loads)
 	std::atomic<bool> g_seen_loading{false};
 	CRITICAL_SECTION g_play_lock;
+	std::atomic<std::uint64_t> g_bots_refused{0}, g_server_frames_skipped{0};
 	char g_play_name[MAX_PATH] = {};
 
 	int connection_state()
@@ -669,7 +670,6 @@ namespace
 	add_bot_t g_original_add_bot = nullptr;
 	using add_test_client_t = void* (*)(int);
 	add_test_client_t g_original_add_test_client = nullptr;
-	std::atomic<std::uint64_t> g_bots_refused{0}, g_server_frames_skipped{0};
 
 	void hooked_sv_frame(const int msec)
 	{
