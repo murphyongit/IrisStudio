@@ -20,7 +20,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.3 (recorder tap)";
+	constexpr char VERSION[] = "0.4 (recorder tap, killcam fix)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -187,6 +187,58 @@ namespace
 		g_original_parse(client, msg);
 	}
 
+	// The killcam crash (0xC0000005 at 0x14044F762, when a bot's kill is shown in a private match): the
+	// function that reads or writes one entity's change (0x1403D76F0) begins with a jump into the game's
+	// protection code, which there does `xor ebx, a` then `xor ebx, b` (a == b: no change to ebx, but a
+	// 32-bit operation clears the upper half of rbx) before going on at 0x15121E509. Its caller keeps its
+	// message in rbx, a pointer above 4 GB when its stack is, and crashes on it afterwards. The fix (found by
+	// bradstv for CBServers' s1-mod) jumps past the pair.
+	constexpr uintptr_t DELTA_ENTITY = 0x1403D76F0;
+	constexpr uintptr_t DELTA_ENTITY_JUNK = 0x15121E4FD;
+	constexpr uintptr_t DELTA_ENTITY_AFTER_JUNK = 0x15121E509;
+
+	void fix_killcam()
+	{
+		unsigned char now[5] = {};
+		std::int32_t to = 0;
+		if (!read_bytes(DELTA_ENTITY, now, sizeof(now)))
+		{
+			log_line("killcam fix: the function could not be read; not applied");
+			return;
+		}
+
+		memcpy(&to, now + 1, sizeof(to));
+		const uintptr_t target = DELTA_ENTITY + 5 + static_cast<std::intptr_t>(to);
+		if (now[0] == 0xE9 && target == DELTA_ENTITY_AFTER_JUNK)
+		{
+			log_line("killcam fix: already in place (another mod's)");
+			return;
+		}
+
+		unsigned char junk[12] = {};
+		if (now[0] != 0xE9 || target != DELTA_ENTITY_JUNK || !read_bytes(DELTA_ENTITY_JUNK, junk, sizeof(junk)) ||
+		    junk[0] != 0x33 || junk[1] != 0x1D || junk[6] != 0x33 || junk[7] != 0x1D)
+		{
+			log_line("killcam fix: the game's code is not as expected there (%02X, to %llX); not applied", now[0],
+			         static_cast<unsigned long long>(target));
+			return;
+		}
+
+		const std::int32_t fixed = static_cast<std::int32_t>(DELTA_ENTITY_AFTER_JUNK - (DELTA_ENTITY + 5));
+		DWORD old = 0;
+		if (!VirtualProtect(reinterpret_cast<LPVOID>(DELTA_ENTITY), 5, PAGE_EXECUTE_READWRITE, &old))
+		{
+			log_line("killcam fix: the code could not be made writable; not applied");
+			return;
+		}
+
+		// the four bytes of the jump's distance at once
+		InterlockedExchange(reinterpret_cast<volatile LONG*>(DELTA_ENTITY + 1), fixed);
+		VirtualProtect(reinterpret_cast<LPVOID>(DELTA_ENTITY), 5, old, &old);
+		FlushInstructionCache(GetCurrentProcess(), reinterpret_cast<LPCVOID>(DELTA_ENTITY), 5);
+		log_line("killcam fix: applied");
+	}
+
 	// MinHook needs free memory within 1 GB of the function it patches, and a running game can have
 	// taken it all: a few spots are kept from the start and given back right before hooking. (Other
 	// addresses than the debug overlay's, which does the same.)
@@ -292,6 +344,7 @@ namespace
 			return 0;
 		}
 
+		fix_killcam();
 		release_hook_memory();
 		MH_STATUS status = MH_Initialize();
 		if (status != MH_OK && status != MH_ERROR_ALREADY_INITIALIZED)
