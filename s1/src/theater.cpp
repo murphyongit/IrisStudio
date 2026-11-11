@@ -30,7 +30,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.8 (recorder, first playback)";
+	constexpr char VERSION[] = "0.9 (recorder, playback with the player's own view)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -39,6 +39,22 @@ namespace
 
 	// void CL_WritePacket(int localClientNum) (s1-mod): the client's packet to the server, every frame
 	constexpr uintptr_t CL_WRITE_PACKET = 0x1402058F0;
+	// The player's own position is not in the server's messages: the client keeps what it predicted for
+	// each of its commands in a ring (cl->clientArchive, 256 of 0xA4 bytes at cl+0x74EC: the command's
+	// server time, origin, velocity, bob cycle, movement direction; the next index at cl+0x118EC), and a
+	// snapshot's player state is given the entry of its command's time.
+	// void CL_SavePredictedPlayerInformationForServerTime(clientActive_t* cl, int serverTime): writes an entry
+	constexpr uintptr_t CL_SAVE_PREDICTED = 0x140213140;
+	// bool CL_GetPredictedPlayerInformationForServerTime(clientActive_t* cl, int serverTime, playerState_s* ps)
+	constexpr uintptr_t CL_GET_PREDICTED = 0x140210FF0;
+	// what the writer reads of cl, and what the reader writes of the player state
+	constexpr size_t CL_ORIGIN = 0x5228, CL_VELOCITY = 0x5234, CL_BOB_CYCLE = 0x52C0, CL_MOVEMENT_DIR = 0x52C4;
+	constexpr size_t PS_BOB_CYCLE = 0x0E, PS_ORIGIN = 0x78, PS_VELOCITY = 0x84, PS_MOVEMENT_DIR = 0xD0;
+	// int CG_DrawActiveFrame(int localClientNum, int serverTime, int demoType, int cubemapShot, int cubemapSize,
+	// int renderScreen, ...): its demoType (kept at 0x1414C66E8) is what tells the game's own code a demo is
+	// being watched: the view is the recorded player's, and the viewer's mouse and keys are not his
+	constexpr uintptr_t CG_DRAW_ACTIVE_FRAME = 0x1401D4710;
+	constexpr int DEMO_TYPE_CLIENT = 1;
 	// void SV_Frame(int msec): the local server's step, from the game's frame
 	constexpr uintptr_t SV_FRAME = 0x1404425B0;
 	// gentity_s* SV_AddBot(const char* name), gentity_s* SV_AddTestClient(int) (s1-mod)
@@ -74,6 +90,9 @@ namespace
 	// the two numbers CL_PacketEvent has read of a message when it is parsed
 	constexpr std::int32_t MSG_HEADER = 8;
 	constexpr unsigned MAX_MESSAGE = 0x20000;
+	// A record that is not a message has its kind where a message has its client (0): the player's
+	// predicted position for one command.
+	constexpr std::uint32_t KIND_PREDICTED = 0x44455250;
 	constexpr int HOOK_DELAY_S = 25;
 	// the match's map is surely the game's by this many messages (2 s)
 	constexpr std::uint64_t MATCH_INFO_AT = 40;
@@ -106,6 +125,18 @@ namespace
 		std::vector<unsigned char> data;
 	};
 
+	// What the client predicted of its player for the command of a server time.
+	struct Predicted
+	{
+		std::int32_t serverTime = 0;
+		float origin[3] = {};
+		float velocity[3] = {};
+		std::int32_t bobCycle = 0;
+		std::int32_t movementDir = 0;
+	};
+
+	static_assert(sizeof(Predicted) == 36);
+
 	enum class Play
 	{
 		Idle,
@@ -118,6 +149,11 @@ namespace
 	// all of this is the main thread's, but for the two requests, which the key thread makes
 	std::atomic<Play> g_play{Play::Idle};
 	std::vector<Record> g_records;
+	// the recording's predicted positions, in the order of their times
+	std::vector<Predicted> g_predicted;
+	// the game's own demo mode while a recording plays (F8)
+	std::atomic<bool> g_demo_mode{true};
+	std::atomic<std::uint64_t> g_predicted_given{0}, g_predicted_missed{0};
 	size_t g_next_record = 0;
 	ULONGLONG g_play_start = 0, g_play_asked = 0, g_play_report = 0;
 	bool g_feeding = false;
@@ -265,8 +301,8 @@ namespace
 			return false;
 		}
 
-		// header: "AWDM", format 1, the size of the msg_t kept with each message
-		const std::uint32_t header[3] = {0x4D445741, 1, static_cast<std::uint32_t>(MSG_SIZE)};
+		// header: "AWDM", format 2 (1 had messages only), the size of the msg_t kept with each message
+		const std::uint32_t header[3] = {0x4D445741, 2, static_cast<std::uint32_t>(MSG_SIZE)};
 		fwrite(header, sizeof(header), 1, g_file);
 		g_file_start = now;
 		g_file_messages = 0;
@@ -366,14 +402,35 @@ namespace
 		}
 
 		g_records.clear();
+		g_predicted.clear();
 		std::uint32_t header[3] = {};
 		bool good = fread(header, sizeof(header), 1, file) == 1 && header[0] == 0x4D445741 && header[2] == MSG_SIZE;
 		while (good)
 		{
 			std::uint32_t head[3];
 			Record record;
-			if (fread(head, sizeof(head), 1, file) != 1 || head[2] == 0 || head[2] > MAX_MESSAGE ||
-			    fread(record.head, sizeof(record.head), 1, file) != 1)
+			if (fread(head, sizeof(head), 1, file) != 1 || head[2] == 0 || head[2] > MAX_MESSAGE)
+			{
+				break;
+			}
+
+			if (head[1] == KIND_PREDICTED)
+			{
+				Predicted predicted;
+				if (head[2] != sizeof(predicted) || fread(&predicted, sizeof(predicted), 1, file) != 1)
+				{
+					break;
+				}
+
+				if (g_predicted.empty() || predicted.serverTime > g_predicted.back().serverTime)
+				{
+					g_predicted.push_back(predicted);
+				}
+
+				continue;
+			}
+
+			if (fread(record.head, sizeof(record.head), 1, file) != 1)
 			{
 				break;
 			}
@@ -431,6 +488,7 @@ namespace
 		g_play = Play::Idle;
 		g_records.clear();
 		g_records.shrink_to_fit();
+		g_predicted.clear();
 		command("disconnect\n");
 	}
 
@@ -454,8 +512,11 @@ namespace
 			return;
 		}
 
-		log_line("playback: %s, %zu messages, %.1f s, map %s, game type %s; connection state %d, lobby %d", g_play_name,
-		         g_records.size(), g_records.back().ms / 1000.0, map.c_str(), type.c_str(), connection_state(),
+		g_predicted_given = 0;
+		g_predicted_missed = 0;
+		log_line("playback: %s, %zu messages, %zu of the player's positions, %.1f s, map %s, game type %s; connection state %d, lobby %d",
+		         g_play_name, g_records.size(), g_predicted.size(), g_records.back().ms / 1000.0, map.c_str(), type.c_str(),
+		         connection_state(),
 		         static_cast<int>(*reinterpret_cast<const unsigned char*>(VIRTUAL_LOBBY_LOADED)));
 		char text[256];
 		sprintf_s(text, "g_gametype %s; ui_gametype %s; map %s\n", type.empty() ? "war" : type.c_str(),
@@ -584,9 +645,10 @@ namespace
 		{
 			g_play_report = now;
 			log_line("playback: %.0f s, %zu of %zu messages given, connection state %d, %llu local messages dropped, "
-			         "%llu bots refused, %llu server steps skipped",
+			         "%llu bots refused, %llu server steps skipped; the player's position given %llu times, not found %llu; demo mode %s",
 			         elapsed / 1000.0, g_next_record, g_records.size(), connection_state(), g_dropped, g_bots_refused.load(),
-			         g_server_frames_skipped.load());
+			         g_server_frames_skipped.load(), g_predicted_given.load(), g_predicted_missed.load(),
+			         g_demo_mode ? "on" : "off");
 		}
 
 		if (g_next_record >= g_records.size())
@@ -704,6 +766,92 @@ namespace
 		return g_original_add_test_client(index);
 	}
 
+	using save_predicted_t = void (*)(unsigned char*, int);
+	save_predicted_t g_original_save_predicted = nullptr;
+	using get_predicted_t = bool (*)(unsigned char*, int, unsigned char*);
+	get_predicted_t g_original_get_predicted = nullptr;
+	using draw_active_frame_t = int (*)(int, int, int, int, int, int, unsigned);
+	draw_active_frame_t g_original_draw_active_frame = nullptr;
+
+	// Recording: each position the client keeps for a command goes into the match's file too.
+	void hooked_save_predicted(unsigned char* cl, const int server_time)
+	{
+		g_original_save_predicted(cl, server_time);
+		if (g_play != Play::Idle || !cl)
+		{
+			return;
+		}
+
+		EnterCriticalSection(&g_lock);
+		static std::int32_t last_time = 0;
+		if (g_file && server_time != last_time)
+		{
+			last_time = server_time;
+			Predicted predicted;
+			predicted.serverTime = server_time;
+			memcpy(predicted.origin, cl + CL_ORIGIN, sizeof(predicted.origin));
+			memcpy(predicted.velocity, cl + CL_VELOCITY, sizeof(predicted.velocity));
+			memcpy(&predicted.bobCycle, cl + CL_BOB_CYCLE, sizeof(predicted.bobCycle));
+			memcpy(&predicted.movementDir, cl + CL_MOVEMENT_DIR, sizeof(predicted.movementDir));
+			const std::uint32_t head[3] = {static_cast<std::uint32_t>(GetTickCount64() - g_file_start), KIND_PREDICTED,
+			                               static_cast<std::uint32_t>(sizeof(predicted))};
+			fwrite(head, sizeof(head), 1, g_file);
+			fwrite(&predicted, sizeof(predicted), 1, g_file);
+		}
+
+		LeaveCriticalSection(&g_lock);
+	}
+
+	// Playback: the recorded player's position of a time, where the game asks for what it predicted.
+	bool hooked_get_predicted(unsigned char* cl, const int server_time, unsigned char* ps)
+	{
+		const bool found = g_original_get_predicted(cl, server_time, ps);
+		if (g_play != Play::Playing || !ps || g_predicted.empty())
+		{
+			return found;
+		}
+
+		// the last one at or before the time
+		size_t low = 0, high = g_predicted.size();
+		while (low < high)
+		{
+			const size_t middle = (low + high) / 2;
+			if (g_predicted[middle].serverTime <= server_time)
+			{
+				low = middle + 1;
+			}
+			else
+			{
+				high = middle;
+			}
+		}
+
+		if (low == 0 || server_time - g_predicted[low - 1].serverTime > 500)
+		{
+			++g_predicted_missed;
+			return found;
+		}
+
+		const auto& predicted = g_predicted[low - 1];
+		memcpy(ps + PS_ORIGIN, predicted.origin, sizeof(predicted.origin));
+		memcpy(ps + PS_VELOCITY, predicted.velocity, sizeof(predicted.velocity));
+		ps[PS_BOB_CYCLE] = static_cast<unsigned char>(predicted.bobCycle);
+		memcpy(ps + PS_MOVEMENT_DIR, &predicted.movementDir, sizeof(predicted.movementDir));
+		++g_predicted_given;
+		return true;
+	}
+
+	int hooked_draw_active_frame(const int client, const int server_time, int demo_type, const int cubemap_shot,
+	                             const int cubemap_size, const int render_screen, const unsigned more)
+	{
+		if (g_play == Play::Playing && g_demo_mode)
+		{
+			demo_type = DEMO_TYPE_CLIENT;
+		}
+
+		return g_original_draw_active_frame(client, server_time, demo_type, cubemap_shot, cubemap_size, render_screen, more);
+	}
+
 	bool hook(const uintptr_t address, void* detour, void* original, const char* name)
 	{
 		MH_STATUS status = MH_CreateHook(reinterpret_cast<LPVOID>(address), detour, static_cast<LPVOID*>(original));
@@ -732,7 +880,7 @@ namespace
 	// run, on its own thread).
 	DWORD WINAPI keys(LPVOID)
 	{
-		bool f9 = false, f10 = false;
+		bool f9 = false, f10 = false, f8 = false;
 		for (;;)
 		{
 			Sleep(30);
@@ -751,6 +899,14 @@ namespace
 				g_stop_request = true;
 			}
 
+			const bool f8_now = focus && (GetAsyncKeyState(VK_F8) & 0x8000) != 0;
+			if (f8_now && !f8 && g_play == Play::Playing)
+			{
+				g_demo_mode = !g_demo_mode;
+				log_line("F8: demo mode %s", g_demo_mode ? "on" : "off");
+			}
+
+			f8 = f8_now;
 			f9 = f9_now;
 			f10 = f10_now;
 			// nothing of the main thread's runs here at the menu or while a map loads: a request it has not
@@ -972,6 +1128,11 @@ namespace
 					hook(SV_ADD_TEST_CLIENT, &hooked_add_test_client, &g_original_add_test_client, "test clients");
 				log_line("hook: playback's local match: server step %s, bots %s", server ? "held" : "NOT held",
 				         bots ? "kept out" : "NOT kept out");
+				const bool save = hook(CL_SAVE_PREDICTED, &hooked_save_predicted, &g_original_save_predicted, "the player's position, kept");
+				const bool get = hook(CL_GET_PREDICTED, &hooked_get_predicted, &g_original_get_predicted, "the player's position, asked for");
+				const bool draw = hook(CG_DRAW_ACTIVE_FRAME, &hooked_draw_active_frame, &g_original_draw_active_frame, "the frame");
+				log_line("hook: the player's own view: recorded %s, played back %s, demo mode %s (F8 switches it while playing)",
+				         save ? "yes" : "NO", get ? "yes" : "NO", draw ? "yes" : "NO");
 				if (HANDLE thread = CreateThread(nullptr, 0, &keys, nullptr, 0, nullptr))
 				{
 					CloseHandle(thread);
