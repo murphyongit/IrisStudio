@@ -30,7 +30,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.7 (recorder, first playback)";
+	constexpr char VERSION[] = "0.8 (recorder, first playback)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -39,6 +39,11 @@ namespace
 
 	// void CL_WritePacket(int localClientNum) (s1-mod): the client's packet to the server, every frame
 	constexpr uintptr_t CL_WRITE_PACKET = 0x1402058F0;
+	// void SV_Frame(int msec): the local server's step, from the game's frame
+	constexpr uintptr_t SV_FRAME = 0x1404425B0;
+	// gentity_s* SV_AddBot(const char* name), gentity_s* SV_AddTestClient(int) (s1-mod)
+	constexpr uintptr_t SV_ADD_BOT = 0x140438EC0;
+	constexpr uintptr_t SV_ADD_TEST_CLIENT = 0x140439190;
 	// void Cbuf_AddText(int localClientNum, const char* text) (s1-mod)
 	constexpr uintptr_t CBUF_ADD_TEXT = 0x1403AED70;
 	// dvar_t* Dvar_FindVar(const char* name) (s1-mod); a dvar's current value is at +0x10 (after its name,
@@ -577,8 +582,10 @@ namespace
 		if (now - g_play_report > 5000)
 		{
 			g_play_report = now;
-			log_line("playback: %.0f s, %zu of %zu messages given, connection state %d, %llu local messages dropped",
-			         elapsed / 1000.0, g_next_record, g_records.size(), connection_state(), g_dropped);
+			log_line("playback: %.0f s, %zu of %zu messages given, connection state %d, %llu local messages dropped, "
+			         "%llu bots refused, %llu server steps skipped",
+			         elapsed / 1000.0, g_next_record, g_records.size(), connection_state(), g_dropped, g_bots_refused.load(),
+			         g_server_frames_skipped.load());
 		}
 
 		if (g_next_record >= g_records.size())
@@ -649,6 +656,68 @@ namespace
 		}
 
 		g_original_write_packet(client);
+	}
+
+	// The match that playback starts is only there to have the game load a match's map: nothing of it is to
+	// happen. Its bots would take weapons, and a weapon with attachments gets its number where it is first
+	// taken, in one table the local server and the client share: the recording's numbers for the same
+	// weapons then differ ("Custom weapon index mismatch"). So it gets no bots, and once the recording is
+	// the client's server it does not run at all.
+	using sv_frame_t = void (*)(int);
+	sv_frame_t g_original_sv_frame = nullptr;
+	using add_bot_t = void* (*)(const char*);
+	add_bot_t g_original_add_bot = nullptr;
+	using add_test_client_t = void* (*)(int);
+	add_test_client_t g_original_add_test_client = nullptr;
+	std::atomic<std::uint64_t> g_bots_refused{0}, g_server_frames_skipped{0};
+
+	void hooked_sv_frame(const int msec)
+	{
+		if (g_play == Play::Playing)
+		{
+			++g_server_frames_skipped;
+			return;
+		}
+
+		g_original_sv_frame(msec);
+	}
+
+	void* hooked_add_bot(const char* name)
+	{
+		if (g_play != Play::Idle)
+		{
+			++g_bots_refused;
+			return nullptr;
+		}
+
+		return g_original_add_bot(name);
+	}
+
+	void* hooked_add_test_client(const int index)
+	{
+		if (g_play != Play::Idle)
+		{
+			++g_bots_refused;
+			return nullptr;
+		}
+
+		return g_original_add_test_client(index);
+	}
+
+	bool hook(const uintptr_t address, void* detour, void* original, const char* name)
+	{
+		MH_STATUS status = MH_CreateHook(reinterpret_cast<LPVOID>(address), detour, static_cast<LPVOID*>(original));
+		if (status == MH_OK)
+		{
+			status = MH_EnableHook(reinterpret_cast<LPVOID>(address));
+		}
+
+		if (status != MH_OK)
+		{
+			log_line("hook: %s FAILED (%s)", name, MH_StatusToString(status));
+		}
+
+		return status == MH_OK;
 	}
 
 	bool game_has_focus()
@@ -898,6 +967,11 @@ namespace
 			         MH_StatusToString(write));
 			if (write == MH_OK)
 			{
+				const bool server = hook(SV_FRAME, &hooked_sv_frame, &g_original_sv_frame, "the local server's step");
+				const bool bots = hook(SV_ADD_BOT, &hooked_add_bot, &g_original_add_bot, "bots") &&
+					hook(SV_ADD_TEST_CLIENT, &hooked_add_test_client, &g_original_add_test_client, "test clients");
+				log_line("hook: playback's local match: server step %s, bots %s", server ? "held" : "NOT held",
+				         bots ? "kept out" : "NOT kept out");
 				if (HANDLE thread = CreateThread(nullptr, 0, &keys, nullptr, 0, nullptr))
 				{
 					CloseHandle(thread);
