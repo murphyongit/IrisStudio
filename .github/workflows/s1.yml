@@ -1,0 +1,39 @@
+name: Build S1iris
+
+on:
+  push:
+    branches: [main]
+    paths: ['s1/**', '.github/workflows/s1.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S s1 -B s1/build -A x64
+
+      - name: Build
+        run: cmake --build s1/build --config Release
+
+      - name: Package
+        run: cmake --install s1/build --config Release --prefix dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: s1iris
+          path: dist/
+
+      - name: Publish release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view s1iris-latest *> $null
+          if ($LASTEXITCODE -eq 0) { gh release delete s1iris-latest --yes --cleanup-tag }
+          gh release create s1iris-latest dist/XInput1_3.dll --title "S1iris (Advanced Warfare), latest build" --notes "Build of commit ${{ github.sha }}. Test build: recorder tap only." --target ${{ github.sha }} --prerelease
