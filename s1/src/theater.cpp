@@ -30,7 +30,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.12 (recorder, playback with rewind)";
+	constexpr char VERSION[] = "0.13 (recorder, playback with rewind, crash notes)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -83,6 +83,13 @@ namespace
 	// a client game's snapshot: its flags, of which this one changes when the map starts again
 	constexpr size_t SNAPSHOT_FLAGS = 0x5B68;
 	constexpr std::int32_t SNAPFLAG_SERVERCOUNT = 4;
+	// CG_SetInitialSnapshot (0x1401C2200) ends by taking away the snapshot the client game is going to
+	// (`mov qword ptr [cg->nextSnap], 0`, 11 bytes): until the next one is read there is none, and code
+	// that runs between reads it without looking (the crashes at 0x1401AFEEA after going back). With these
+	// bytes gone it stays the snapshot the client game is at, which CG_ProcessSnapshots takes to mean
+	// "no next one yet" just as well.
+	constexpr uintptr_t CG_INITIAL_SNAPSHOT_CLEARS_NEXT = 0x1401C23D6;
+	constexpr unsigned char CLEARS_NEXT[] = {0x48, 0xC7, 0x05, 0x2F, 0x43, 0x30, 0x01, 0x00, 0x00, 0x00, 0x00};
 	constexpr std::uint32_t BACK_MS = 10000;
 	// void SV_Frame(int msec): the local server's step, from the game's frame
 	constexpr uintptr_t SV_FRAME = 0x1404425B0;
@@ -541,6 +548,7 @@ namespace
 
 		log_line("playback ended (%s): %zu of %zu messages given, %llu of the local match's dropped", why, g_next_record,
 		         g_records.size(), g_dropped);
+		keep_next_snapshot(false);
 		g_play = Play::Idle;
 		g_records.clear();
 		g_records.shrink_to_fit();
@@ -622,6 +630,61 @@ namespace
 		}
 	}
 
+	// faults noted so far (a few at most after each start and each going back)
+	std::atomic<int> g_faults_noted{0};
+	bool g_keeps_next = false;
+
+	// The client game keeps a snapshot to go to through a new first snapshot (see CLEARS_NEXT), or not.
+	void keep_next_snapshot(const bool keep)
+	{
+		if (keep == g_keeps_next)
+		{
+			return;
+		}
+
+		unsigned char now[sizeof(CLEARS_NEXT)];
+		unsigned char nops[sizeof(CLEARS_NEXT)];
+		memset(nops, 0x90, sizeof(nops));
+		if (!read_bytes(CG_INITIAL_SNAPSHOT_CLEARS_NEXT, now, sizeof(now)) ||
+		    memcmp(now, keep ? CLEARS_NEXT : nops, sizeof(now)) != 0)
+		{
+			log_line("playback: the client game's code is not as expected at its first snapshot; left as it is");
+			return;
+		}
+
+		DWORD old = 0;
+		if (VirtualProtect(reinterpret_cast<LPVOID>(CG_INITIAL_SNAPSHOT_CLEARS_NEXT), sizeof(now), PAGE_EXECUTE_READWRITE, &old))
+		{
+			memcpy(reinterpret_cast<void*>(CG_INITIAL_SNAPSHOT_CLEARS_NEXT), keep ? nops : CLEARS_NEXT, sizeof(now));
+			VirtualProtect(reinterpret_cast<LPVOID>(CG_INITIAL_SNAPSHOT_CLEARS_NEXT), sizeof(now), old, &old);
+			FlushInstructionCache(GetCurrentProcess(), reinterpret_cast<LPCVOID>(CG_INITIAL_SNAPSHOT_CLEARS_NEXT), sizeof(now));
+			g_keeps_next = keep;
+			log_line("playback: the client game %s", keep ? "keeps a snapshot to go to through a new first one" : "is as the game has it again");
+		}
+	}
+
+	// What the game's place in the recording looks like, for the log.
+	void log_stream(const char* when)
+	{
+		__try
+		{
+			log_line("  %s: connection state %d; client snapshot valid %d, number %d, time %d; client time %d, delta %d, new snapshots %d; "
+			         "client game latest %d, read %d, at %p, going to %p, its time %d",
+			         when, connection_state(), *reinterpret_cast<std::int32_t*>(CL_SNAP_VALID),
+			         *reinterpret_cast<std::int32_t*>(CL_SNAP_MESSAGE_NUM), *reinterpret_cast<std::int32_t*>(CL_SNAP_SERVER_TIME),
+			         *reinterpret_cast<std::int32_t*>(CL_SERVER_TIME), *reinterpret_cast<std::int32_t*>(CL_SERVER_TIME_DELTA),
+			         *reinterpret_cast<std::int32_t*>(CL_NEW_SNAPSHOTS), *reinterpret_cast<std::int32_t*>(CG_LATEST_SNAPSHOT_NUM),
+			         *reinterpret_cast<std::int32_t*>(CG_PROCESSED_SNAPSHOT_NUM), *reinterpret_cast<void**>(CG_SNAP),
+			         *reinterpret_cast<void**>(CG_NEXT_SNAP), *reinterpret_cast<std::int32_t*>(0x141557580));
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+		}
+	}
+
+	// ticks after going back whose state is logged
+	int g_log_ticks = 0;
+
 	// Takes the client and the client game back to before the recording's first message, so that the
 	// recording can be given again from its start (its first snapshot is a whole one, not a change).
 	bool reset_stream()
@@ -683,6 +746,10 @@ namespace
 	// that time given as fast as the game takes them.
 	void go_back_to(const std::uint64_t ms)
 	{
+		g_faults_noted = 0;
+		keep_next_snapshot(true);
+		log_stream("before going back");
+		g_log_ticks = 12;
 		if (!reset_stream())
 		{
 			log_line("playback: going back failed (a fault resetting the game's place in the recording)");
@@ -799,6 +866,12 @@ namespace
 		{
 			go_back_to(0);
 			show("S1iris: from the start");
+		}
+
+		if (g_log_ticks > 0)
+		{
+			--g_log_ticks;
+			log_stream("tick");
 		}
 
 		const auto elapsed = static_cast<std::uint32_t>(g_clock.load());
@@ -1068,6 +1141,44 @@ namespace
 		}
 
 		return status == MH_OK;
+	}
+
+	// A fault in the game's own code, noted with where it came from: the game's crash reports have not
+	// had the stack. (First-chance: faults the game handles itself are noted too, so only a few.)
+	LONG CALLBACK note_fault(EXCEPTION_POINTERS* info)
+	{
+		const auto* record = info->ExceptionRecord;
+		const auto* context = info->ContextRecord;
+		if (record->ExceptionCode != EXCEPTION_ACCESS_VIOLATION || context->Rip < 0x140001000ull || context->Rip >= 0x1407E9000ull ||
+		    g_faults_noted.fetch_add(1) >= 4)
+		{
+			return EXCEPTION_CONTINUE_SEARCH;
+		}
+
+		log_line("FAULT at %llX %s %llX; play state %d, connection state %d; rax %llX rbx %llX rcx %llX rdx %llX rsi %llX rdi %llX r8 %llX",
+		         context->Rip, record->ExceptionInformation[0] ? "writing" : "reading", record->ExceptionInformation[1],
+		         static_cast<int>(g_play.load()), connection_state(), context->Rax, context->Rbx, context->Rcx, context->Rdx,
+		         context->Rsi, context->Rdi, context->R8);
+		char line[1024] = "  called from:";
+		size_t length = strlen(line);
+		int found = 0;
+		for (int i = 0; i < 400 && found < 24; ++i)
+		{
+			std::uint64_t value = 0;
+			if (!read_bytes(context->Rsp + i * 8ull, &value, sizeof(value)))
+			{
+				break;
+			}
+
+			if (value >= 0x140001000ull && value < 0x1407E9000ull)
+			{
+				length += sprintf_s(line + length, sizeof(line) - length, " %llX", value);
+				++found;
+			}
+		}
+
+		log_line("%s", line);
+		return EXCEPTION_CONTINUE_SEARCH;
 	}
 
 	bool game_has_focus()
@@ -1389,6 +1500,7 @@ namespace
 			}
 		}
 
+		AddVectoredExceptionHandler(1, &note_fault);
 		log_line(status == MH_OK ? "hook: server messages installed. Play a private match; it is recorded by itself."
 		                         : "hook: server messages FAILED (%s)",
 		         MH_StatusToString(status));
