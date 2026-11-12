@@ -137,6 +137,7 @@ namespace
 	constexpr ULONGLONG NEW_FILE_GAP_MS = 5000;
 
 	bool read_bytes_forward(uintptr_t address, void* out, size_t count);
+	void keep_next_snapshot(bool keep);
 
 	char g_folder[MAX_PATH] = {};
 	CRITICAL_SECTION g_lock;
