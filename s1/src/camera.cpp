@@ -57,7 +57,9 @@ namespace
 	using get_fov_t = float (*)(int);
 	get_fov_t g_original_get_fov = nullptr;
 	std::atomic<float> g_game_fov{65.0f};
-	std::atomic<bool> g_body{true};
+	std::atomic<bool> g_body{true}, g_clean{true}, g_player_aim{false};
+	bool g_cleaned = false, g_was_draw2d = true, g_was_direction = true;
+	float g_was_pain = 0.55f;
 	bool g_body_set = false;
 
 	struct Pose
@@ -768,7 +770,41 @@ namespace
 		if (overriding)
 		{
 			g_applied = g_pose;
-			apply(g_pose);
+			// (with the player's own aim kept, the game's workings between here and the drawing see the
+			// player's view: a scorestreak's laser or marker is then where the player aimed it)
+			if (!g_player_aim)
+			{
+				apply(g_pose);
+			}
+		}
+
+		// away from the player's eyes: none of the player's own HUD (a scorestreak's included) and none
+		// of what being hit does to the picture; back in first person, as they were
+		const bool cleaned = overriding && g_clean;
+		if (cleaned != g_cleaned)
+		{
+			g_cleaned = cleaned;
+			if (cleaned)
+			{
+				const auto read = [](const char* name) -> const unsigned char* {
+					const auto* dvar = static_cast<const unsigned char*>(theater_dvar(name));
+					return dvar ? dvar + 0x10 : nullptr;
+				};
+				const unsigned char* draw2d = read("cg_draw2D");
+				const unsigned char* direction = read("cg_drawDamageDirection");
+				const unsigned char* pain = read("painVisionTriggerHealth");
+				g_was_draw2d = !draw2d || draw2d[0] != 0;
+				g_was_direction = !direction || direction[0] != 0;
+				g_was_pain = pain ? *reinterpret_cast<const float*>(pain) : 0.55f;
+				theater_command("cg_draw2D 0; cg_drawDamageDirection 0; painVisionTriggerHealth 0");
+			}
+			else
+			{
+				char text[160];
+				snprintf(text, sizeof(text), "cg_draw2D %d; cg_drawDamageDirection %d; painVisionTriggerHealth %g", g_was_draw2d ? 1 : 0,
+				         g_was_direction ? 1 : 0, g_was_pain);
+				theater_command(text);
+			}
 		}
 	}
 
@@ -833,6 +869,8 @@ CameraState camera_state()
 	state.mode = static_cast<CameraMode>(g_mode.load());
 	state.speed = g_speed;
 	state.body = g_body;
+	state.clean = g_clean;
+	state.player_aim = g_player_aim;
 	std::lock_guard<std::mutex> lock(g_lock);
 	state.fov = g_pose.fov;
 	state.points = static_cast<int>(g_points.size());
@@ -941,6 +979,8 @@ void camera_playback_ended()
 	}
 }
 void camera_clear_points() { g_clear_request = true; }
+void camera_set_clean(const bool on) { g_clean = on; }
+void camera_set_player_aim(const bool on) { g_player_aim = on; }
 
 void camera_set_fov(const float fov)
 {

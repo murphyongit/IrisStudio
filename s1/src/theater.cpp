@@ -37,7 +37,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.41 (recorder, playback, IrisStudio's editor)";
+	constexpr char VERSION[] = "0.42 (recorder, playback, IrisStudio's editor)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -1477,24 +1477,37 @@ namespace
 		theater_play(name);
 	}
 
+	void command_demo_restart()
+	{
+		if (g_play == Play::Playing)
+		{
+			g_restart_request = true;
+		}
+		else
+		{
+			log_line("demo_restart: no recording is playing");
+		}
+	}
+
 	// (once, on the game's own thread: its list of commands is its own)
 	void add_commands()
 	{
-		static unsigned char storage[6][0x40];
+		static unsigned char storage[8][0x40];
 		static const struct
 		{
 			const char* name;
 			void (*function)();
 		} COMMANDS[] = {{"record", command_record}, {"stoprecord", command_stoprecord}, {"demo", command_demo},
-		                {"iris_record", command_record}, {"iris_stoprecord", command_stoprecord}, {"iris_demo", command_demo}};
+		                {"iris_record", command_record}, {"iris_stoprecord", command_stoprecord}, {"iris_demo", command_demo},
+		                {"demo_restart", command_demo_restart}, {"iris_demo_restart", command_demo_restart}};
 		__try
 		{
-			for (int i = 0; i < 6; ++i)
+			for (int i = 0; i < 8; ++i)
 			{
 				reinterpret_cast<void (*)(const char*, void (*)(), void*)>(CMD_ADD_COMMAND)(COMMANDS[i].name, COMMANDS[i].function, storage[i]);
 			}
 
-			log_line("commands: record <name>, stoprecord, demo <name> (and the same with iris_ before them)");
+			log_line("commands: record <name>, stoprecord, demo <name>, demo_restart (and the same with iris_ before them)");
 		}
 		__except (EXCEPTION_EXECUTE_HANDLER)
 		{

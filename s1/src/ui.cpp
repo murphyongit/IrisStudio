@@ -630,6 +630,22 @@ namespace
 			ImGui::PushTextWrapPos(0.0f);
 			ImGui::TextDisabled("Your own soldier in place of the arms and gun, in the Third person, Free and Dolly cameras.");
 			ImGui::PopTextWrapPos();
+			bool clean = camera.clean;
+			row_label("Clean outside view");
+			if (ImGui::Checkbox("##clean", &clean))
+			{
+				camera_set_clean(clean);
+			}
+
+			ImGui::SetItemTooltip("In the Free, Dolly and Bone cameras: no HUD (a scorestreak's included) and no red flash or markers from being hit.\nFirst person keeps them.");
+			bool aim = camera.player_aim;
+			row_label("Player's own aim");
+			if (ImGui::Checkbox("##aim", &aim))
+			{
+				camera_set_player_aim(aim);
+			}
+
+			ImGui::SetItemTooltip("Experimental. A scorestreak's laser or marker stays where the player aimed it, not where this camera looks.\nModels far from the player may be drawn with less detail while it is on.");
 		}
 
 		if (section(ICON_VIDEO, "Campath"))
@@ -1585,6 +1601,49 @@ namespace
 			ImGui::PopID();
 		}
 
+		// the editor's effects: a marker each at the time it plays; dragged, it plays earlier or later
+		{
+			PlacedEffect placed[32];
+			const int placed_count = effects_placed(placed, 32);
+			y += row;
+			if (placed_count > 0 && y + frame <= rows_bottom)
+			{
+				draw->AddRectFilled({left, y}, {right, y + frame}, u32(P.surface));
+				char name[48];
+				snprintf(name, sizeof(name), ICON_WAND "  Effects (%d)", placed_count);
+				draw->AddText({origin.x + g_font_size * 0.5f, y + style.FramePadding.y}, u32(P.text), name);
+				for (int i = 0; i < placed_count; ++i)
+				{
+					const float x = std::floor(x_of(static_cast<float>(placed[i].at_ms))), middle = y + frame * 0.5f;
+					ImGui::SetCursorScreenPos({x - diamond * 1.2f, y});
+					ImGui::PushID(5000 + i);
+					ImGui::InvisibleButton("##fx", {diamond * 2.4f, frame});
+					const bool over = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
+					if (held && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 2.0f))
+					{
+						const float t = (ImGui::GetIO().MousePos.x - left) / (right - left);
+						placed[i].at_ms = static_cast<std::uint32_t>((t < 0.0f ? 0.0f : t > 1.0f ? 1.0f : t) * length);
+						effects_set(i, placed[i]);
+					}
+					else if (ImGui::IsItemDeactivated() && !ImGui::IsMouseDragging(ImGuiMouseButton_Left, 2.0f) && over)
+					{
+						theater_seek(placed[i].at_ms);
+					}
+
+					if (over || held)
+					{
+						char at[32];
+						format_time(at, sizeof(at), placed[i].at_ms);
+						ImGui::SetTooltip("%s\n%s\nDrag: play it earlier or later.  Click: go here.", placed[i].name, at);
+					}
+
+					ImGui::PopID();
+					const float r = over || held ? diamond * 1.2f : diamond;
+					draw->AddCircleFilled({x, middle}, r, u32(placed[i].on ? (over || held ? P.text : P.warn) : P.muted));
+				}
+			}
+		}
+
 		if (clear >= 0)
 		{
 			look_track_clear(clear);
@@ -1620,7 +1679,9 @@ namespace
 		draw_menu_bar(state, io.DisplaySize.x);
 		const ImVec2 room = ImGui::GetContentRegionAvail();
 		// (the timeline grows by a row for each setting with keyframes past the four it has room for)
-		const int more_rows = look_track_count() > 4 ? look_track_count() - 4 : 0;
+		PlacedEffect any_effect[1];
+		const int timeline_rows = look_track_count() + (effects_placed(any_effect, 1) > 0 ? 1 : 0);
+		const int more_rows = timeline_rows > 4 ? timeline_rows - 4 : 0;
 		const float grown = std::floor(g_font_size * 14.0f) + static_cast<float>(more_rows) * (ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y * 0.5f);
 		const float panel = std::floor(g_font_size * 26.0f), timeline = (std::min)(grown, std::floor(room.y * 0.5f));
 		const ImVec2 view = {room.x - panel, room.y - timeline};

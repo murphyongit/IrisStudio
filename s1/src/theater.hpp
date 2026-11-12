@@ -85,6 +85,8 @@ struct CameraState
 	float fov = 80.0f, speed = 400.0f;
 	int points = 0;
 	bool body = false;
+	bool clean = true;        // outside first person: none of the player's own HUD or hit effects
+	bool player_aim = false;  // the game's own workings keep the player's view (scorestreaks aim from the player)
 	std::uint32_t point_ms[64] = {};
 };
 
@@ -164,6 +166,8 @@ void camera_add_point();
 void camera_clear_points();
 // The player's own body drawn (the game's third person), for the cameras away from the eyes.
 void camera_set_body(bool on);
+void camera_set_clean(bool on);
+void camera_set_player_aim(bool on);
 // Playback is over: the game's own view settings again.
 void camera_playback_ended();
 void camera_start();
