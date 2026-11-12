@@ -130,6 +130,25 @@ int models_sets(char ids[][16], int max);
 int models_apply_set(int entity, const char* id);
 void models_frame(const TheaterState& state);
 void models_start();
+// effects.cpp: effects of the game's played in the scene.
+struct PlacedEffect
+{
+	bool on = true;
+	char name[96] = "";
+	float origin[3] = {};
+	float angles[3] = {-90.0f, 0.0f, 0.0f};  // (an effect goes along its forward: up, to begin with)
+	std::uint32_t at_ms = 0, every_ms = 0;  // when in the recording, and again every so often (0: once)
+};
+
+int effects_find(const char* text, char names[][96], int max);
+int effects_placed(PlacedEffect* out, int max);
+int effects_add(const char* name, const float origin[3], std::uint32_t ms);
+void effects_set(int index, const PlacedEffect& placed);
+void effects_fire(int index);
+void effects_remove(int index);
+void effects_game_frame(const TheaterState& state);
+// Where the picture is taken from this frame.
+void camera_view_origin(float out[3]);
 int scene_lights(SceneLight* out, int max);
 void scene_set_light(int index, const SceneLight& light);
 int scene_add_light();
@@ -173,8 +192,14 @@ struct SkyState
 {
 	bool known = false, failed = false, changed = false;
 	float hsv[3] = {0.0f, 1.0f, 1.0f}, turn[3] = {};
+	char picture[64] = "";   // the saved sky it is drawn from ("": the map's own)
+	char message[160] = "";  // what the last save or load came to
 };
 
+// A map's sky saved (theater\\skies) so it can be the sky of other maps.
+void sky_save();
+void sky_use(const char* name);
+int sky_saved(char names[][64], int max);
 SkyState sky_state();
 void sky_set(const float hsv[3], const float turn[3]);
 void sky_reset();

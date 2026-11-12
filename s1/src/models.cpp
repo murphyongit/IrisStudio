@@ -26,7 +26,7 @@
 namespace
 {
 	constexpr std::uintptr_t COM_CLIENT_DOBJ_CREATE = 0x1403D2AF0, DB_ENUM_XASSETS = 0x14026EC80;
-	constexpr int ASSET_XMODEL = 7, MAX_IN_LIST = 32, MAX_LOADED = 32768;
+	constexpr int ASSET_XMODEL = 7, ASSET_STRINGTABLE = 51, MAX_IN_LIST = 32, MAX_LOADED = 32768;
 
 	using create_t = void* (*)(unsigned char*, unsigned short, void*, int);
 	create_t g_original_create = nullptr;
@@ -39,7 +39,7 @@ namespace
 	std::vector<std::string> g_names;
 	bool g_listed = false;
 	size_t g_stride = 0;
-	int g_noted = 0;
+	int g_noted = 0, g_noted_entries = 0;
 	std::map<int, unsigned> g_changed;                             // per entity: how many changes were asked for
 
 	// The parts of a multiplayer outfit, by how their models' names begin (headgear before head).
@@ -177,6 +177,94 @@ namespace
 		}
 	}
 
+	int enumerate_tables(void** out)
+	{
+		__try
+		{
+			Found found;
+			found.at = out;
+			found.count = 0;
+			reinterpret_cast<void (*)(int, void (*)(void*, void*), const void*, bool)>(DB_ENUM_XASSETS)(ASSET_STRINGTABLE, take, &found, false);
+			return found.count;
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			return -1;
+		}
+	}
+
+	// The game's own tables of outfits, gear and loot (its "string tables": a name, columns, rows, cells
+	// of 16 bytes that begin with the text), written to theater\tables once, to build the editor's lists
+	// of gear from what the game's menu itself goes by.
+	void dump_tables()
+	{
+		static bool done = false;
+		if (done)
+		{
+			return;
+		}
+
+		done = true;
+		static void* found[4096];
+		const int count = enumerate_tables(found);
+		const std::string folder = std::string(theater_folder()) + "\\tables";
+		CreateDirectoryA(folder.c_str(), nullptr);
+		std::string all;
+		int written = 0;
+		for (int i = 0; i < count && i < 4096; ++i)
+		{
+			const auto* table = static_cast<const unsigned char*>(found[i]);
+			const char* name = name_of(table);
+			if (!name)
+			{
+				continue;
+			}
+
+			all += std::string(name) + " ";
+			std::string lower = name;
+			std::transform(lower.begin(), lower.end(), lower.begin(), [](const unsigned char c) { return static_cast<char>(tolower(c)); });
+			const bool wanted = lower.find("costume") != std::string::npos || lower.find("gear") != std::string::npos ||
+			                    lower.find("loot") != std::string::npos || lower.find("camo") != std::string::npos ||
+			                    lower.find("statstable") != std::string::npos || lower.find("attach") != std::string::npos ||
+			                    lower.find("character") != std::string::npos || lower.find("set") != std::string::npos;
+			const int columns = *reinterpret_cast<const int*>(table + 8), rows = *reinterpret_cast<const int*>(table + 12);
+			const auto* cells = *reinterpret_cast<const unsigned char* const*>(table + 16);
+			if (!wanted || columns < 1 || columns > 200 || rows < 1 || rows > 20000 || IsBadReadPtr(cells, static_cast<size_t>(columns) * rows * 16))
+			{
+				continue;
+			}
+
+			std::string file_name = name;
+			std::replace(file_name.begin(), file_name.end(), '/', '_');
+			std::replace(file_name.begin(), file_name.end(), '\\', '_');
+			FILE* file = nullptr;
+			if (fopen_s(&file, (folder + "\\" + file_name).c_str(), "w") != 0 || !file)
+			{
+				continue;
+			}
+
+			for (int r = 0; r < rows; ++r)
+			{
+				for (int c = 0; c < columns; ++c)
+				{
+					const char* text = *reinterpret_cast<const char* const*>(cells + (static_cast<size_t>(r) * columns + c) * 16);
+					fprintf(file, c ? ",%s" : "%s", text && !IsBadStringPtrA(text, 512) ? text : "");
+				}
+
+				fputc('\n', file);
+			}
+
+			fclose(file);
+			++written;
+		}
+
+		note("models: the game's tables: %d, %d of them written to theater\\tables", count, written);
+		for (size_t at = 0; at < all.size(); at += 900)
+		{
+			note("models: tables: %s", all.substr(at, 900).c_str());
+		}
+	}
+
 	// (with the lock held)
 	void list_loaded()
 	{
@@ -203,6 +291,7 @@ namespace
 
 		std::sort(g_names.begin(), g_names.end());
 		note("models: the game has %d models loaded: %d outfit parts, %d world weapons and their parts", count, outfit, weapons);
+		dump_tables();
 	}
 
 	void* hooked_create(unsigned char* models, const unsigned short count, void* tree, const int handle)
@@ -245,6 +334,33 @@ namespace
 
 			if (!names.empty())
 			{
+				// (what else a list's entry holds, for the weapons' camouflage: noted for the first person's
+				// and the players' lists a few times)
+				if ((handle == 2048 || handle < 18) && stride == 0x20 && g_noted_entries < 8)
+				{
+					++g_noted_entries;
+					std::string all;
+					for (int i = 0; i < count; ++i)
+					{
+						char text[160];
+						const unsigned char* e = models + stride * i;
+						const std::uint64_t* q = reinterpret_cast<const std::uint64_t*>(e);
+						snprintf(text, sizeof(text), " [%s %08X %08X %llX %llX]", names[static_cast<size_t>(i)].c_str(), *reinterpret_cast<const unsigned*>(e + 8),
+						         *reinterpret_cast<const unsigned*>(e + 12), static_cast<unsigned long long>(q[2]), static_cast<unsigned long long>(q[3]));
+						all += text;
+						// (a pointer there may be to something with a name: a material)
+						for (int k = 2; k < 4; ++k)
+						{
+							if (const char* inner = name_of(reinterpret_cast<const void*>(q[k])))
+							{
+								all += std::string("=") + inner;
+							}
+						}
+					}
+
+					note("models: entity %d's list:%s", handle, all.c_str());
+				}
+
 				g_seen[handle] = names;
 				g_built[handle] = g_changed[handle];
 				const TheaterState state = theater_state();

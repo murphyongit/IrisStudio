@@ -616,6 +616,8 @@ namespace
 		g_original_calc_view(client);
 
 		const TheaterState state = theater_state();
+		// (the editor's effects are played here, early in the client game's frame, as the game's own are)
+		effects_game_frame(state);
 		const bool focus = state.playing && GetForegroundWindow() == ui_window() && !theater_keys_blocked();
 		const CameraMode mode_now = static_cast<CameraMode>(g_mode.load());
 		const bool f2 = focus && down(VK_F2);
@@ -858,6 +860,12 @@ void camera_set_bone(const BoneCamera& bone)
 	std::lock_guard<std::mutex> lock(g_lock);
 	g_bone = bone;
 	g_bone.bone[sizeof(g_bone.bone) - 1] = 0;
+}
+
+void camera_view_origin(float out[3])
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	memcpy(out, g_view_now, sizeof(g_view_now));
 }
 
 int scene_lights(SceneLight* out, const int max)

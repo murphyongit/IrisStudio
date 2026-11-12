@@ -745,6 +745,41 @@ namespace
 			return;
 		}
 
+		// the picture: this map's own sky, or one saved on another map
+		static char saved[32][64];
+		const int saved_count = sky_saved(saved, 32);
+		ui_row_label("Picture");
+		if (ImGui::BeginCombo("##skyPicture", sky.picture[0] ? sky.picture : "This map's own"))
+		{
+			if (ImGui::Selectable("This map's own", !sky.picture[0]))
+			{
+				sky_use("");
+			}
+
+			for (int i = 0; i < saved_count; ++i)
+			{
+				if (ImGui::Selectable(saved[i], strcmp(saved[i], sky.picture) == 0))
+				{
+					sky_use(saved[i]);
+				}
+			}
+
+			ImGui::EndCombo();
+		}
+
+		if (ImGui::Button("Save this map's sky"))
+		{
+			sky_save();
+		}
+
+		ImGui::SetItemTooltip("Keeps this map's sky so it can be chosen as the Picture on any other map");
+		if (sky.message[0])
+		{
+			ImGui::PushTextWrapPos(0.0f);
+			ImGui::TextDisabled("%s", sky.message);
+			ImGui::PopTextWrapPos();
+		}
+
 		bool changed = false;
 		ui_row_label("Hue");
 		ImGui::SetNextItemWidth(-key_button_width());
@@ -1026,6 +1061,10 @@ namespace
 		if (sky.changed)
 		{
 			fprintf(file, "sky %g %g %g %g %g %g\n", sky.hsv[0], sky.hsv[1], sky.hsv[2], sky.turn[0], sky.turn[1], sky.turn[2]);
+			if (sky.picture[0])
+			{
+				fprintf(file, "sky_picture %s\n", sky.picture);
+			}
 		}
 
 		fclose(file);
@@ -1073,6 +1112,10 @@ namespace
 			else if (sscanf_s(line, "sun_direction %f %f", &a, &b) == 2)
 			{
 				sun_set_direction(a, b);
+			}
+			else if (strncmp(line, "sky_picture ", 12) == 0)
+			{
+				sky_use(line + 12);
 			}
 			else if (float s[6] = {}; sscanf_s(line, "sky %f %f %f %f %f %f", &s[0], &s[1], &s[2], &s[3], &s[4], &s[5]) == 6)
 			{

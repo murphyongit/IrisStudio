@@ -980,6 +980,106 @@ namespace
 				}
 			}
 
+			if (section(ICON_WAND, "Effects", nullptr, false))
+			{
+				// any effect the game has loaded, played where the camera is, at a time of the recording
+				static char fx_search[64] = "", fx_found[400][96];
+				ImGui::SetNextItemWidth(-1.0f);
+				ImGui::InputTextWithHint("##fxSearch", ICON_SEARCH "  search the effects by name (explosion, spark, smoke...)", fx_search, sizeof(fx_search));
+				const int fx_count = effects_find(fx_search, fx_found, 400);
+				ImGui::BeginChild("fxResults", {0.0f, g_font_size * 10.0f}, ImGuiChildFlags_Border);
+				ImGuiListClipper fx_clipper;
+				fx_clipper.Begin(fx_count);
+				while (fx_clipper.Step())
+				{
+					for (int f = fx_clipper.DisplayStart; f < fx_clipper.DisplayEnd; ++f)
+					{
+						if (ImGui::Selectable(fx_found[f]))
+						{
+							float here[3];
+							camera_view_origin(here);
+							effects_add(fx_found[f], here, state.position_ms);
+						}
+					}
+				}
+
+				ImGui::EndChild();
+				ImGui::TextDisabled(fx_count == 400 ? "More than 400: type more of the name. A click plays one where the camera is." : "A click plays one where the camera is and keeps it below.");
+				PlacedEffect placed[32];
+				const int placed_count = effects_placed(placed, 32);
+				int remove_fx = -1;
+				for (int i = 0; i < placed_count; ++i)
+				{
+					PlacedEffect effect = placed[i];
+					bool changed = false;
+					ImGui::PushID(2000 + i);
+					ImGui::Separator();
+					changed = ImGui::Checkbox("##on", &effect.on) || changed;
+					ImGui::SameLine();
+					if (ImGui::SmallButton(ICON_PLAY))
+					{
+						effects_fire(i);
+					}
+
+					ImGui::SetItemTooltip("Play it now");
+					ImGui::SameLine();
+					if (ImGui::SmallButton("Move here"))
+					{
+						camera_view_origin(effect.origin);
+						changed = true;
+					}
+
+					ImGui::SameLine();
+					if (ImGui::SmallButton(ICON_TRASH))
+					{
+						remove_fx = i;
+					}
+
+					ImGui::PushTextWrapPos(0.0f);
+					ImGui::TextUnformatted(effect.name);
+					ImGui::PopTextWrapPos();
+					float seconds = effect.at_ms / 1000.0f, again = effect.every_ms / 1000.0f;
+					row_label("Plays at");
+					ImGui::SetNextItemWidth(-ImGui::CalcTextSize("Now").x - ImGui::GetStyle().FramePadding.x * 2.0f - ImGui::GetStyle().ItemSpacing.x);
+					if (ImGui::DragFloat("##at", &seconds, 0.01f, 0.0f, state.length_ms / 1000.0f, "%.2f s"))
+					{
+						effect.at_ms = static_cast<std::uint32_t>(seconds * 1000.0f);
+						changed = true;
+					}
+
+					ImGui::SameLine();
+					if (ImGui::Button("Now"))
+					{
+						effect.at_ms = state.position_ms;
+						changed = true;
+					}
+
+					row_label("Again every");
+					if (ImGui::DragFloat("##every", &again, 0.01f, 0.0f, 60.0f, again > 0.0f ? "%.2f s" : "never"))
+					{
+						effect.every_ms = static_cast<std::uint32_t>(again * 1000.0f);
+						changed = true;
+					}
+
+					row_label("Position");
+					changed = ImGui::DragFloat3("##origin", effect.origin, 1.0f, 0.0f, 0.0f, "%.0f") || changed;
+					row_label("Direction");
+					changed = ImGui::DragFloat3("##angles", effect.angles, 1.0f, -360.0f, 360.0f, "%.0f") || changed;
+					ImGui::SetItemTooltip("Up and down, around, roll: which way the effect goes (it starts going up)");
+					if (changed)
+					{
+						effects_set(i, effect);
+					}
+
+					ImGui::PopID();
+				}
+
+				if (remove_fx >= 0)
+				{
+					effects_remove(remove_fx);
+				}
+			}
+
 			if (section(ICON_PERSON, "Models"))
 			{
 				// a player's outfit and weapon, part by part, each drawn as another model or left out
@@ -988,16 +1088,26 @@ namespace
 				static char target[64] = "", search[48] = "", set_id[16] = "";
 				static bool only_this_kind = true;
 				const BoneState players = camera_bone_state();
-				if (entity < 0 || !(players.entities & (1ull << entity)))
+				// (2048 is the first person's arms and gun: the game makes them like an entity's model)
+				constexpr int FIRST_PERSON = 2048;
+				if (entity != FIRST_PERSON && (entity < 0 || !(players.entities & (1ull << entity))))
 				{
 					entity = players.nearest;
 				}
 
 				char label[48];
-				snprintf(label, sizeof(label), entity < 0 ? "None in view" : entity == players.nearest ? "Player %d (nearest the camera)" : "Player %d", entity);
+				snprintf(label, sizeof(label), entity == FIRST_PERSON ? "First person (arms and gun)" : entity < 0 ? "None in view"
+					: entity == players.nearest ? "Player %d (nearest the camera)" : "Player %d", entity);
 				row_label("Player");
 				if (ImGui::BeginCombo("##modelEntity", label))
 				{
+					if (ImGui::Selectable("First person (arms and gun)", entity == FIRST_PERSON))
+					{
+						entity = FIRST_PERSON;
+						target[0] = 0;
+						target_slot = -1;
+					}
+
 					for (int e = 0; e < 64; ++e)
 					{
 						if (players.entities & (1ull << e))
@@ -1030,7 +1140,8 @@ namespace
 				else
 				{
 					// a whole set of gear at once, as the game's own outfit menu does
-					const int set_count = models_sets(sets, 64);
+					const int set_count = entity == FIRST_PERSON ? 0 : models_sets(sets, 64);
+					ImGui::BeginDisabled(entity == FIRST_PERSON);
 					row_label("Gear set");
 					ImGui::SetNextItemWidth(-ImGui::CalcTextSize("Apply").x - ImGui::GetStyle().FramePadding.x * 2.0f - ImGui::GetStyle().ItemSpacing.x);
 					if (ImGui::BeginCombo("##gearSet", set_id[0] ? set_id : "Choose..."))
@@ -1056,6 +1167,7 @@ namespace
 
 					ImGui::EndDisabled();
 					ImGui::SetItemTooltip("Every part of this player's outfit that this gear has, at once (the face stays)");
+					ImGui::EndDisabled();
 					if (ImGui::Button("Reset this player"))
 					{
 						models_clear(entity);
@@ -1096,7 +1208,7 @@ namespace
 						{
 							snprintf(target, sizeof(target), "%s", own);
 							target_slot = slot;
-							group = slot >= 0 ? 0 : strncmp(own, "npc_", 4) == 0 ? 1 : strncmp(own, "mp_", 3) == 0 || !own[0] ? 0 : 2;
+							group = entity == FIRST_PERSON ? 2 : slot >= 0 ? 0 : strncmp(own, "npc_", 4) == 0 ? 1 : strncmp(own, "mp_", 3) == 0 || !own[0] ? 0 : 2;
 							search[0] = 0;
 						}
 
@@ -1109,7 +1221,7 @@ namespace
 						ImGui::PopID();
 					};
 					ImGui::Separator();
-					for (int slot = 0; slot < 10; ++slot)
+					for (int slot = 0; slot < 10 && entity != FIRST_PERSON; ++slot)
 					{
 						const char* own = "";
 						for (int i = 0; i < part_count; ++i)

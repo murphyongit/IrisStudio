@@ -15,8 +15,11 @@
 
 #include <atomic>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <mutex>
+#include <string>
+#include <vector>
 
 void ui_log(const char* format, ...);
 
@@ -97,9 +100,32 @@ float4 pixel(Vertex i) : SV_Target
 	ID3D11SamplerState* g_sampler = nullptr;
 	ID3D11RasterizerState* g_raster = nullptr;
 
+	// Another map's sky. A map's sky picture is only in that map's own files, so it is kept while that map
+	// is played: its cube drawn into one of ours (at most SAVED_SIZE across) and written to
+	// theater\skies\<map>.s1sky (a header, then the six faces in 16-bit floats). On any other map that
+	// file is the picture the sky is drawn from, in place of the map's own.
+	constexpr UINT SAVED_SIZE = 1024;
+	struct SavedHeader
+	{
+		char magic[8];
+		std::uint32_t size, format;
+	};
+	bool g_save_request = false;
+	char g_source_name[64] = "", g_source_loaded[64] = "", g_message[160] = "";
+	ID3D11Texture2D* g_source_texture = nullptr;
+	ID3D11ShaderResourceView* g_source_view = nullptr;
+
 	bool changed_now()
 	{
-		return g_hsv[0] != 0.0f || g_hsv[1] != 1.0f || g_hsv[2] != 1.0f || g_turn[0] != 0.0f || g_turn[1] != 0.0f || g_turn[2] != 0.0f;
+		return g_source_name[0] || g_hsv[0] != 0.0f || g_hsv[1] != 1.0f || g_hsv[2] != 1.0f || g_turn[0] != 0.0f || g_turn[1] != 0.0f ||
+		       g_turn[2] != 0.0f;
+	}
+
+	std::string skies_folder()
+	{
+		const std::string folder = std::string(theater_folder()) + "\\skies";
+		CreateDirectoryA(folder.c_str(), nullptr);
+		return folder;
 	}
 
 	template <typename T> void release(T*& object)
@@ -448,21 +474,22 @@ float4 pixel(Vertex i) : SV_Target
 		}
 	};
 
-	// The game's cubes drawn into ours with the change wanted.
-	void draw(ID3D11DeviceContext* context)
+	// A cube drawn, face by face, into the faces of one of ours, with a colour change and a turn.
+	void draw_cube(ID3D11DeviceContext* context, ID3D11ShaderResourceView* source, ID3D11RenderTargetView* const faces[6], const UINT size,
+	               const float hsv[3], const float turn[3])
 	{
-		// the direction a pixel of ours looks up in the game's cube: turned back by the three angles
-		// (around the engine's up, then the two across)
-		const float a = g_turn[0] * PI / 180.0f, b = g_turn[1] * PI / 180.0f, c = g_turn[2] * PI / 180.0f;
+		// the direction a pixel of ours looks up in the source: turned back by the three angles (around the
+		// engine's up, then the two across)
+		const float a = turn[0] * PI / 180.0f, b = turn[1] * PI / 180.0f, c = turn[2] * PI / 180.0f;
 		const float ca = cosf(a), sa = sinf(a), cb = cosf(b), sb = sinf(b), cc = cosf(c), sc = sinf(c);
 		// Rz(a) * Ry(b) * Rx(c)
 		const float m[3][3] = {{ca * cb, ca * sb * sc - sa * cc, ca * sb * cc + sa * sc},
 		                       {sa * cb, sa * sb * sc + ca * cc, sa * sb * cc - ca * sc},
 		                       {-sb, cb * sc, cb * cc}};
 		float parameters[16] = {};
-		parameters[0] = g_hsv[0] / 360.0f;
-		parameters[1] = g_hsv[1];
-		parameters[2] = g_hsv[2];
+		parameters[0] = hsv[0] / 360.0f;
+		parameters[1] = hsv[1];
+		parameters[2] = hsv[2];
 		for (int r = 0; r < 3; ++r)
 		{
 			for (int col = 0; col < 3; ++col)
@@ -471,8 +498,6 @@ float4 pixel(Vertex i) : SV_Target
 			}
 		}
 
-		Kept kept;
-		kept.keep(context);
 		context->IASetInputLayout(nullptr);
 		context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 		context->VSSetShader(g_vertex, nullptr, 0);
@@ -485,6 +510,29 @@ float4 pixel(Vertex i) : SV_Target
 		context->OMSetDepthStencilState(nullptr, 0);
 		context->PSSetSamplers(0, 1, &g_sampler);
 		context->PSSetConstantBuffers(0, 1, &g_parameters);
+		D3D11_VIEWPORT viewport{0.0f, 0.0f, static_cast<float>(size), static_cast<float>(size), 0.0f, 1.0f};
+		context->RSSetViewports(1, &viewport);
+		for (int face = 0; face < 6; ++face)
+		{
+			// (ours is not bound to be read while it is drawn to)
+			ID3D11ShaderResourceView* none = nullptr;
+			context->PSSetShaderResources(0, 1, &none);
+			context->OMSetRenderTargets(1, &faces[face], nullptr);
+			context->PSSetShaderResources(0, 1, &source);
+			parameters[3] = static_cast<float>(face);
+			context->UpdateSubresource(g_parameters, 0, nullptr, parameters, 0, 0);
+			context->Draw(3, 0);
+		}
+
+		ID3D11RenderTargetView* no_target = nullptr;
+		context->OMSetRenderTargets(1, &no_target, nullptr);
+	}
+
+	// The game's cubes (or the saved sky chosen) drawn into ours with the change wanted.
+	void draw(ID3D11DeviceContext* context)
+	{
+		Kept kept;
+		kept.keep(context);
 		for (int i = 0; i < g_sky_count; ++i)
 		{
 			Sky& sky = g_skies[i];
@@ -497,22 +545,7 @@ float4 pixel(Vertex i) : SV_Target
 
 				D3D11_TEXTURE2D_DESC desc{};
 				sky.texture[v]->GetDesc(&desc);
-				D3D11_VIEWPORT viewport{0.0f, 0.0f, static_cast<float>(desc.Width), static_cast<float>(desc.Height), 0.0f, 1.0f};
-				context->RSSetViewports(1, &viewport);
-				for (int face = 0; face < 6; ++face)
-				{
-					// (ours is not bound to be read while it is drawn to)
-					ID3D11ShaderResourceView* none = nullptr;
-					context->PSSetShaderResources(0, 1, &none);
-					context->OMSetRenderTargets(1, &sky.faces[v][face], nullptr);
-					context->PSSetShaderResources(0, 1, &sky.original[v]);
-					parameters[3] = static_cast<float>(face);
-					context->UpdateSubresource(g_parameters, 0, nullptr, parameters, 0, 0);
-					context->Draw(3, 0);
-				}
-
-				ID3D11RenderTargetView* no_target = nullptr;
-				context->OMSetRenderTargets(1, &no_target, nullptr);
+				draw_cube(context, g_source_view ? g_source_view : sky.original[v], sky.faces[v], desc.Width, g_hsv, g_turn);
 				context->GenerateMips(sky.made[v]);
 			}
 
@@ -525,6 +558,185 @@ float4 pixel(Vertex i) : SV_Target
 
 		kept.put_back(context);
 	}
+
+	// This map's sky written to a file.
+	void save(ID3D11Device* device, ID3D11DeviceContext* context)
+	{
+		if (g_sky_count == 0)
+		{
+			snprintf(g_message, sizeof(g_message), "This map's sky was not found.");
+			return;
+		}
+
+		// the map's name: maps/mp/mp_refraction.d3dbsp
+		std::string name = g_world;
+		const size_t slash = name.find_last_of("/\\");
+		name = slash == std::string::npos ? name : name.substr(slash + 1);
+		const size_t dot = name.find('.');
+		name = dot == std::string::npos ? name : name.substr(0, dot);
+		if (name.empty())
+		{
+			name = "sky";
+		}
+
+		D3D11_TEXTURE2D_DESC own{};
+		g_skies[0].texture[0]->GetDesc(&own);
+		const UINT size = own.Width < SAVED_SIZE ? own.Width : SAVED_SIZE;
+		D3D11_TEXTURE2D_DESC desc{};
+		desc.Width = desc.Height = size;
+		desc.MipLevels = 1;
+		desc.ArraySize = 6;
+		desc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+		desc.SampleDesc.Count = 1;
+		desc.Usage = D3D11_USAGE_DEFAULT;
+		desc.BindFlags = D3D11_BIND_RENDER_TARGET;
+		desc.MiscFlags = D3D11_RESOURCE_MISC_TEXTURECUBE;
+		ID3D11Texture2D *drawn = nullptr, *read = nullptr;
+		ID3D11RenderTargetView* faces[6] = {};
+		bool good = SUCCEEDED(device->CreateTexture2D(&desc, nullptr, &drawn));
+		for (UINT face = 0; face < 6 && good; ++face)
+		{
+			D3D11_RENDER_TARGET_VIEW_DESC target{};
+			target.Format = desc.Format;
+			target.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2DARRAY;
+			target.Texture2DArray.FirstArraySlice = face;
+			target.Texture2DArray.ArraySize = 1;
+			good = SUCCEEDED(device->CreateRenderTargetView(drawn, &target, &faces[face]));
+		}
+
+		D3D11_TEXTURE2D_DESC staging = desc;
+		staging.Usage = D3D11_USAGE_STAGING;
+		staging.BindFlags = 0;
+		staging.MiscFlags = 0;
+		staging.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+		good = good && SUCCEEDED(device->CreateTexture2D(&staging, nullptr, &read));
+		FILE* file = nullptr;
+		const std::string path = skies_folder() + "\\" + name + ".s1sky";
+		if (good)
+		{
+			Kept kept;
+			kept.keep(context);
+			const float plain[3] = {0.0f, 1.0f, 1.0f}, still[3] = {};
+			draw_cube(context, g_skies[0].original[0], faces, size, plain, still);
+			kept.put_back(context);
+			for (UINT face = 0; face < 6; ++face)
+			{
+				context->CopySubresourceRegion(read, face, 0, 0, 0, drawn, face, nullptr);
+			}
+
+			good = fopen_s(&file, path.c_str(), "wb") == 0 && file;
+		}
+
+		if (good)
+		{
+			SavedHeader header{};
+			memcpy(header.magic, "S1SKY001", 8);
+			header.size = size;
+			header.format = static_cast<std::uint32_t>(desc.Format);
+			fwrite(&header, sizeof(header), 1, file);
+			for (UINT face = 0; face < 6 && good; ++face)
+			{
+				D3D11_MAPPED_SUBRESOURCE mapped{};
+				good = SUCCEEDED(context->Map(read, face, D3D11_MAP_READ, 0, &mapped));
+				for (UINT row = 0; row < size && good; ++row)
+				{
+					good = fwrite(static_cast<const unsigned char*>(mapped.pData) + static_cast<size_t>(row) * mapped.RowPitch, static_cast<size_t>(size) * 8, 1, file) == 1;
+				}
+
+				if (mapped.pData)
+				{
+					context->Unmap(read, face);
+				}
+			}
+		}
+
+		if (file)
+		{
+			fclose(file);
+		}
+
+		for (ID3D11RenderTargetView*& face : faces)
+		{
+			release(face);
+		}
+
+		release(drawn);
+		release(read);
+		snprintf(g_message, sizeof(g_message), good ? "Saved this map's sky as %s." : "The sky could not be saved (%s).", name.c_str());
+		ui_log("sky: %s", g_message);
+	}
+
+	// The saved sky chosen, as a cube to draw from.
+	bool load(ID3D11Device* device)
+	{
+		if (strcmp(g_source_loaded, g_source_name) == 0)
+		{
+			return g_source_view != nullptr || !g_source_name[0];
+		}
+
+		release(g_source_view);
+		release(g_source_texture);
+		strncpy_s(g_source_loaded, g_source_name, _TRUNCATE);
+		if (!g_source_name[0])
+		{
+			return true;
+		}
+
+		FILE* file = nullptr;
+		const std::string path = skies_folder() + "\\" + g_source_name + ".s1sky";
+		SavedHeader header{};
+		std::vector<unsigned char> pixels;
+		bool good = fopen_s(&file, path.c_str(), "rb") == 0 && file;
+		good = good && fread(&header, sizeof(header), 1, file) == 1 && memcmp(header.magic, "S1SKY001", 8) == 0 && header.size >= 4 &&
+		       header.size <= 4096 && header.format == static_cast<std::uint32_t>(DXGI_FORMAT_R16G16B16A16_FLOAT);
+		const size_t face_bytes = static_cast<size_t>(header.size) * header.size * 8;
+		if (good)
+		{
+			pixels.resize(face_bytes * 6);
+			good = fread(pixels.data(), 1, pixels.size(), file) == pixels.size();
+		}
+
+		if (file)
+		{
+			fclose(file);
+		}
+
+		if (good)
+		{
+			D3D11_TEXTURE2D_DESC desc{};
+			desc.Width = desc.Height = header.size;
+			desc.MipLevels = 1;
+			desc.ArraySize = 6;
+			desc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+			desc.SampleDesc.Count = 1;
+			desc.Usage = D3D11_USAGE_IMMUTABLE;
+			desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+			desc.MiscFlags = D3D11_RESOURCE_MISC_TEXTURECUBE;
+			D3D11_SUBRESOURCE_DATA data[6] = {};
+			for (int face = 0; face < 6; ++face)
+			{
+				data[face].pSysMem = pixels.data() + face_bytes * static_cast<size_t>(face);
+				data[face].SysMemPitch = header.size * 8;
+			}
+
+			good = SUCCEEDED(device->CreateTexture2D(&desc, data, &g_source_texture));
+			D3D11_SHADER_RESOURCE_VIEW_DESC view{};
+			view.Format = desc.Format;
+			view.ViewDimension = D3D11_SRV_DIMENSION_TEXTURECUBE;
+			view.TextureCube.MipLevels = 1;
+			good = good && SUCCEEDED(device->CreateShaderResourceView(g_source_texture, &view, &g_source_view));
+		}
+
+		if (!good)
+		{
+			release(g_source_view);
+			release(g_source_texture);
+			snprintf(g_message, sizeof(g_message), "The saved sky %s could not be read.", g_source_name);
+			ui_log("sky: %s", g_message);
+		}
+
+		return good;
+	}
 }
 
 SkyState sky_state()
@@ -536,6 +748,8 @@ SkyState sky_state()
 	state.changed = changed_now();
 	memcpy(state.hsv, g_hsv, sizeof(g_hsv));
 	memcpy(state.turn, g_turn, sizeof(g_turn));
+	strncpy_s(state.picture, g_source_name, _TRUNCATE);
+	strncpy_s(state.message, g_message, _TRUNCATE);
 	return state;
 }
 
@@ -554,6 +768,47 @@ void sky_reset()
 {
 	const float hsv[3] = {0.0f, 1.0f, 1.0f}, turn[3] = {};
 	sky_set(hsv, turn);
+	sky_use("");
+}
+
+// The picture the sky is drawn from: a saved sky's name, or "" for the map's own.
+void sky_use(const char* name)
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	if (strcmp(g_source_name, name) != 0)
+	{
+		strncpy_s(g_source_name, name, _TRUNCATE);
+		g_dirty = true;
+	}
+}
+
+void sky_save()
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	g_save_request = true;
+}
+
+int sky_saved(char names[][64], const int max)
+{
+	WIN32_FIND_DATAA found;
+	const HANDLE search = FindFirstFileA((skies_folder() + "\\*.s1sky").c_str(), &found);
+	if (search == INVALID_HANDLE_VALUE)
+	{
+		return 0;
+	}
+
+	int count = 0;
+	do
+	{
+		std::string name = found.cFileName;
+		name = name.substr(0, name.size() - 6);
+		if (count < max)
+		{
+			strncpy_s(names[count++], 64, name.c_str(), _TRUNCATE);
+		}
+	} while (FindNextFileA(search, &found));
+	FindClose(search);
+	return count;
 }
 
 // Before the game lets go of the map (playback stopping, an error): its own cube back in its image.
@@ -585,6 +840,25 @@ void sky_frame(ID3D11Device* device, ID3D11DeviceContext* context, const Theater
 		g_dirty = changed_now();
 	}
 
+	if (g_save_request && state.settled)
+	{
+		g_save_request = false;
+		if (!g_looked)
+		{
+			g_looked = true;
+			g_failed = !shaders(device) || !find(device);
+		}
+
+		if (!g_failed)
+		{
+			save(device, context);
+		}
+		else
+		{
+			snprintf(g_message, sizeof(g_message), "This map's sky was not found.");
+		}
+	}
+
 	if (!changed_now())
 	{
 		put_back();
@@ -613,5 +887,16 @@ void sky_frame(ID3D11Device* device, ID3D11DeviceContext* context, const Theater
 	}
 
 	g_dirty = false;
+	if (!load(device))
+	{
+		// the saved sky cannot be read: the map's own
+		g_source_name[0] = 0;
+		if (!changed_now())
+		{
+			put_back();
+			return;
+		}
+	}
+
 	draw(context);
 }
