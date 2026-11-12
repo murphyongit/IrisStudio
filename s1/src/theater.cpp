@@ -30,7 +30,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.20 (recorder with the view, playback with rewind)";
+	constexpr char VERSION[] = "0.21 (recorder with the view, playback with rewind)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -1315,6 +1315,29 @@ namespace
 		g_original_omnvar_update(client, def, value, state);
 	}
 
+	// The minimap, which a recording's viewer has no use for and which does not come out right in
+	// playback (no map picture, its rings over the whole screen): its two drawing functions in the
+	// menus' code do nothing while a recording plays.
+	constexpr uintptr_t LUI_MINIMAP_DRAW = 0x14011C570, LUI_MINIMAP_DRAW_2 = 0x14011C930;
+	using minimap_draw_t = void (*)(int, void*, void*, void*);
+	minimap_draw_t g_original_minimap_draw = nullptr, g_original_minimap_draw_2 = nullptr;
+
+	void hooked_minimap_draw(const int client, void* a, void* b, void* c)
+	{
+		if (g_play == Play::Idle)
+		{
+			g_original_minimap_draw(client, a, b, c);
+		}
+	}
+
+	void hooked_minimap_draw_2(const int client, void* a, void* b, void* c)
+	{
+		if (g_play == Play::Idle)
+		{
+			g_original_minimap_draw_2(client, a, b, c);
+		}
+	}
+
 	bool hook(const uintptr_t address, void* detour, void* original, const char* name)
 	{
 		MH_STATUS status = MH_CreateHook(reinterpret_cast<LPVOID>(address), detour, static_cast<LPVOID*>(original));
@@ -1682,6 +1705,9 @@ namespace
 				log_line("hook: the player's own view: recorded %s, played back %s, demo mode %s (F8 switches it while playing)",
 				         save ? "yes" : "NO", get ? "yes" : "NO", draw ? "yes" : "NO");
 				const bool menus = hook(LUI_OMNVAR_UPDATE, &hooked_omnvar_update, &g_original_omnvar_update, "the team and class menus");
+				const bool minimap = hook(LUI_MINIMAP_DRAW, &hooked_minimap_draw, &g_original_minimap_draw, "the minimap") &&
+					hook(LUI_MINIMAP_DRAW_2, &hooked_minimap_draw_2, &g_original_minimap_draw_2, "the minimap's second part");
+				log_line("hook: playback's minimap %s", minimap ? "hidden" : "NOT hidden");
 				const bool values = hook(CG_OMNVARS_CHANGED, &hooked_omnvars_changed, &g_original_omnvars_changed, "the menus' values");
 				log_line("hook: playback's team and class menus %s, their value %s", menus ? "kept shut" : "NOT kept shut",
 				         values ? "cleared" : "NOT cleared");
