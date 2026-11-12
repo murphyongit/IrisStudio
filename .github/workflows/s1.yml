@@ -3,7 +3,7 @@ name: Build S1iris
 on:
   push:
     branches: [main]
-    paths: ['s1/**', '.github/workflows/s1.yml']
+    paths: ['s1/**', 'core/resources/*.ttf', '.github/workflows/s1.yml']
   workflow_dispatch:
 
 permissions:

@@ -113,117 +113,581 @@ namespace
 		return CallWindowProcA(g_original_window_proc, window, message, wparam, lparam);
 	}
 
+	// ---- IrisStudio's editor (core/src/UI): the Graphite palette, Rubik with Font Awesome's icons, the
+	// game's picture at the top left under the menu bar, the side panel with its five tabs to the right
+	// and the timeline under both.
+
+	// Font Awesome 6 (solid), the icons the editor uses
+	#define ICON_FILM "\xef\x80\x88"
+	#define ICON_VIDEO "\xef\x80\xbd"
+	#define ICON_SLIDERS "\xef\x87\x9e"
+	#define ICON_PERSON "\xef\x86\x83"
+	#define ICON_CIRCLE "\xef\x84\x91"
+	#define ICON_CAMERA "\xef\x80\xb0"
+	#define ICON_LOCK "\xef\x80\xa3"
+	#define ICON_LOCK_OPEN "\xef\x8f\x81"
+	#define ICON_BACKWARD_STEP "\xef\x81\x88"
+	#define ICON_FORWARD_STEP "\xef\x81\x91"
+	#define ICON_PLAY "\xef\x81\x8b"
+	#define ICON_PAUSE "\xef\x81\x8c"
+	#define ICON_FLAG "\xef\x80\xa4"
+	#define ICON_TRASH "\xef\x87\xb8"
+	#define ICON_PLUS "\x2b"
+
+	struct Palette
+	{
+		unsigned bg = 0x1E1E1E, surface = 0x252525, raised = 0x303030, border = 0x3A3A3A, text = 0xD6D6D6, muted = 0x8F8F8F,
+			accent = 0x2F80D1, warn = 0xD4AA55, bad = 0xD9534F;
+	} const P{};
+
 	ImVec4 color(const unsigned rgb, const float alpha = 1.0f)
 	{
 		return {((rgb >> 16) & 0xFF) / 255.0f, ((rgb >> 8) & 0xFF) / 255.0f, (rgb & 0xFF) / 255.0f, alpha};
 	}
 
-	void apply_look(const float scale)
+	unsigned mix(const unsigned a, const unsigned b, const float t)
 	{
-		// Graphite: bg, surface, raised, border, text, muted, accent
-		const unsigned bg = 0x1E1E1E, surface = 0x252525, raised = 0x303030, border = 0x3A3A3A, text = 0xD6D6D6, muted = 0x8F8F8F,
-			accent = 0x2F80D1, hover = 0x414141, held = 0x30506F;
+		unsigned out = 0;
+		for (int shift = 16; shift >= 0; shift -= 8)
+		{
+			const float ca = static_cast<float>((a >> shift) & 0xFF), cb = static_cast<float>((b >> shift) & 0xFF);
+			out |= static_cast<unsigned>(ca + (cb - ca) * t + 0.5f) << shift;
+		}
+
+		return out;
+	}
+
+	ImU32 u32(const unsigned rgb, const float alpha = 1.0f)
+	{
+		return ImGui::ColorConvertFloat4ToU32(color(rgb, alpha));
+	}
+
+	// core/src/UI/Theme.cpp's Apply and UIManager.cpp's SetImGuiStyle
+	void apply_look(const float font_size)
+	{
+		const unsigned hover = mix(P.raised, P.text, 0.08f), selected = mix(P.raised, P.accent, 0.30f), held = mix(P.raised, P.accent, 0.40f);
 		ImGuiStyle& style = ImGui::GetStyle();
 		style = ImGuiStyle();
-		style.WindowRounding = 6.0f;
-		style.FrameRounding = 4.0f;
-		style.GrabRounding = 4.0f;
-		style.WindowBorderSize = 1.0f;
-		style.WindowPadding = {12.0f, 10.0f};
-		style.FramePadding = {10.0f, 5.0f};
-		style.ItemSpacing = {8.0f, 6.0f};
-		style.GrabMinSize = 12.0f;
-		style.ScaleAllSizes(scale);
+		style.FramePadding = {font_size * 0.28f, font_size * 0.28f};
+		style.WindowPadding = {16, 16};
+		style.WindowRounding = 0.0f;
+		style.WindowBorderSize = 0.0f;
 		ImVec4* c = style.Colors;
-		c[ImGuiCol_Text] = color(text);
-		c[ImGuiCol_TextDisabled] = color(muted);
-		c[ImGuiCol_WindowBg] = color(bg, 0.94f);
-		c[ImGuiCol_PopupBg] = color(surface, 0.98f);
-		c[ImGuiCol_Border] = color(border);
-		c[ImGuiCol_FrameBg] = color(surface);
-		c[ImGuiCol_FrameBgHovered] = color(0x323232);
-		c[ImGuiCol_FrameBgActive] = color(0x3A3A3A);
-		c[ImGuiCol_SliderGrab] = color(accent);
-		c[ImGuiCol_SliderGrabActive] = color(0x4890D7);
-		c[ImGuiCol_Button] = color(raised);
+		c[ImGuiCol_Text] = color(P.text);
+		c[ImGuiCol_TextDisabled] = color(P.muted);
+		c[ImGuiCol_WindowBg] = color(P.bg);
+		c[ImGuiCol_ChildBg] = color(P.bg, 0.0f);
+		c[ImGuiCol_PopupBg] = color(P.surface, 0.98f);
+		c[ImGuiCol_Border] = color(P.border);
+		c[ImGuiCol_BorderShadow] = color(P.bg, 0.0f);
+		c[ImGuiCol_FrameBg] = color(P.surface);
+		c[ImGuiCol_FrameBgHovered] = color(mix(P.surface, P.text, 0.07f));
+		c[ImGuiCol_FrameBgActive] = color(mix(P.surface, P.text, 0.12f));
+		c[ImGuiCol_TitleBg] = color(P.surface);
+		c[ImGuiCol_TitleBgActive] = color(P.raised);
+		c[ImGuiCol_MenuBarBg] = color(P.surface);
+		c[ImGuiCol_ScrollbarBg] = color(P.bg, 0.6f);
+		c[ImGuiCol_ScrollbarGrab] = color(P.raised);
+		c[ImGuiCol_ScrollbarGrabHovered] = color(hover);
+		c[ImGuiCol_ScrollbarGrabActive] = color(held);
+		c[ImGuiCol_CheckMark] = color(P.accent);
+		c[ImGuiCol_SliderGrab] = color(P.accent);
+		c[ImGuiCol_SliderGrabActive] = color(mix(P.accent, 0xFFFFFF, 0.12f));
+		c[ImGuiCol_Button] = color(P.raised);
 		c[ImGuiCol_ButtonHovered] = color(hover);
 		c[ImGuiCol_ButtonActive] = color(held);
-		c[ImGuiCol_Separator] = color(border);
-		c[ImGuiCol_CheckMark] = color(accent);
+		c[ImGuiCol_Header] = color(selected);
+		c[ImGuiCol_HeaderHovered] = color(hover);
+		c[ImGuiCol_HeaderActive] = color(held);
+		c[ImGuiCol_Separator] = color(P.border);
+		c[ImGuiCol_SeparatorHovered] = color(P.muted);
+		c[ImGuiCol_SeparatorActive] = color(P.accent);
+		c[ImGuiCol_TextSelectedBg] = color(P.accent, 0.30f);
+	}
+
+	bool resource(const int id, void** data, int* size)
+	{
+		const HMODULE module = theater_module();
+		const HRSRC found = module ? FindResourceA(module, MAKEINTRESOURCEA(id), MAKEINTRESOURCEA(10) /* RT_RCDATA */) : nullptr;
+		const HGLOBAL loaded = found ? LoadResource(module, found) : nullptr;
+		*data = loaded ? LockResource(loaded) : nullptr;
+		*size = found ? static_cast<int>(SizeofResource(module, found)) : 0;
+		return *data && *size > 0;
+	}
+
+	ImFont* g_bold = nullptr;
+	float g_font_size = 0.0f;
+
+	// UIManager::LoadFonts: Rubik with the icons merged in at two thirds of its size
+	void load_fonts(const float size)
+	{
+		ImGuiIO& io = ImGui::GetIO();
+		io.Fonts->Clear();
+		void *regular = nullptr, *bold = nullptr, *icons = nullptr;
+		int regular_size = 0, bold_size = 0, icons_size = 0;
+		const bool have = resource(101, &regular, &regular_size) && resource(102, &bold, &bold_size) && resource(103, &icons, &icons_size);
+		static const ImWchar ICON_RANGE[] = {0xE005, 0xF8FF, 0};
+		auto add = [&](void* data, const int data_size) -> ImFont* {
+			ImFontConfig config;
+			config.FontDataOwnedByAtlas = false;
+			ImFont* font = io.Fonts->AddFontFromMemoryTTF(data, data_size, size, &config);
+			ImFontConfig icon_config;
+			icon_config.FontDataOwnedByAtlas = false;
+			icon_config.MergeMode = true;
+			icon_config.PixelSnapH = true;
+			icon_config.GlyphMinAdvanceX = size * 2.0f / 3.0f;
+			io.Fonts->AddFontFromMemoryTTF(icons, icons_size, size * 2.0f / 3.0f, &icon_config, ICON_RANGE);
+			return font;
+		};
+
+		if (have)
+		{
+			add(regular, regular_size);
+			g_bold = add(bold, bold_size);
+		}
+		else
+		{
+			log("editor: its fonts are not in the DLL; Windows' own is used");
+			if (!io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", size))
+			{
+				io.Fonts->AddFontDefault();
+			}
+
+			g_bold = nullptr;
+		}
+
+		g_font_size = size;
+		apply_look(size);
 	}
 
 	void format_time(char* out, const size_t size, const std::uint32_t ms)
 	{
-		snprintf(out, size, "%u:%02u.%u", ms / 60000, (ms / 1000) % 60, (ms / 100) % 10);
+		snprintf(out, size, "%u:%02u.%02u", ms / 60000, (ms / 1000) % 60, (ms / 10) % 100);
 	}
 
-	// The bar along the bottom while a recording plays: where it is, and the same controls as the keys.
-	void draw_bar()
+	enum class Tab { Demo, Camera, Look, Scene, Record };
+	Tab g_tab = Tab::Camera;
+	std::atomic<bool> g_hidden{false};      // F1: the editor away, the game's picture alone
+	std::atomic<bool> g_looking{false};     // the right mouse button held on the picture: the mouse flies the camera
+	std::atomic<bool> g_view_hovered{false};
+	ID3D11Texture2D* g_copy = nullptr;      // the game's picture, to draw inside the editor
+	ID3D11ShaderResourceView* g_copy_view = nullptr;
+	ID3D11BlendState* g_opaque = nullptr;
+
+	const struct { CameraMode mode; const char* label; const char* title; bool built; } MODES[] = {
+		{CameraMode::FirstPerson, "First person", "First Person Camera", true},
+		{CameraMode::ThirdPerson, "Third person", "Third Person Camera", false},
+		{CameraMode::Free, "Free", "Free Camera", true},
+		{CameraMode::Orbit, "Orbit", "Orbit Camera", false},
+		{CameraMode::Dolly, "Dolly", "Dolly Camera", true},
+		{CameraMode::Bone, "Bone", "Bone Camera", false}};
+
+	void opaque_callback(const ImDrawList*, const ImDrawCmd*)
 	{
-		const TheaterState state = theater_state();
-		if (!state.playing)
+		const float factor[4] = {0, 0, 0, 0};
+		g_context->OMSetBlendState(g_opaque, factor, 0xFFFFFFFF);
+	}
+
+	void not_built(const char* what)
+	{
+		ImGui::PushTextWrapPos(0.0f);
+		ImGui::TextDisabled("%s is not built for Advanced Warfare yet.", what);
+		ImGui::PopTextWrapPos();
+	}
+
+	void draw_menu_bar(const TheaterState& state, const float width)
+	{
+		if (!ImGui::BeginMenuBar())
 		{
 			return;
 		}
 
+		if (ImGui::BeginMenu("File"))
+		{
+			if (ImGui::MenuItem("Stop playback", "F10"))
+			{
+				theater_stop();
+			}
+
+			ImGui::EndMenu();
+		}
+
+		if (ImGui::BeginMenu("Edit"))
+		{
+			if (ImGui::MenuItem("Add campath node", "K", false, camera_state().mode == CameraMode::Free))
+			{
+				camera_add_point();
+			}
+
+			if (ImGui::MenuItem("Clear campath"))
+			{
+				camera_clear_points();
+			}
+
+			ImGui::EndMenu();
+		}
+
+		if (ImGui::BeginMenu("View"))
+		{
+			if (ImGui::MenuItem("Hide the editor", "F1"))
+			{
+				g_hidden = true;
+			}
+
+			ImGui::EndMenu();
+		}
+
+		if (ImGui::BeginMenu("Help"))
+		{
+			ImGui::TextDisabled("Playback");
+			ImGui::TextUnformatted("Space  play and pause\nUp / Down  faster / slower\nLeft / Right  10 s back / on\nHome  to the start\nF10  stop");
+			ImGui::Separator();
+			ImGui::TextDisabled("Camera");
+			ImGui::TextUnformatted("F2  free camera\nHold the right mouse button on the picture to look\nW A S D  fly,  E / Q  up / down\n"
+			                       "Shift / Ctrl  faster / slower\nMouse wheel  roll\nK  add a campath node\nL  dolly camera\nF1  hide the editor");
+			ImGui::EndMenu();
+		}
+
+		char now[32], right[200];
+		format_time(now, sizeof(now), state.position_ms);
+		snprintf(right, sizeof(right), "%s  \xe2\x80\xa2  %s", state.name, now);
+		char version[48];
+		snprintf(version, sizeof(version), "S1iris %.4s", theater_version());
+		const float version_width = ImGui::CalcTextSize(version).x, right_width = ImGui::CalcTextSize(right).x;
+		ImGui::SameLine(width - version_width - right_width - g_font_size * 3.0f);
+		ImGui::TextUnformatted(right);
+		ImGui::SameLine(width - version_width - g_font_size);
+		ImGui::TextDisabled("%s", version);
+		ImGui::EndMenuBar();
+	}
+
+	// The game's picture, as large as fits, under the camera's name.
+	void draw_view(const CameraState& camera, const ImVec2 size)
+	{
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {g_font_size * 0.5f, g_font_size * 0.5f});
+		ImGui::BeginChild("view", size, ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+		const char* title = "";
+		for (const auto& m : MODES)
+		{
+			if (m.mode == camera.mode)
+			{
+				title = m.title;
+			}
+		}
+
+		ImGui::SetNextItemWidth(g_font_size * 13.0f);
+		if (ImGui::BeginCombo("##viewCamera", title))
+		{
+			for (const auto& m : MODES)
+			{
+				ImGui::BeginDisabled(!m.built);
+				if (ImGui::Selectable(m.title, m.mode == camera.mode))
+				{
+					camera_set_mode(m.mode);
+				}
+
+				ImGui::EndDisabled();
+			}
+
+			ImGui::EndCombo();
+		}
+
+		const ImVec2 room = ImGui::GetContentRegionAvail();
+		const ImVec2 corner = ImGui::GetCursorScreenPos();
 		const ImGuiIO& io = ImGui::GetIO();
-		const float width = io.DisplaySize.x * 0.62f;
-		ImGui::SetNextWindowPos({io.DisplaySize.x * 0.5f, io.DisplaySize.y - 24.0f}, ImGuiCond_Always, {0.5f, 1.0f});
-		ImGui::SetNextWindowSize({width, 0.0f});
-		ImGui::Begin("S1iris", nullptr,
-		             ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
-		                 ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav);
+		const float aspect = io.DisplaySize.y > 0.0f ? io.DisplaySize.x / io.DisplaySize.y : 16.0f / 9.0f;
+		ImVec2 picture = {room.x, room.x / aspect};
+		if (picture.y > room.y)
+		{
+			picture = {room.y * aspect, room.y};
+		}
 
-		static float dragged = 0.0f;
-		static bool dragging = false;
-		const float length = state.length_ms > 0 ? state.length_ms / 1000.0f : 1.0f;
-		float position = dragging ? dragged : state.position_ms / 1000.0f;
-		char now[32], end[32], label[80];
-		format_time(now, sizeof(now), static_cast<std::uint32_t>(position * 1000.0f));
-		format_time(end, sizeof(end), state.length_ms);
-		snprintf(label, sizeof(label), "%s / %s", now, end);
+		picture = {std::floor(picture.x), std::floor(picture.y)};
+		const ImVec2 at = {std::floor(corner.x + (room.x - picture.x) * 0.5f), corner.y};
+		ImDrawList* draw = ImGui::GetWindowDrawList();
+		if (g_copy_view)
+		{
+			// as it is: the picture's own alpha is not a transparency
+			draw->AddCallback(&opaque_callback, nullptr);
+			draw->AddImage(reinterpret_cast<ImTextureID>(g_copy_view), at, {at.x + picture.x, at.y + picture.y});
+			draw->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
+		}
+
+		ImGui::SetCursorScreenPos(at);
+		ImGui::InvisibleButton("picture", picture, ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonLeft);
+		const bool hovered = ImGui::IsItemHovered();
+		g_view_hovered = hovered;
+		if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && camera.mode == CameraMode::Free)
+		{
+			g_looking = true;
+		}
+
+		if (g_looking && (!ImGui::IsMouseDown(ImGuiMouseButton_Right) || camera.mode != CameraMode::Free))
+		{
+			g_looking = false;
+		}
+
+		if (camera.mode == CameraMode::Free && !g_looking)
+		{
+			const char* hint = "Hold the right mouse button to look  \xe2\x80\xa2  W A S D to fly  \xe2\x80\xa2  K adds a campath node";
+			const ImVec2 hint_size = ImGui::CalcTextSize(hint);
+			draw->AddText({at.x + picture.x - hint_size.x - g_font_size, at.y + picture.y - hint_size.y - g_font_size * 0.5f}, u32(P.muted), hint);
+		}
+
+		ImGui::EndChild();
+		ImGui::PopStyleVar();
+	}
+
+	bool section(const char* icon, const char* label)
+	{
+		char text[96];
+		snprintf(text, sizeof(text), "%s  %s", icon, label);
+		ImGui::PushStyleColor(ImGuiCol_Header, color(P.raised));
+		const bool open = ImGui::CollapsingHeader(text, ImGuiTreeNodeFlags_DefaultOpen);
+		ImGui::PopStyleColor();
+		return open;
+	}
+
+	// A row of the panel: the label on the left, the control from 40% across (ImGuiEx's rows).
+	void row_label(const char* label)
+	{
+		ImGui::AlignTextToFramePadding();
+		ImGui::TextUnformatted(label);
+		ImGui::SameLine(ImGui::GetContentRegionAvail().x * 0.40f);
 		ImGui::SetNextItemWidth(-1.0f);
-		if (ImGui::SliderFloat("##position", &position, 0.0f, length, label, ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_NoInput))
+	}
+
+	void draw_camera_tab(const TheaterState& state, const CameraState& camera)
+	{
+		if (section(ICON_CAMERA, "Camera"))
 		{
-			dragged = position;
-			dragging = true;
+			const float spacing = ImGui::GetStyle().ItemSpacing.x;
+			const float button = std::floor((ImGui::GetContentRegionAvail().x - spacing * 2.0f) / 3.0f);
+			for (int i = 0; i < 6; ++i)
+			{
+				const auto& m = MODES[i];
+				if (i % 3)
+				{
+					ImGui::SameLine();
+				}
+
+				ImGui::BeginDisabled(!m.built);
+				ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(m.mode == camera.mode ? ImGuiCol_Header : ImGuiCol_Button));
+				if (ImGui::Button(m.label, {button, 0.0f}))
+				{
+					camera_set_mode(m.mode);
+				}
+
+				ImGui::PopStyleColor();
+				ImGui::EndDisabled();
+				if (!m.built && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+				{
+					ImGui::SetTooltip("Not built for Advanced Warfare yet");
+				}
+			}
+
+			float fov = camera.fov;
+			row_label("Field of View");
+			ImGui::BeginDisabled(camera.mode != CameraMode::Free);
+			if (ImGui::SliderFloat("##fov", &fov, 10.0f, 150.0f, "%.1f"))
+			{
+				camera_set_fov(fov);
+			}
+
+			ImGui::EndDisabled();
+			if (camera.mode == CameraMode::Free)
+			{
+				float speed = camera.speed;
+				row_label("Fly speed");
+				if (ImGui::SliderFloat("##speed", &speed, 50.0f, 3000.0f, "%.0f", ImGuiSliderFlags_Logarithmic))
+				{
+					camera_set_speed(speed);
+				}
+			}
 		}
 
-		const ImVec2 bar_min = ImGui::GetItemRectMin(), bar_max = ImGui::GetItemRectMax();
-
-		// going back in a recording starts it over underneath, so only once the mouse lets go
-		if (dragging && ImGui::IsItemDeactivated())
+		if (section(ICON_VIDEO, "Campath"))
 		{
-			theater_seek(static_cast<std::uint32_t>(dragged * 1000.0f));
-			dragging = false;
+			ImGui::BeginDisabled(camera.mode != CameraMode::Free);
+			if (ImGui::Button(ICON_PLUS "  Add node here"))
+			{
+				camera_add_point();
+			}
+
+			ImGui::EndDisabled();
+			ImGui::SameLine();
+			ImGui::BeginDisabled(camera.points == 0);
+			if (ImGui::Button(ICON_TRASH "  Clear"))
+			{
+				camera_clear_points();
+			}
+
+			ImGui::EndDisabled();
+			for (int i = 0; i < camera.points && i < 64; ++i)
+			{
+				char time[32], label[64];
+				format_time(time, sizeof(time), camera.point_ms[i]);
+				snprintf(label, sizeof(label), "Node %d      %s", i + 1, time);
+				if (ImGui::Selectable(label, false))
+				{
+					theater_seek(camera.point_ms[i]);
+				}
+			}
+
+			ImGui::PushTextWrapPos(0.0f);
+			if (camera.points < 2)
+			{
+				ImGui::TextDisabled("A campath needs two nodes: in the free camera, fly somewhere and add a node, let the demo run on, and add another. "
+				                    "The dolly camera then follows them.");
+			}
+
+			ImGui::PopTextWrapPos();
 		}
 
-		if (ImGui::Button("Start"))
+		(void)state;
+	}
+
+	void draw_panel(const TheaterState& state, const CameraState& camera, const ImVec2 size)
+	{
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {g_font_size * 0.5f, g_font_size * 0.5f});
+		ImGui::BeginChild("panel", size, ImGuiChildFlags_AlwaysUseWindowPadding);
+		static const struct { Tab tab; const char* icon; const char* label; } TABS[] = {
+			{Tab::Demo, ICON_FILM, "Demo"}, {Tab::Camera, ICON_VIDEO, "Camera"}, {Tab::Look, ICON_SLIDERS, "Look"},
+			{Tab::Scene, ICON_PERSON, "Scene"}, {Tab::Record, ICON_CIRCLE, "Record"}};
+		const ImGuiStyle& style = ImGui::GetStyle();
+		const float line = ImGui::GetTextLineHeight();
+		const float tab_width = std::floor((ImGui::GetContentRegionAvail().x - style.ItemSpacing.x * 4.0f) / 5.0f);
+		const float tab_height = std::floor(line * 2.0f + style.FramePadding.y * 3.0f);
+		for (int i = 0; i < 5; ++i)
 		{
-			theater_seek(0);
+			const auto& tab = TABS[i];
+			if (i)
+			{
+				ImGui::SameLine();
+			}
+
+			const bool selected = g_tab == tab.tab;
+			ImGui::PushID(i);
+			ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(selected ? ImGuiCol_Header : ImGuiCol_Button));
+			if (ImGui::Button("##tab", {tab_width, tab_height}))
+			{
+				g_tab = tab.tab;
+			}
+
+			ImGui::PopStyleColor();
+			ImGui::PopID();
+			const ImVec2 min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
+			ImDrawList* draw = ImGui::GetWindowDrawList();
+			const ImU32 text = ImGui::GetColorU32(ImGui::IsItemHovered() || selected ? ImGuiCol_Text : ImGuiCol_TextDisabled);
+			const ImVec2 icon_size = ImGui::CalcTextSize(tab.icon), label_size = ImGui::CalcTextSize(tab.label);
+			const float top = min.y + style.FramePadding.y;
+			draw->AddText({std::floor((min.x + max.x - icon_size.x) / 2), std::floor(top)}, text, tab.icon);
+			draw->AddText({std::floor((min.x + max.x - label_size.x) / 2), std::floor(top + line + style.FramePadding.y * 0.5f)}, text, tab.label);
+			if (selected)
+			{
+				draw->AddRectFilled({min.x, max.y - 2}, max, ImGui::GetColorU32(ImGuiCol_CheckMark));
+			}
 		}
 
+		ImGui::Separator();
+		ImGui::Spacing();
+		switch (g_tab)
+		{
+		case Tab::Demo:
+			if (section(ICON_FILM, "Demo"))
+			{
+				char length[32];
+				format_time(length, sizeof(length), state.length_ms);
+				ImGui::TextUnformatted(state.name);
+				ImGui::TextDisabled("Map %s  \xe2\x80\xa2  %s", state.map, length);
+				if (ImGui::Button("Stop playback"))
+				{
+					theater_stop();
+				}
+
+				ImGui::Spacing();
+				not_built("Browsing recordings (F9 at the game's menu plays the newest)");
+			}
+
+			break;
+		case Tab::Camera:
+			draw_camera_tab(state, camera);
+			break;
+		case Tab::Look:
+			not_built("The Look tab (sun, fog, depth of field, sky)");
+			break;
+		case Tab::Scene:
+			not_built("The Scene tab (actors, players)");
+			break;
+		case Tab::Record:
+			not_built("The Record tab (capture)");
+			break;
+		}
+
+		ImGui::EndChild();
+		ImGui::PopStyleVar();
+	}
+
+	// The timeline: the controls' row, then the ruler with the playhead over the rows of what has keys.
+	void draw_timeline(const TheaterState& state, const CameraState& camera, const ImVec2 size)
+	{
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {g_font_size * 0.5f, g_font_size * 0.4f});
+		ImGui::BeginChild("timeline", size, ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoScrollbar);
+		const ImGuiStyle& style = ImGui::GetStyle();
+		const float frame = ImGui::GetFrameHeight();
+
+		// Freeze time: the demo's time stands still (the camera still flies)
+		ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(state.paused ? ImGuiCol_Header : ImGuiCol_Button));
+		if (ImGui::Button(state.paused ? ICON_LOCK " Freeze time" : ICON_LOCK_OPEN " Freeze time"))
+		{
+			theater_pause_toggle();
+		}
+
+		ImGui::PopStyleColor();
+		ImGui::SameLine(0.0f, g_font_size);
+		const ImVec2 square = {frame * 1.5f, frame};
+		if (ImGui::Button(ICON_BACKWARD_STEP "##back", square))
+		{
+			theater_seek(state.position_ms > 1000 ? state.position_ms - 1000 : 0);
+		}
+
+		ImGui::SetItemTooltip("One second back");
 		ImGui::SameLine();
-		if (ImGui::Button("-10 s"))
-		{
-			theater_seek(state.position_ms > 10000 ? state.position_ms - 10000 : 0);
-		}
-
-		ImGui::SameLine();
-		if (ImGui::Button(state.paused ? "  Play  " : " Pause "))
+		if (ImGui::Button(state.paused ? ICON_PLAY "##play" : ICON_PAUSE "##play", square))
 		{
 			theater_pause_toggle();
 		}
 
 		ImGui::SameLine();
-		if (ImGui::Button("+10 s"))
+		if (ImGui::Button(ICON_FORWARD_STEP "##forward", square))
 		{
-			theater_seek(state.position_ms + 10000);
+			theater_seek(state.position_ms + 1000);
 		}
 
-		// IrisStudio's timescale slider: it rests only on the steps
-		ImGui::SameLine(0.0f, 24.0f);
+		ImGui::SetItemTooltip("One second on");
+		ImGui::SameLine(0.0f, g_font_size);
+		char now[32], end[32], both[80];
+		format_time(now, sizeof(now), state.position_ms);
+		format_time(end, sizeof(end), state.length_ms);
+		snprintf(both, sizeof(both), "%s / %s", now, end);
+		ImGui::PushStyleColor(ImGuiCol_Button, color(P.surface));
+		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, color(P.surface));
+		ImGui::PushStyleColor(ImGuiCol_ButtonActive, color(P.surface));
+		if (g_bold)
 		{
+			ImGui::PushFont(g_bold);
+		}
+
+		ImGui::Button(both);
+		if (g_bold)
+		{
+			ImGui::PopFont();
+		}
+
+		ImGui::PopStyleColor(3);
+		ImGui::SameLine();
+		{
+			// IrisStudio's timescale slider: it rests only on the steps
 			const float* steps = nullptr;
 			const int count = theater_speed_steps(&steps);
 			int step = 0;
@@ -237,117 +701,133 @@ namespace
 
 			char speed_label[32];
 			snprintf(speed_label, sizeof(speed_label), "%.3f", steps[step]);
-			ImGui::SetNextItemWidth(width * 0.22f);
+			ImGui::SetNextItemWidth(g_font_size * 10.0f);
 			if (ImGui::SliderInt("##timescale", &step, 0, count - 1, speed_label, ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_NoInput))
 			{
 				theater_set_speed(steps[step]);
 			}
 
-			ImGui::SameLine();
-			ImGui::AlignTextToFramePadding();
-			ImGui::TextDisabled("Timescale");
+			ImGui::SetItemTooltip("Timescale");
 		}
 
-		ImGui::SameLine(0.0f, 24.0f);
-		if (ImGui::Button("Stop"))
+		// the ruler and the rows
+		ImGui::Spacing();
+		const float labels = g_font_size * 15.0f;
+		const ImVec2 origin = ImGui::GetCursorScreenPos();
+		const float full = ImGui::GetContentRegionAvail().x;
+		const float left = origin.x + labels, right = origin.x + full - g_font_size * 0.5f;
+		const float length = state.length_ms > 0 ? static_cast<float>(state.length_ms) : 1.0f;
+		const float row = frame + style.ItemSpacing.y * 0.5f;
+		ImDrawList* draw = ImGui::GetWindowDrawList();
+		auto x_of = [&](const float ms) { return left + (right - left) * (ms / length); };
+
+		// a tick every so many seconds that the labels have room
+		const float label_room = ImGui::CalcTextSize("0:00").x * 2.2f;
+		static const int EVERY[] = {1, 2, 5, 10, 15, 30, 60, 120, 300, 600};
+		int every = EVERY[9];
+		for (const int candidate : EVERY)
 		{
-			theater_stop();
-		}
-
-		ImGui::SameLine(0.0f, 24.0f);
-		ImGui::AlignTextToFramePadding();
-		ImGui::TextDisabled(g_mouse ? "F1: give the mouse back" : "F1: use the mouse here");
-
-		// the path's points, marked on the position bar
-		const CameraState camera = camera_state();
-		ImGui::Separator();
-		{
-			// IrisStudio's camera modes; the two not built yet cannot be picked
-			static const struct { CameraMode mode; const char* label; bool built; } MODES[] = {
-				{CameraMode::FirstPerson, "First person", true}, {CameraMode::ThirdPerson, "Third person", false},
-				{CameraMode::Free, "Free", true},                {CameraMode::Orbit, "Orbit", false},
-				{CameraMode::Dolly, "Dolly", true},              {CameraMode::Bone, "Bone", false}};
-			const char* current = "";
-			for (const auto& m : MODES)
+			if ((right - left) * (candidate * 1000.0f / length) >= label_room)
 			{
-				if (m.mode == camera.mode)
-				{
-					current = m.label;
-				}
-			}
-
-			ImGui::AlignTextToFramePadding();
-			ImGui::TextUnformatted("Camera");
-			ImGui::SameLine();
-			ImGui::SetNextItemWidth(width * 0.16f);
-			if (ImGui::BeginCombo("##camera", current))
-			{
-				for (const auto& m : MODES)
-				{
-					ImGui::BeginDisabled(!m.built);
-					if (ImGui::Selectable(m.built ? m.label : (std::string(m.label) + " (not yet)").c_str(), m.mode == camera.mode))
-					{
-						camera_set_mode(m.mode);
-					}
-
-					ImGui::EndDisabled();
-				}
-
-				ImGui::EndCombo();
+				every = candidate;
+				break;
 			}
 		}
 
-		ImGui::SameLine(0.0f, 20.0f);
-		float fov = camera.fov;
-		ImGui::SetNextItemWidth(width * 0.16f);
-		if (ImGui::SliderFloat("##fov", &fov, 10.0f, 150.0f, "Field of view %.0f"))
+		const float ruler_bottom = origin.y + frame;
+		const float rows_bottom = origin.y + size.y;
+		for (int s = 0; s * 1000.0f <= length; s += every)
 		{
-			camera_set_fov(fov);
+			const float x = std::floor(x_of(s * 1000.0f));
+			char text[16];
+			snprintf(text, sizeof(text), "%d:%02d", s / 60, s % 60);
+			draw->AddLine({x, origin.y + frame * 0.25f}, {x, ruler_bottom}, u32(P.muted));
+			draw->AddText({x + 4.0f, origin.y}, u32(P.text), text);
+			draw->AddLine({x, ruler_bottom}, {x, rows_bottom}, u32(P.border, 0.5f));
+			const float half = std::floor(x_of((s + every * 0.5f) * 1000.0f));
+			if (half < right)
+			{
+				draw->AddLine({half, origin.y + frame * 0.65f}, {half, ruler_bottom}, u32(P.muted));
+			}
 		}
 
-		ImGui::SameLine();
-		float speed = camera.speed;
-		ImGui::SetNextItemWidth(width * 0.16f);
-		if (ImGui::SliderFloat("##speed", &speed, 50.0f, 3000.0f, "Fly speed %.0f", ImGuiSliderFlags_Logarithmic))
+		// the ruler takes the mouse: where it is pressed or dragged to is gone to when it lets go
+		static bool scrubbing = false;
+		static float scrub_ms = 0.0f;
+		ImGui::SetCursorScreenPos({left, origin.y});
+		ImGui::InvisibleButton("ruler", {right - left, frame});
+		if (ImGui::IsItemActive())
 		{
-			camera_set_speed(speed);
+			const float t = (ImGui::GetIO().MousePos.x - left) / (right - left);
+			scrub_ms = (t < 0.0f ? 0.0f : t > 1.0f ? 1.0f : t) * length;
+			scrubbing = true;
+		}
+		else if (scrubbing)
+		{
+			theater_seek(static_cast<std::uint32_t>(scrub_ms));
+			scrubbing = false;
 		}
 
-		ImGui::SameLine(0.0f, 20.0f);
-		ImGui::BeginDisabled(camera.mode != CameraMode::Free);
-		if (ImGui::Button("Add node (K)"))
-		{
-			camera_add_point();
-		}
-
-		ImGui::EndDisabled();
-		ImGui::SameLine();
+		// the rows: Markers, Campath
+		float y = ruler_bottom + style.ItemSpacing.y * 0.5f;
+		draw->AddRectFilled({left, y}, {right, y + frame}, u32(P.surface));
+		draw->AddText({origin.x + g_font_size * 0.5f, y + style.FramePadding.y}, u32(P.muted), ICON_FLAG "  Markers");
+		y += row;
+		draw->AddRectFilled({left, y}, {right, y + frame}, u32(P.surface));
+		char campath[48];
+		snprintf(campath, sizeof(campath), ICON_VIDEO "  Campath (%d)", camera.points);
+		draw->AddText({origin.x + g_font_size * 0.5f, y + style.FramePadding.y}, u32(P.text), campath);
+		ImGui::SetCursorScreenPos({left - frame * 1.2f - style.ItemSpacing.x, y});
 		ImGui::BeginDisabled(camera.points == 0);
-		if (ImGui::Button("Clear nodes"))
+		if (ImGui::Button(ICON_TRASH "##clearCampath", {frame * 1.2f, frame}))
 		{
 			camera_clear_points();
 		}
 
 		ImGui::EndDisabled();
-		ImGui::SameLine();
-		ImGui::AlignTextToFramePadding();
-		ImGui::TextDisabled("%d node%s", camera.points, camera.points == 1 ? "" : "s");
-		if (camera.mode == CameraMode::Free)
-		{
-			ImGui::TextDisabled("Fly: W A S D, E up, Q down, Shift fast, Ctrl slow, mouse wheel rolls, mouse looks. K adds a dolly node here.");
-		}
-		else if (camera.mode == CameraMode::Dolly && camera.points < 2)
-		{
-			ImGui::TextDisabled("The dolly camera needs two nodes: pick Free, fly, and press K at two times of the recording.");
-		}
-
+		const float diamond = frame * 0.28f;
 		for (int i = 0; i < camera.points && i < 64; ++i)
 		{
-			const float at = bar_min.x + (bar_max.x - bar_min.x) * (state.length_ms ? camera.point_ms[i] / static_cast<float>(state.length_ms) : 0.0f);
-			ImGui::GetWindowDrawList()->AddTriangleFilled({at - 5.0f, bar_min.y - 1.0f}, {at + 5.0f, bar_min.y - 1.0f}, {at, bar_min.y + 7.0f},
-			                                              IM_COL32(0xD4, 0xAA, 0x55, 0xFF));
+			const float x = std::floor(x_of(static_cast<float>(camera.point_ms[i]))), middle = y + frame * 0.5f;
+			draw->AddQuadFilled({x, middle - diamond}, {x + diamond, middle}, {x, middle + diamond}, {x - diamond, middle}, u32(P.text));
 		}
 
+		// the playhead over all of it
+		const float head = std::floor(x_of(scrubbing ? scrub_ms : static_cast<float>(state.position_ms)));
+		draw->AddLine({head, origin.y}, {head, rows_bottom}, u32(P.text), 2.0f);
+		draw->AddTriangleFilled({head - frame * 0.3f, origin.y}, {head + frame * 0.3f, origin.y}, {head, origin.y + frame * 0.5f}, u32(P.text));
+		ImGui::EndChild();
+		ImGui::PopStyleVar();
+	}
+
+	// core/src/UI/LayoutMath: the panel 26 ems wide, the timeline 14 ems tall, the picture what is left.
+	void draw_editor()
+	{
+		const TheaterState state = theater_state();
+		const CameraState camera = camera_state();
+		const ImGuiIO& io = ImGui::GetIO();
+		ImGui::SetNextWindowPos({0, 0});
+		ImGui::SetNextWindowSize(io.DisplaySize);
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {0, 0});
+		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, {0, 0});
+		ImGui::Begin("S1iris", nullptr,
+		             ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_MenuBar |
+		                 ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoScrollbar |
+		                 ImGuiWindowFlags_NoScrollWithMouse);
+		ImGui::PopStyleVar(2);
+		draw_menu_bar(state, io.DisplaySize.x);
+		const ImVec2 room = ImGui::GetContentRegionAvail();
+		const float panel = std::floor(g_font_size * 26.0f), timeline = std::floor(g_font_size * 14.0f);
+		const ImVec2 view = {room.x - panel, room.y - timeline};
+		const ImVec2 corner = ImGui::GetCursorScreenPos();
+		draw_view(camera, view);
+		ImGui::SetCursorScreenPos({corner.x + view.x, corner.y});
+		draw_panel(state, camera, {panel, view.y});
+		ImGui::SetCursorScreenPos({corner.x, corner.y + view.y});
+		draw_timeline(state, camera, {room.x, timeline});
+		ImDrawList* draw = ImGui::GetWindowDrawList();
+		draw->AddLine({corner.x + view.x, corner.y}, {corner.x + view.x, corner.y + view.y}, u32(P.border));
+		draw->AddLine({corner.x, corner.y + view.y}, {corner.x + room.x, corner.y + view.y}, u32(P.border));
 		ImGui::End();
 	}
 
@@ -355,7 +835,7 @@ namespace
 	{
 		if (FAILED(swap_chain->GetDevice(__uuidof(ID3D11Device), reinterpret_cast<void**>(&g_device))))
 		{
-			log("panel: the swap chain has no Direct3D 11 device");
+			log("editor: the swap chain has no Direct3D 11 device");
 			return false;
 		}
 
@@ -369,22 +849,27 @@ namespace
 		ImGuiIO& io = ImGui::GetIO();
 		io.IniFilename = nullptr;
 		io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
-		const float scale = desc.BufferDesc.Height > 0 ? desc.BufferDesc.Height / 1080.0f : 1.0f;
-		if (!io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 18.0f * scale))
-		{
-			io.Fonts->AddFontDefault();
-		}
-
-		apply_look(scale);
+		// LayoutMath::GetFontSize
+		const float size = std::floor(desc.BufferDesc.Width / 106.0f);
+		load_fonts(size < 8.0f ? 8.0f : size);
 		ImGui_ImplWin32_Init(g_window);
 		ImGui_ImplDX11_Init(g_device, g_context);
+		D3D11_BLEND_DESC blend{};
+		blend.RenderTarget[0].BlendEnable = FALSE;
+		blend.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+		g_device->CreateBlendState(&blend, &g_opaque);
 		g_original_window_proc = reinterpret_cast<WNDPROC>(SetWindowLongPtrA(g_window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&window_proc)));
-		log("panel: ready on a %ux%u picture, window %p", desc.BufferDesc.Width, desc.BufferDesc.Height, g_window);
+		log("editor: ready on a %ux%u picture, window %p, font %.0f px", desc.BufferDesc.Width, desc.BufferDesc.Height, g_window, g_font_size);
 		return true;
 	}
 
 	void set_mouse(const bool on)
 	{
+		if (g_mouse == on)
+		{
+			return;
+		}
+
 		g_mouse = on;
 		if (on)
 		{
@@ -395,11 +880,101 @@ namespace
 		}
 		else
 		{
+			g_looking = false;
 			std::lock_guard<std::mutex> lock(g_messages_lock);
 			g_messages.clear();
 		}
 
-		log("panel: the mouse is %s", on ? "the panel's" : "the game's");
+		log("editor: %s", on ? "shown" : "away");
+	}
+
+	DXGI_FORMAT typeless_of(const DXGI_FORMAT format, DXGI_FORMAT* plain)
+	{
+		switch (format)
+		{
+		case DXGI_FORMAT_R8G8B8A8_UNORM:
+		case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+			*plain = DXGI_FORMAT_R8G8B8A8_UNORM;
+			return DXGI_FORMAT_R8G8B8A8_TYPELESS;
+		case DXGI_FORMAT_B8G8R8A8_UNORM:
+		case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+			*plain = DXGI_FORMAT_B8G8R8A8_UNORM;
+			return DXGI_FORMAT_B8G8R8A8_TYPELESS;
+		case DXGI_FORMAT_R10G10B10A2_UNORM:
+			*plain = DXGI_FORMAT_R10G10B10A2_UNORM;
+			return DXGI_FORMAT_R10G10B10A2_TYPELESS;
+		default:
+			*plain = format;
+			return format;
+		}
+	}
+
+	// The target to draw on and, for the editor, a copy of what the game drew.
+	bool targets(IDXGISwapChain* swap_chain, const bool copy)
+	{
+		ID3D11Texture2D* back = nullptr;
+		if (FAILED(swap_chain->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&back))) || !back)
+		{
+			return false;
+		}
+
+		D3D11_TEXTURE2D_DESC texture{};
+		back->GetDesc(&texture);
+		DXGI_FORMAT plain = texture.Format;
+		const DXGI_FORMAT typeless = typeless_of(texture.Format, &plain);
+		if (!g_target)
+		{
+			// the picture may be an sRGB one; the editor's colours are meant as they are
+			D3D11_RENDER_TARGET_VIEW_DESC view{};
+			view.ViewDimension = texture.SampleDesc.Count > 1 ? D3D11_RTV_DIMENSION_TEXTURE2DMS : D3D11_RTV_DIMENSION_TEXTURE2D;
+			view.Format = plain;
+			if (FAILED(g_device->CreateRenderTargetView(back, &view, &g_target)))
+			{
+				g_device->CreateRenderTargetView(back, nullptr, &g_target);
+			}
+		}
+
+		if (copy && !g_copy)
+		{
+			D3D11_TEXTURE2D_DESC wanted = texture;
+			wanted.Format = typeless;
+			wanted.SampleDesc.Count = 1;
+			wanted.SampleDesc.Quality = 0;
+			wanted.Usage = D3D11_USAGE_DEFAULT;
+			wanted.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+			wanted.CPUAccessFlags = 0;
+			wanted.MiscFlags = 0;
+			wanted.MipLevels = 1;
+			wanted.ArraySize = 1;
+			if (SUCCEEDED(g_device->CreateTexture2D(&wanted, nullptr, &g_copy)) && g_copy)
+			{
+				D3D11_SHADER_RESOURCE_VIEW_DESC view{};
+				view.Format = plain;
+				view.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+				view.Texture2D.MipLevels = 1;
+				g_device->CreateShaderResourceView(g_copy, &view, &g_copy_view);
+			}
+
+			if (!g_copy_view)
+			{
+				log("editor: no copy of the game's picture could be made (format %d)", static_cast<int>(texture.Format));
+			}
+		}
+
+		if (copy && g_copy)
+		{
+			if (texture.SampleDesc.Count > 1)
+			{
+				g_context->ResolveSubresource(g_copy, 0, back, 0, plain);
+			}
+			else
+			{
+				g_context->CopyResource(g_copy, back);
+			}
+		}
+
+		back->Release();
+		return g_target != nullptr;
 	}
 
 	void draw(IDXGISwapChain* swap_chain)
@@ -428,45 +1003,20 @@ namespace
 		const bool f1 = GetForegroundWindow() == g_window && (GetAsyncKeyState(VK_F1) & 0x8000) != 0;
 		if (f1 && !g_f1_was_down && state.playing)
 		{
-			set_mouse(!g_mouse);
+			g_hidden = !g_hidden;
 		}
 
 		g_f1_was_down = f1;
-		if (g_mouse && !state.playing)
-		{
-			set_mouse(false);
-		}
-
 		if (!state.playing)
 		{
-			return;
+			g_hidden = false;
 		}
 
-		if (!g_target)
+		const bool shown = state.playing && !g_hidden;
+		set_mouse(shown);
+		if (!shown || !targets(swap_chain, true))
 		{
-			ID3D11Texture2D* back = nullptr;
-			if (FAILED(swap_chain->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&back))) || !back)
-			{
-				return;
-			}
-
-			// the picture may be an sRGB one; the panel's colours are meant as they are
-			D3D11_TEXTURE2D_DESC texture{};
-			back->GetDesc(&texture);
-			D3D11_RENDER_TARGET_VIEW_DESC view{};
-			view.ViewDimension = texture.SampleDesc.Count > 1 ? D3D11_RTV_DIMENSION_TEXTURE2DMS : D3D11_RTV_DIMENSION_TEXTURE2D;
-			view.Format = texture.Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB ? DXGI_FORMAT_R8G8B8A8_UNORM
-				: texture.Format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB ? DXGI_FORMAT_B8G8R8A8_UNORM : texture.Format;
-			if (FAILED(g_device->CreateRenderTargetView(back, &view, &g_target)))
-			{
-				g_device->CreateRenderTargetView(back, nullptr, &g_target);
-			}
-
-			back->Release();
-			if (!g_target)
-			{
-				return;
-			}
+			return;
 		}
 
 		{
@@ -482,19 +1032,15 @@ namespace
 			}
 		}
 
-		ImGui::GetIO().MouseDrawCursor = g_mouse;
+		ImGui::GetIO().MouseDrawCursor = !g_looking;
 		ImGui_ImplDX11_NewFrame();
 		ImGui_ImplWin32_NewFrame();
-		if (!g_mouse)
-		{
-			// the game has the mouse: nothing under it is the panel's
-			ImGui::GetIO().AddMousePosEvent(-FLT_MAX, -FLT_MAX);
-		}
-
 		ImGui::NewFrame();
-		draw_bar();
+		draw_editor();
 		ImGui::Render();
 		g_context->OMSetRenderTargets(1, &g_target, nullptr);
+		const ImVec4 background = color(P.bg);
+		g_context->ClearRenderTargetView(g_target, &background.x);
 		ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 	}
 
@@ -517,6 +1063,18 @@ namespace
 			g_target = nullptr;
 		}
 
+		if (g_copy_view)
+		{
+			g_copy_view->Release();
+			g_copy_view = nullptr;
+		}
+
+		if (g_copy)
+		{
+			g_copy->Release();
+			g_copy = nullptr;
+		}
+
 		return g_original_resize(swap_chain, count, width, height, format, flags);
 	}
 }
@@ -528,7 +1086,9 @@ HWND ui_window()
 
 bool ui_mouse_is_panels()
 {
-	return g_mouse;
+	// with the editor shown the mouse is its own, but for the right button held on the picture; with it
+	// away the mouse flies the camera
+	return g_mouse && !g_looking;
 }
 
 void ui_camera_has_mouse(const bool on)
@@ -558,9 +1118,9 @@ void ui_take_mouse_motion(int* dx, int* dy)
 
 int ui_take_mouse_wheel()
 {
-	// the panel's own scrolling is not the camera's
+	// the wheel over the game's picture is the camera's; elsewhere it scrolls the editor
 	const int wheel = g_wheel.exchange(0);
-	return g_mouse ? 0 : wheel;
+	return !g_mouse || g_looking || g_view_hovered ? wheel : 0;
 }
 
 void ui_start()
@@ -622,8 +1182,8 @@ void ui_start()
 			status = MH_EnableHook(present);
 		}
 
-		log(status == MH_OK ? "panel: drawing hooked (%p); the bar shows while a recording plays, F1 gives it the mouse"
-		                    : "panel: drawing NOT hooked (%p)",
+		log(status == MH_OK ? "editor: drawing hooked (%p); the editor shows while a recording plays, F1 puts it away"
+		                    : "editor: drawing NOT hooked (%p)",
 		    present);
 	}
 

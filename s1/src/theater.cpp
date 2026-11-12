@@ -31,7 +31,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.25 (recorder, playback with rewind, panel, cameras)";
+	constexpr char VERSION[] = "0.26 (recorder, playback, IrisStudio's editor)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -216,6 +216,8 @@ namespace
 	// what the panel asks for: a place in the recording (ms; -1 for none), and how long the recording is
 	std::atomic<std::int64_t> g_seek_request{-1};
 	std::atomic<std::uint32_t> g_length_ms{0};
+	char g_shown_name[96] = {}, g_shown_map[64] = {};
+	HMODULE g_module = nullptr;
 	// a snapshot has to be given at once, whatever the clock says (after going back: the client has none)
 	bool g_need_snapshot = false;
 	// the client's time is to be set to the next snapshot's, once one has been given after going back
@@ -623,6 +625,11 @@ namespace
 		g_predicted_given = 0;
 		g_predicted_missed = 0;
 		g_length_ms = g_records.empty() ? 0 : g_records.back().ms;
+		{
+			const char* slash = strrchr(g_play_name, '\\');
+			strncpy_s(g_shown_name, slash ? slash + 1 : g_play_name, _TRUNCATE);
+			strncpy_s(g_shown_map, map.c_str(), _TRUNCATE);
+		}
 		g_seek_request = -1;
 		log_line("playback: %s, %zu messages, %zu of the player's positions, %.1f s, map %s, game type %s; connection state %d, lobby %d",
 		         g_play_name, g_records.size(), g_predicted.size(), g_records.back().ms / 1000.0, map.c_str(), type.c_str(),
@@ -1784,6 +1791,8 @@ TheaterState theater_state()
 	state.speed = SPEEDS[g_speed];
 	state.position_ms = static_cast<std::uint32_t>(g_clock.load());
 	state.length_ms = g_length_ms;
+	strncpy_s(state.name, g_shown_name, _TRUNCATE);
+	strncpy_s(state.map, g_shown_map, _TRUNCATE);
 	return state;
 }
 
@@ -1812,6 +1821,8 @@ int theater_speed_steps(const float** steps)
 	return static_cast<int>(sizeof(SPEEDS) / sizeof(SPEEDS[0]));
 }
 void theater_stop() { g_stop_request = true; }
+const char* theater_version() { return VERSION; }
+HMODULE theater_module() { return g_module; }
 void theater_log(const char* text) { log_line("%s", text); }
 
 void theater_start(const HMODULE self)
@@ -1820,6 +1831,8 @@ void theater_start(const HMODULE self)
 	{
 		return;
 	}
+
+	g_module = self;
 
 	// the folder this DLL is in is the game's
 	char folder[MAX_PATH] = {};

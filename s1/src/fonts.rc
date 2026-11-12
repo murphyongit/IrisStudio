@@ -1,0 +1,4 @@
+// IrisStudio's fonts (core/resources), inside the DLL
+101 RCDATA "../../core/resources/Rubik-Regular.ttf"
+102 RCDATA "../../core/resources/Rubik-SemiBold.ttf"
+103 RCDATA "../../core/resources/fa-solid-900.ttf"

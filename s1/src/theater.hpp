@@ -11,6 +11,7 @@ struct TheaterState
 	bool playing = false, starting = false, paused = false;
 	float speed = 1.0f;
 	std::uint32_t position_ms = 0, length_ms = 0;
+	char name[96] = {}, map[64] = {};
 };
 
 TheaterState theater_state();
@@ -22,6 +23,8 @@ void theater_seek(std::uint32_t ms);
 void theater_set_speed(float speed);
 int theater_speed_steps(const float** steps);
 void theater_stop();
+const char* theater_version();
+HMODULE theater_module();
 void theater_log(const char* text);
 
 // Hooks the game's drawing so the panel is drawn over it. MinHook must be initialised.
