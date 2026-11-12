@@ -276,7 +276,7 @@ void effects_game_frame(const TheaterState& state)
 			{
 				due = true;
 			}
-			else if (placed.every_ms >= 50 && now > placed.at_ms)
+			else if (placed.every_ms >= 50 && now > placed.at_ms && now <= static_cast<double>(placed.at_ms) + placed.length_ms)
 			{
 				const double since_last = (last - placed.at_ms) / placed.every_ms, since_now = (now - placed.at_ms) / placed.every_ms;
 				due = due || (last >= placed.at_ms && std::floor(since_now) > std::floor(since_last));
