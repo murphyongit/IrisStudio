@@ -30,7 +30,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.21 (recorder with the view, playback with rewind)";
+	constexpr char VERSION[] = "0.22 (recorder, playback with rewind, first panel)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -210,6 +210,9 @@ namespace
 	// the key thread's requests, taken on the main thread
 	std::atomic<bool> g_pause_request{false}, g_slower_request{false}, g_faster_request{false}, g_skip_request{false};
 	std::atomic<bool> g_back_request{false}, g_restart_request{false};
+	// what the panel asks for: a place in the recording (ms; -1 for none), and how long the recording is
+	std::atomic<std::int64_t> g_seek_request{-1};
+	std::atomic<std::uint32_t> g_length_ms{0};
 	// a snapshot has to be given at once, whatever the clock says (after going back: the client has none)
 	bool g_need_snapshot = false;
 	// the client's time is to be set to the next snapshot's, once one has been given after going back
@@ -616,6 +619,8 @@ namespace
 
 		g_predicted_given = 0;
 		g_predicted_missed = 0;
+		g_length_ms = g_records.empty() ? 0 : g_records.back().ms;
+		g_seek_request = -1;
 		log_line("playback: %s, %zu messages, %zu of the player's positions, %.1f s, map %s, game type %s; connection state %d, lobby %d",
 		         g_play_name, g_records.size(), g_predicted.size(), g_records.back().ms / 1000.0, map.c_str(), type.c_str(),
 		         connection_state(),
@@ -895,6 +900,19 @@ namespace
 				const std::uint64_t clock = g_clock;
 				go_back_to(clock > BACK_MS ? clock - BACK_MS : 0);
 				show("S1iris: 10 seconds back");
+			}
+
+			if (const std::int64_t seek = g_seek_request.exchange(-1); seek >= 0)
+			{
+				const auto target = static_cast<std::uint64_t>(seek);
+				if (target < g_clock)
+				{
+					go_back_to(target);
+				}
+				else
+				{
+					g_clock = target;
+				}
 			}
 
 			if (g_restart_request.exchange(false))
@@ -1711,6 +1729,7 @@ namespace
 				const bool values = hook(CG_OMNVARS_CHANGED, &hooked_omnvars_changed, &g_original_omnvars_changed, "the menus' values");
 				log_line("hook: playback's team and class menus %s, their value %s", menus ? "kept shut" : "NOT kept shut",
 				         values ? "cleared" : "NOT cleared");
+				ui_start();
 				if (HANDLE thread = CreateThread(nullptr, 0, &keys, nullptr, 0, nullptr))
 				{
 					CloseHandle(thread);
@@ -1732,6 +1751,25 @@ namespace
 		return 0;
 	}
 }
+
+TheaterState theater_state()
+{
+	TheaterState state;
+	state.playing = g_play == Play::Playing;
+	state.starting = g_play == Play::Starting;
+	state.paused = g_paused;
+	state.speed = SPEEDS[g_speed];
+	state.position_ms = static_cast<std::uint32_t>(g_clock.load());
+	state.length_ms = g_length_ms;
+	return state;
+}
+
+void theater_pause_toggle() { g_pause_request = true; }
+void theater_slower() { g_slower_request = true; }
+void theater_faster() { g_faster_request = true; }
+void theater_seek(const std::uint32_t ms) { g_seek_request = ms; }
+void theater_stop() { g_stop_request = true; }
+void theater_log(const char* text) { log_line("%s", text); }
 
 void theater_start(const HMODULE self)
 {

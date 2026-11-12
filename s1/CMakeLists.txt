@@ -17,8 +17,22 @@ FetchContent_MakeAvailable(minhook)
 
 # S1iris loads as XInput1_3.dll from the game's folder (the game asks for it there), passing every real
 # request to Windows' own: the version.dll door is the debug overlay's.
-add_library(s1iris SHARED src/theater.cpp src/proxy_xinput.cpp)
+# Dear ImGui for the panel (the BO1 mod's own copy is a submodule set up for Direct3D 9)
+FetchContent_Declare(imgui
+  GIT_REPOSITORY https://github.com/ocornut/imgui.git
+  GIT_TAG v1.90.9)
+FetchContent_MakeAvailable(imgui)
+add_library(imgui STATIC
+  ${imgui_SOURCE_DIR}/imgui.cpp
+  ${imgui_SOURCE_DIR}/imgui_draw.cpp
+  ${imgui_SOURCE_DIR}/imgui_tables.cpp
+  ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+  ${imgui_SOURCE_DIR}/backends/imgui_impl_dx11.cpp
+  ${imgui_SOURCE_DIR}/backends/imgui_impl_win32.cpp)
+target_include_directories(imgui PUBLIC ${imgui_SOURCE_DIR})
+
+add_library(s1iris SHARED src/theater.cpp src/ui.cpp src/proxy_xinput.cpp)
 set_target_properties(s1iris PROPERTIES OUTPUT_NAME "XInput1_3" PREFIX "")
 target_compile_definitions(s1iris PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
-target_link_libraries(s1iris PRIVATE minhook)
+target_link_libraries(s1iris PRIVATE minhook imgui d3d11 dxgi)
 install(TARGETS s1iris RUNTIME DESTINATION ".")
