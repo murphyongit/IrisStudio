@@ -104,6 +104,20 @@ struct BoneState
 	bool found = false;
 };
 
+// A light added to the scene: a point that shines all round.
+struct SceneLight
+{
+	bool on = true;
+	float origin[3] = {};
+	float color[3] = {1.0f, 1.0f, 1.0f};
+	float intensity = 1.0f, radius = 300.0f;
+};
+
+int scene_lights(SceneLight* out, int max);
+void scene_set_light(int index, const SceneLight& light);
+int scene_add_light();
+void scene_move_light_here(int index);
+void scene_remove_light(int index);
 BoneState camera_bone_state();
 void camera_set_bone(const BoneCamera& bone);
 CameraState camera_state();

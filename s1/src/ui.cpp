@@ -422,19 +422,22 @@ namespace
 		ImGui::InvisibleButton("picture", picture, ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonLeft);
 		const bool hovered = ImGui::IsItemHovered();
 		g_view_hovered = hovered;
-		if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && camera.mode == CameraMode::Free)
+		const bool flown = camera.mode == CameraMode::Free || camera.mode == CameraMode::Bone;
+		if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && flown)
 		{
 			g_looking = true;
 		}
 
-		if (g_looking && (!ImGui::IsMouseDown(ImGuiMouseButton_Right) || camera.mode != CameraMode::Free))
+		if (g_looking && (!ImGui::IsMouseDown(ImGuiMouseButton_Right) || !flown))
 		{
 			g_looking = false;
 		}
 
-		if (camera.mode == CameraMode::Free && !g_looking)
+		if (flown && !g_looking)
 		{
-			const char* hint = "Hold the right mouse button to look  \xe2\x80\xa2  W A S D to fly  \xe2\x80\xa2  K adds a campath node";
+			const char* hint = camera.mode == CameraMode::Bone
+				? "Hold the right mouse button to turn  \xe2\x80\xa2  W A S D, Q, E move the camera on the bone"
+				: "Hold the right mouse button to look  \xe2\x80\xa2  W A S D to fly  \xe2\x80\xa2  K adds a campath node";
 			const ImVec2 hint_size = ImGui::CalcTextSize(hint);
 			draw->AddText({at.x + picture.x - hint_size.x - g_font_size, at.y + picture.y - hint_size.y - g_font_size * 0.5f}, u32(P.muted), hint);
 		}
@@ -854,7 +857,68 @@ namespace
 			look_draw_tab(state);
 			break;
 		case Tab::Scene:
-			not_built("The Scene tab (actors and players)");
+			if (section(ICON_LIGHTBULB, "Lights"))
+			{
+				// lights of the editor's own: each a point that shines all round
+				SceneLight lights[16];
+				const int count = scene_lights(lights, 16);
+				ImGui::BeginDisabled(count >= 16);
+				if (ImGui::Button(ICON_PLUS "  Add light here"))
+				{
+					scene_add_light();
+				}
+
+				ImGui::EndDisabled();
+				ImGui::SetItemTooltip("A new light where the camera is now");
+				int remove = -1;
+				for (int i = 0; i < count; ++i)
+				{
+					SceneLight light = lights[i];
+					bool changed = false;
+					ImGui::PushID(i);
+					ImGui::Separator();
+					changed = ImGui::Checkbox("##on", &light.on) || changed;
+					ImGui::SameLine();
+					ImGui::AlignTextToFramePadding();
+					ImGui::Text("Light %d", i + 1);
+					ImGui::SameLine();
+					if (ImGui::SmallButton("Move here"))
+					{
+						scene_move_light_here(i);
+						ImGui::PopID();
+						continue;
+					}
+
+					ImGui::SetItemTooltip("Move this light to where the camera is now");
+					ImGui::SameLine();
+					if (ImGui::SmallButton(ICON_TRASH))
+					{
+						remove = i;
+					}
+
+					row_label("Color");
+					changed = ImGui::ColorEdit3("##color", light.color) || changed;
+					row_label("Brightness");
+					changed = ImGui::SliderFloat("##intensity", &light.intensity, 0.0f, 200.0f, "%.2f", ImGuiSliderFlags_Logarithmic) || changed;
+					row_label("Reach");
+					changed = ImGui::SliderFloat("##radius", &light.radius, 10.0f, 5000.0f, "%.0f", ImGuiSliderFlags_Logarithmic) || changed;
+					row_label("Position");
+					changed = ImGui::DragFloat3("##origin", light.origin, 1.0f, 0.0f, 0.0f, "%.0f") || changed;
+					if (changed)
+					{
+						scene_set_light(i, light);
+					}
+
+					ImGui::PopID();
+				}
+
+				if (remove >= 0)
+				{
+					scene_remove_light(remove);
+				}
+			}
+
+			not_built("Outfits, hiding players and actors");
 			break;
 		case Tab::Record:
 			capture_draw_tab(state);

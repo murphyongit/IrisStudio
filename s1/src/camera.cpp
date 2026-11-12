@@ -35,6 +35,11 @@ namespace
 		CG_DOBJ_GET_WORLD_TAG_MATRIX = 0x140190D00;
 	constexpr size_t CENTITY_SIZE = 0x288, CENTITY_NUMBER = 0x144;
 	constexpr int BONE_ENTITIES = 64;
+	// A light put into the scene: R_AddOmniLightToScene (0x1405C9D90: where it is, the direction its bulb
+	// lies along, its radius, its colour's red, green and blue, and a block of four numbers for the bulb's
+	// size and fade, which may all be 0). The scene takes 32 a frame, the game's own effects' included.
+	constexpr uintptr_t R_ADD_OMNI_LIGHT_TO_SCENE = 0x1405C9D90;
+	constexpr int MAX_LIGHTS = 16;
 	constexpr float PI = 3.14159265358979f, TO_RAD = PI / 180.0f, TO_DEG = 180.0f / PI;
 
 	using calc_view_t = void (*)(int);
@@ -317,8 +322,14 @@ namespace
 	BoneCamera g_bone;
 	std::atomic<std::uint64_t> g_bone_entities{0};
 	std::atomic<int> g_bone_nearest{-1};
-	std::atomic<bool> g_bone_found{false};
+	std::atomic<bool> g_bone_found{false}, g_bone_wanted{false};
 	unsigned g_bone_scan = 0;
+	float g_dt = 0.0f;  // the frame's, for flying the bone camera where the scene is drawn
+
+	// ---- the scene's lights
+	SceneLight g_lights[MAX_LIGHTS];
+	int g_light_count = 0;
+	float g_view_now[3] = {};  // where the picture is taken from this frame
 
 	// A part of an entity's model: where it is and how it is turned (forward, left, up).
 	bool bone_matrix(const int entity, const char* name, float axis[3][3], float origin[3])
@@ -391,16 +402,18 @@ namespace
 		g_bone_nearest = nearest;
 	}
 
-	// The camera on the bone: the bone's place and the offset along its own axis; its turning, with the
-	// angles on top, or the angles alone.
-	bool bone_pose(const BoneCamera& bone, Pose* pose)
+	// The game's own: pitch, yaw, roll from forward, left, up.
+	void axis_to_angles(const float axis[3][3], float angles[3])
 	{
-		float axis[3][3], origin[3];
-		if (!bone_matrix(bone.entity, bone.bone, axis, origin))
-		{
-			return false;
-		}
+		angles[1] = std::atan2(axis[0][1], axis[0][0]) * TO_DEG;
+		angles[0] = std::atan2(-axis[0][2], std::sqrt(axis[0][0] * axis[0][0] + axis[0][1] * axis[0][1])) * TO_DEG;
+		angles[2] = std::atan2(axis[1][2], axis[2][2]) * TO_DEG;
+	}
 
+	// The camera on the bone: the bone's place and the offset along its own axis (forward, right, up);
+	// its turning, with the angles on top, or the angles alone.
+	void bone_compose(const float axis[3][3], const float origin[3], const BoneCamera& bone, Pose* pose)
+	{
 		for (int i = 0; i < 3; ++i)
 		{
 			pose->origin[i] = origin[i] + axis[0][i] * bone.offset[0] - axis[1][i] * bone.offset[1] + axis[2][i] * bone.offset[2];
@@ -424,11 +437,107 @@ namespace
 		}
 
 		pose->has_axis = true;
-		// (the angles too, for the free camera to start from)
-		pose->angles[1] = std::atan2(pose->axis[0][1], pose->axis[0][0]) * TO_DEG;
-		pose->angles[0] = std::atan2(-pose->axis[0][2], std::sqrt(pose->axis[0][0] * pose->axis[0][0] + pose->axis[0][1] * pose->axis[0][1])) * TO_DEG;
-		pose->angles[2] = 0.0f;
+		axis_to_angles(pose->axis, pose->angles);
+	}
+
+	void fly(float dt);
+
+	// The bone camera, worked out where the scene is handed over to be drawn: that is where the game ties
+	// its own view to a bone, and only there are the models posed for this frame. (0.36 worked it out at
+	// the frame's start as well, from the frame before's models, and that one ran away after a rewind:
+	// the picture was right, but the game chose its models' detail by the wrong place.) Flying here moves
+	// the camera in the world and the offset and rotation are what that leaves, so they can be set by
+	// flying as well as by the panel's numbers.
+	bool bone_frame()
+	{
+		if (g_bone_scan++ % 20 == 0)
+		{
+			scan_bones();
+		}
+
+		if (g_bone.entity < 0)
+		{
+			g_bone.entity = g_bone_nearest;
+		}
+
+		float axis[3][3], origin[3];
+		if (!bone_matrix(g_bone.entity, g_bone.bone, axis, origin))
+		{
+			return false;
+		}
+
+		if (!g_have_pose)
+		{
+			g_pose = pose_of_game_view();
+			g_have_pose = true;
+		}
+
+		Pose pose = g_pose;
+		bone_compose(axis, origin, g_bone, &pose);
+		Pose flown = pose;
+		flown.has_axis = false;
+		g_pose = flown;
+		fly(g_dt);
+		if (memcmp(g_pose.origin, flown.origin, sizeof(flown.origin)) != 0 || memcmp(g_pose.angles, flown.angles, sizeof(flown.angles)) != 0)
+		{
+			// flown: where the camera now is, as an offset along the bone's axis and a rotation
+			float apart[3];
+			for (int i = 0; i < 3; ++i)
+			{
+				apart[i] = g_pose.origin[i] - origin[i];
+			}
+
+			g_bone.offset[0] = apart[0] * axis[0][0] + apart[1] * axis[0][1] + apart[2] * axis[0][2];
+			g_bone.offset[1] = -(apart[0] * axis[1][0] + apart[1] * axis[1][1] + apart[2] * axis[1][2]);
+			g_bone.offset[2] = apart[0] * axis[2][0] + apart[1] * axis[2][1] + apart[2] * axis[2][2];
+			if (g_bone.rotate)
+			{
+				float camera[3][3], turn[3][3];
+				angles_to_axis(g_pose.angles, camera);
+				for (int r = 0; r < 3; ++r)
+				{
+					for (int j = 0; j < 3; ++j)
+					{
+						turn[r][j] = camera[r][0] * axis[j][0] + camera[r][1] * axis[j][1] + camera[r][2] * axis[j][2];
+					}
+				}
+
+				axis_to_angles(turn, g_bone.turn);
+			}
+			else
+			{
+				memcpy(g_bone.turn, g_pose.angles, sizeof(g_bone.turn));
+			}
+
+			bone_compose(axis, origin, g_bone, &pose);
+		}
+
+		pose.fov = g_pose.fov;
+		g_pose = pose;
 		return true;
+	}
+
+	// The editor's lights, into the scene about to be drawn.
+	void add_lights()
+	{
+		__try
+		{
+			static const float up[3] = {0.0f, 0.0f, 1.0f};
+			static const float bulb[4] = {};
+			for (int i = 0; i < g_light_count; ++i)
+			{
+				const SceneLight& light = g_lights[i];
+				if (light.on && light.radius > 0.0f && light.intensity > 0.0f)
+				{
+					reinterpret_cast<void (*)(const float*, const float*, float, float, float, float, const float*)>(R_ADD_OMNI_LIGHT_TO_SCENE)(
+						light.origin, up, light.radius, light.color[0] * light.intensity, light.color[1] * light.intensity,
+						light.color[2] * light.intensity, bulb);
+				}
+			}
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+		}
 	}
 
 	void apply(const Pose& pose)
@@ -502,33 +611,17 @@ namespace
 		const bool follow = state.playing && mode == CameraMode::Dolly && g_points.size() >= 2;
 		const bool parked = state.playing && mode == CameraMode::Dolly && !follow && g_have_pose;
 		const bool free_camera = state.playing && mode == CameraMode::Free;
-		bool on_bone = false;
-		if (state.playing && mode == CameraMode::Bone)
-		{
-			if (g_bone_scan++ % 20 == 0)
-			{
-				scan_bones();
-			}
-
-			if (g_bone.entity < 0)
-			{
-				g_bone.entity = g_bone_nearest;
-			}
-
-			if (!g_have_pose)
-			{
-				g_pose = pose_of_game_view();
-			}
-
-			on_bone = view_is_sane() && bone_pose(g_bone, &g_pose);
-			g_have_pose = g_have_pose || on_bone;
-		}
-		else
+		// (the bone camera is worked out where the scene is drawn; here it is what it was there last)
+		const bool bone_wanted = state.playing && mode == CameraMode::Bone;
+		g_bone_wanted = bone_wanted;
+		g_dt = dt;
+		const bool on_bone = bone_wanted && g_bone_found;
+		if (!bone_wanted)
 		{
 			g_pose.has_axis = false;
+			g_bone_found = false;
 		}
 
-		g_bone_found = on_bone;
 		const bool overriding = follow || free_camera || parked || on_bone;
 		const int view_state = !state.playing ? 0 : overriding ? 2 : mode == CameraMode::ThirdPerson ? 1 : 0;
 		if (view_state != g_view_state)
@@ -562,7 +655,6 @@ namespace
 		if (overriding != g_overriding)
 		{
 			g_overriding = overriding;
-			ui_camera_has_mouse(free_camera);
 			if (!g_logged_view)
 			{
 				g_logged_view = true;
@@ -574,9 +666,14 @@ namespace
 
 			log("camera: %s", follow ? "following the path" : free_camera ? "free" : on_bone ? "on a bone" : "the player's own again");
 		}
-		else if (free_camera != g_free)
+
+		// the free camera and the bone camera are flown: the mouse is theirs while it is asked for
+		static bool mouse_given = false;
+		const bool flown = free_camera || bone_wanted;
+		if (flown != mouse_given)
 		{
-			ui_camera_has_mouse(free_camera);
+			mouse_given = flown;
+			ui_camera_has_mouse(flown);
 		}
 
 		if (free_camera && (!g_free || !g_have_pose))
@@ -628,21 +725,28 @@ namespace
 	void hooked_render_scene(const int client, void* refdef, void* a3, const std::uint64_t a4, const std::uint64_t a5, const std::uint64_t a6,
 	                         const std::uint64_t a7, const std::uint64_t a8)
 	{
-		if (g_overriding && refdef == reinterpret_cast<void*>(REFDEF) && view_is_sane())
+		if (refdef == reinterpret_cast<void*>(REFDEF) && view_is_sane())
 		{
-			if (g_applied.has_axis)
+			std::lock_guard<std::mutex> lock(g_lock);
+			if (g_bone_wanted)
 			{
-				// the bone again, as it is now: the entities may have moved since the view was worked out
-				std::lock_guard<std::mutex> lock(g_lock);
-				bone_pose(g_bone, &g_applied);
+				const bool found = bone_frame();
+				g_bone_found = found;
+				if (found)
+				{
+					g_applied = g_pose;
+					apply(g_applied);
+				}
+			}
+			else if (g_overriding)
+			{
+				apply(g_applied);
 			}
 
-			apply(g_applied);
-			static bool noted = false;
-			if (!noted)
+			memcpy(g_view_now, &at<float>(REFDEF_ORIGIN), sizeof(g_view_now));
+			if (theater_state().playing)
 			{
-				noted = true;
-				log("camera: put into the scene's drawing");
+				add_lights();
 			}
 		}
 
@@ -696,6 +800,65 @@ void camera_set_bone(const BoneCamera& bone)
 	std::lock_guard<std::mutex> lock(g_lock);
 	g_bone = bone;
 	g_bone.bone[sizeof(g_bone.bone) - 1] = 0;
+}
+
+int scene_lights(SceneLight* out, const int max)
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	const int count = g_light_count < max ? g_light_count : max;
+	for (int i = 0; i < count; ++i)
+	{
+		out[i] = g_lights[i];
+	}
+
+	return count;
+}
+
+void scene_set_light(const int index, const SceneLight& light)
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	if (index >= 0 && index < g_light_count)
+	{
+		g_lights[index] = light;
+	}
+}
+
+// A new light where the picture is taken from; -1 if there is no room for another.
+int scene_add_light()
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	if (g_light_count >= MAX_LIGHTS)
+	{
+		return -1;
+	}
+
+	SceneLight light;
+	memcpy(light.origin, g_view_now, sizeof(light.origin));
+	g_lights[g_light_count] = light;
+	return g_light_count++;
+}
+
+void scene_move_light_here(const int index)
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	if (index >= 0 && index < g_light_count)
+	{
+		memcpy(g_lights[index].origin, g_view_now, sizeof(g_view_now));
+	}
+}
+
+void scene_remove_light(const int index)
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	if (index >= 0 && index < g_light_count)
+	{
+		for (int i = index; i + 1 < g_light_count; ++i)
+		{
+			g_lights[i] = g_lights[i + 1];
+		}
+
+		--g_light_count;
+	}
 }
 
 void camera_set_mode(const CameraMode mode) { g_mode = static_cast<int>(mode); }
