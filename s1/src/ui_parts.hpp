@@ -48,6 +48,17 @@ bool ui_typing();
 void look_draw_tab(const TheaterState& state);
 void look_frame(const TheaterState& state);
 void look_toggle_hud();
+// The settings that have keyframes, for the timeline's rows.
+struct LookTrack
+{
+	const char* label = "";
+	int keys = 0;
+	std::uint32_t ms[256] = {};
+};
+int look_track_count();
+bool look_track(int index, LookTrack* out);
+void look_track_clear(int index);
+void look_track_remove_key(int index, int key);
 
 // capture.cpp: the Record tab; a frame of the game's picture as it was drawn (before the editor)
 void capture_draw_tab(const TheaterState& state);

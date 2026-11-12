@@ -7,7 +7,7 @@
 // whatever was changed is put back when playback ends.
 //
 // A dvar (s1-mod's structs): name at +0, flags at +8, type at +0xC (0 bool, 1 float, 2-4 vectors, 5 int,
-// 6 one of a list, 7 text, 8 colour), the current value at +0x10, the one it resets to at +0x30, its
+// 6 one of a list, 7 text, 8 colour in bytes, 9 colour in three floats), the current value at +0x10, the one it resets to at +0x30, its
 // limits at +0x40 (floats: min, max; ints: min, max; a list: how many, and their names).
 #include "ui_parts.hpp"
 
@@ -86,8 +86,9 @@ namespace
 			snprintf(text, sizeof(text), "\"%.200s\"", string ? string : "");
 			break;
 		}
-		case 8:
-		case 9: snprintf(text, sizeof(text), "%g %g %g %g", value[0] / 255.0f, value[1] / 255.0f, value[2] / 255.0f, value[3] / 255.0f); break;
+		case 8: snprintf(text, sizeof(text), "%g %g %g %g", value[0] / 255.0f, value[1] / 255.0f, value[2] / 255.0f, value[3] / 255.0f); break;
+		// (0.33 read these as bytes: the film tints showed, and were saved to presets as, other colours)
+		case 9: snprintf(text, sizeof(text), "%g %g %g", f[0], f[1], f[2]); break;
 		default: break;
 		}
 
@@ -125,6 +126,194 @@ namespace
 		}
 	}
 
+	// ---- keyframes. A setting with keyframes is set every frame to what its keyframes make of the
+	// recording's time (After Effects' stopwatch: the diamond at a row's right puts a keyframe at the time
+	// shown, and from then on changing the value there makes or changes one).
+	struct Key
+	{
+		std::uint32_t ms = 0;
+		float v[4] = {};
+	};
+
+	struct Track
+	{
+		std::string id;  // a dvar's name, or sun_color, sun_brightness, sun_direction
+		std::string label;
+		int count = 1;
+		std::vector<Key> keys;  // by time
+		std::string sent;       // what the game was last given
+	};
+
+	std::vector<Track> g_tracks;
+	std::uint32_t g_now_ms = 0;
+	constexpr std::uint32_t SAME_KEY_MS = 40;
+
+	Track* track_of(const char* id)
+	{
+		for (Track& track : g_tracks)
+		{
+			if (track.id == id)
+			{
+				return &track;
+			}
+		}
+
+		return nullptr;
+	}
+
+	int key_at(const Track& track, const std::uint32_t ms)
+	{
+		for (size_t i = 0; i < track.keys.size(); ++i)
+		{
+			const std::uint32_t at = track.keys[i].ms;
+			if ((at > ms ? at - ms : ms - at) <= SAME_KEY_MS)
+			{
+				return static_cast<int>(i);
+			}
+		}
+
+		return -1;
+	}
+
+	void put_key(const char* id, const char* label, const int count, const float* values)
+	{
+		Track* track = track_of(id);
+		if (!track)
+		{
+			g_tracks.push_back({});
+			track = &g_tracks.back();
+			track->id = id;
+			track->label = label;
+			track->count = count;
+		}
+
+		Key key;
+		key.ms = g_now_ms;
+		memcpy(key.v, values, sizeof(float) * static_cast<size_t>(count));
+		const int same = key_at(*track, g_now_ms);
+		if (same >= 0)
+		{
+			key.ms = track->keys[static_cast<size_t>(same)].ms;
+			track->keys[static_cast<size_t>(same)] = key;
+			return;
+		}
+
+		size_t at = 0;
+		while (at < track->keys.size() && track->keys[at].ms < key.ms)
+		{
+			++at;
+		}
+
+		track->keys.insert(track->keys.begin() + static_cast<std::ptrdiff_t>(at), key);
+	}
+
+	// A track's value at a time: a smooth curve through its keyframes (the campath's: at a keyframe the
+	// value changes as fast as its two neighbours ask, over the time between them), held before the first
+	// and after the last.
+	void sample(const Track& track, const double ms, float out[4])
+	{
+		const std::vector<Key>& k = track.keys;
+		if (ms <= k.front().ms || k.size() == 1)
+		{
+			memcpy(out, k.front().v, sizeof(k.front().v));
+			return;
+		}
+
+		if (ms >= k.back().ms)
+		{
+			memcpy(out, k.back().v, sizeof(k.back().v));
+			return;
+		}
+
+		size_t i = 0;
+		while (i + 2 < k.size() && ms >= k[i + 1].ms)
+		{
+			++i;
+		}
+
+		const double t0 = k[i].ms, t1 = k[i + 1].ms, h = t1 - t0, u = (ms - t0) / h;
+		const double h00 = 2 * u * u * u - 3 * u * u + 1, h10 = u * u * u - 2 * u * u + u, h01 = -2 * u * u * u + 3 * u * u, h11 = u * u * u - u * u;
+		for (int c = 0; c < track.count; ++c)
+		{
+			const double p0 = k[i].v[c], p1 = k[i + 1].v[c];
+			const double straight = (p1 - p0) / h;
+			const double m0 = i > 0 ? (p1 - k[i - 1].v[c]) / (t1 - k[i - 1].ms) : straight;
+			const double m1 = i + 2 < k.size() ? (k[i + 2].v[c] - p0) / (k[i + 2].ms - t0) : straight;
+			out[c] = static_cast<float>(h00 * p0 + h10 * h * m0 + h01 * p1 + h11 * h * m1);
+		}
+	}
+
+	float key_button_width()
+	{
+		return ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x;
+	}
+
+	// The diamond at a row's right. Hollow: no keyframes; filled: a keyframe at the time shown; outlined
+	// in the accent colour: keyframes at other times.
+	void key_button(const char* id, const char* label, const int count, const float* values)
+	{
+		ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+		const float size = ImGui::GetFrameHeight();
+		const ImVec2 corner = ImGui::GetCursorScreenPos();
+		ImGui::PushID(id);
+		const bool pressed = ImGui::InvisibleButton("##key", {size, size});
+		const bool hovered = ImGui::IsItemHovered();
+		ImGui::PopID();
+		Track* track = track_of(id);
+		const int here = track ? key_at(*track, g_now_ms) : -1;
+		const ImVec2 middle = {corner.x + size * 0.5f, corner.y + size * 0.5f};
+		const float r = size * (hovered ? 0.30f : 0.26f);
+		const ImU32 accent = ImGui::GetColorU32(ImGuiCol_SliderGrabActive), dim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+		ImDrawList* draw = ImGui::GetWindowDrawList();
+		const ImVec2 a = {middle.x, middle.y - r}, b = {middle.x + r, middle.y}, c = {middle.x, middle.y + r}, d = {middle.x - r, middle.y};
+		if (here >= 0)
+		{
+			draw->AddQuadFilled(a, b, c, d, accent);
+		}
+		else
+		{
+			draw->AddQuad(a, b, c, d, track ? accent : dim, track ? 2.0f : 1.5f);
+		}
+
+		if (hovered)
+		{
+			ImGui::SetTooltip(here >= 0 ? "Remove this keyframe" : track ? "Add a keyframe here" : "Animate: add a keyframe here.\nWith keyframes, changing the value at another time adds one there.");
+		}
+
+		if (pressed)
+		{
+			if (here >= 0)
+			{
+				track->keys.erase(track->keys.begin() + here);
+				if (track->keys.empty())
+				{
+					g_tracks.erase(g_tracks.begin() + (track - g_tracks.data()));
+				}
+			}
+			else
+			{
+				put_key(id, label, count, values);
+			}
+		}
+	}
+
+	// A change made by hand to a setting that has keyframes is a keyframe at the time shown.
+	void key_changed(const char* id, const float* values)
+	{
+		if (Track* track = track_of(id))
+		{
+			put_key(id, track->label.c_str(), track->count, values);
+		}
+	}
+
+	void remove_track(const char* id)
+	{
+		if (const Track* track = track_of(id))
+		{
+			g_tracks.erase(g_tracks.begin() + (track - g_tracks.data()));
+		}
+	}
+
 	// While a control is held its own value is shown: the game takes a change a frame later.
 	struct Held
 	{
@@ -133,11 +322,23 @@ namespace
 		int integer = 0;
 	} g_held;
 
+	// A colour just chosen is shown as chosen for a moment: the picker reads its colour back every frame,
+	// and the game's own copy is a frame behind and rounded.
+	struct Chosen
+	{
+		float value[4] = {};
+		ULONGLONG until = 0;
+	};
+	std::map<const unsigned char*, Chosen> g_chosen;
+
 	// The control for a dvar, by its type. True if it was changed.
-	bool control(const Dvar dvar)
+	bool control(const Dvar dvar, const char* label = nullptr)
 	{
 		ImGui::PushID(dvar.at);
-		ImGui::SetNextItemWidth(-1.0f);
+		const int kind = dvar.type();
+		const bool keyable = kind == 1 || kind == 2 || kind == 3 || kind == 4 || kind == 5 || kind == 8 || kind == 9;
+		ImGui::SetNextItemWidth(keyable ? -key_button_width() : -1.0f);
+		float shown[4] = {};  // the value the row shows, for a keyframe
 		bool changed = false;
 		const unsigned char* value = dvar.current();
 		const float* limits = reinterpret_cast<const float*>(dvar.limits());
@@ -174,6 +375,7 @@ namespace
 				changed = true;
 			}
 
+			shown[0] = v;
 			if (ImGui::IsItemActive())
 			{
 				g_held.id = id;
@@ -201,6 +403,8 @@ namespace
 				changed = true;
 			}
 
+			memcpy(shown, v, sizeof(shown));
+
 			if (ImGui::IsItemActive())
 			{
 				g_held.id = id;
@@ -223,6 +427,8 @@ namespace
 				set(dvar, "%d", v);
 				changed = true;
 			}
+
+			shown[0] = static_cast<float>(v);
 
 			if (ImGui::IsItemActive())
 			{
@@ -287,33 +493,66 @@ namespace
 		case 8:
 		case 9:
 		{
+			// 8: four bytes. 9: three floats, which may be above 1 (the film tints are: 1.1 is a tint
+			// that brightens), so its numbers are shown beside the swatch and are not held to 0..1.
 			float v[4] = {value[0] / 255.0f, value[1] / 255.0f, value[2] / 255.0f, value[3] / 255.0f};
-			if (held)
+			if (type == 9)
 			{
-				memcpy(v, g_held.value, sizeof(v));
+				memcpy(v, value, sizeof(float) * 3);
+				v[3] = 1.0f;
 			}
 
-			if (ImGui::ColorEdit4("##value", v, ImGuiColorEditFlags_NoInputs | (type == 9 ? ImGuiColorEditFlags_NoAlpha : 0)))
+			const ULONGLONG tick = GetTickCount64();
+			const auto chosen = g_chosen.find(dvar.at);
+			if (chosen != g_chosen.end())
 			{
-				set(dvar, "%g %g %g %g", v[0], v[1], v[2], v[3]);
+				if (tick < chosen->second.until)
+				{
+					memcpy(v, chosen->second.value, sizeof(v));
+				}
+				else
+				{
+					g_chosen.erase(chosen);
+				}
+			}
+
+			const bool edited = type == 9
+				? ImGui::ColorEdit3("##value", v, ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR)
+				: ImGui::ColorEdit4("##value", v, ImGuiColorEditFlags_NoInputs);
+			if (edited)
+			{
+				if (type == 9)
+				{
+					set(dvar, "%g %g %g", v[0], v[1], v[2]);
+				}
+				else
+				{
+					set(dvar, "%g %g %g %g", v[0], v[1], v[2], v[3]);
+				}
+
+				Chosen& keep = g_chosen[dvar.at];
+				memcpy(keep.value, v, sizeof(v));
+				keep.until = tick + 250;
 				changed = true;
 			}
 
-			if (ImGui::IsItemActive())
-			{
-				g_held.id = id;
-				memcpy(g_held.value, v, sizeof(v));
-			}
-			else if (held)
-			{
-				g_held.id = 0;
-			}
-
+			memcpy(shown, v, sizeof(shown));
 			break;
 		}
 		default:
 			ImGui::TextDisabled("?");
 			break;
+		}
+
+		if (keyable)
+		{
+			const int count = kind == 2 ? 2 : kind == 3 || kind == 9 ? 3 : kind == 4 || kind == 8 ? 4 : 1;
+			if (changed)
+			{
+				key_changed(dvar.name(), shown);
+			}
+
+			key_button(dvar.name(), label ? label : dvar.name(), count, shown);
 		}
 
 		ImGui::PopID();
@@ -412,6 +651,9 @@ namespace
 	{
 		if (reset)
 		{
+			remove_track("sun_color");
+			remove_track("sun_brightness");
+			remove_track("sun_direction");
 			sun_reset();
 		}
 
@@ -424,29 +666,39 @@ namespace
 
 		float color[3] = {sun.color[0], sun.color[1], sun.color[2]};
 		ui_row_label("Color");
+		ImGui::SetNextItemWidth(-key_button_width());
 		if (ImGui::ColorEdit3("##sunColor", color, ImGuiColorEditFlags_NoAlpha))
 		{
 			sun_set_color(color);
+			key_changed("sun_color", color);
 		}
 
+		key_button("sun_color", "Sun color", 3, color);
 		float brightness = sun.brightness;
 		ui_row_label("Brightness");
+		ImGui::SetNextItemWidth(-key_button_width());
 		if (ImGui::DragFloat("##sunBrightness", &brightness, brightness > 20.0f ? 0.5f : 0.05f, 0.0f, 1000.0f, "%.2f"))
 		{
 			sun_set_brightness(brightness);
+			key_changed("sun_brightness", &brightness);
 		}
 
+		key_button("sun_brightness", "Sun brightness", 1, &brightness);
 		float direction[2] = {sun.pitch, sun.yaw};
 		ui_row_label("Direction");
+		ImGui::SetNextItemWidth(-key_button_width());
 		if (ImGui::DragFloat2("##sunDirection", direction, 0.25f, -720.0f, 720.0f, "%.1f"))
 		{
 			sun_set_direction(direction[0], direction[1]);
+			key_changed("sun_direction", direction);
 		}
 
 		if (ImGui::IsItemHovered())
 		{
 			ImGui::SetTooltip("Up and down, then around: where the sunlight and its shadows come from");
 		}
+
+		key_button("sun_direction", "Sun direction", 2, direction);
 	}
 
 	// ---- the HUD's parts, from the game's own menus: a script the editor installs with the game
@@ -929,6 +1181,7 @@ void look_draw_tab(const TheaterState& state)
 		{
 			for (const Entry& entry : section.entries)
 			{
+				remove_track(entry.name);
 				restore(entry.name);
 			}
 		}
@@ -944,6 +1197,9 @@ void look_draw_tab(const TheaterState& state)
 				}
 				else
 				{
+					remove_track("sun_color");
+					remove_track("sun_brightness");
+					remove_track("sun_direction");
 					sun_reset();
 				}
 			}
@@ -966,7 +1222,7 @@ void look_draw_tab(const TheaterState& state)
 
 			shown = entry.label;
 			ui_row_label(entry.label);
-			control(dvar);
+			control(dvar, entry.label);
 			if (ImGui::IsItemHovered())
 			{
 				ImGui::SetTooltip("%s", entry.name);
@@ -980,8 +1236,111 @@ void look_draw_tab(const TheaterState& state)
 	}
 }
 
+int look_track_count()
+{
+	return static_cast<int>(g_tracks.size());
+}
+
+bool look_track(const int index, LookTrack* out)
+{
+	if (index < 0 || index >= static_cast<int>(g_tracks.size()))
+	{
+		return false;
+	}
+
+	const Track& track = g_tracks[static_cast<size_t>(index)];
+	out->label = track.label.c_str();
+	out->keys = static_cast<int>(track.keys.size() > 256 ? 256 : track.keys.size());
+	for (int i = 0; i < out->keys; ++i)
+	{
+		out->ms[i] = track.keys[static_cast<size_t>(i)].ms;
+	}
+
+	return true;
+}
+
+void look_track_clear(const int index)
+{
+	if (index >= 0 && index < static_cast<int>(g_tracks.size()))
+	{
+		g_tracks.erase(g_tracks.begin() + index);
+	}
+}
+
+void look_track_remove_key(const int index, const int key)
+{
+	if (index >= 0 && index < static_cast<int>(g_tracks.size()))
+	{
+		Track& track = g_tracks[static_cast<size_t>(index)];
+		if (key >= 0 && key < static_cast<int>(track.keys.size()))
+		{
+			track.keys.erase(track.keys.begin() + key);
+			if (track.keys.empty())
+			{
+				g_tracks.erase(g_tracks.begin() + index);
+			}
+		}
+	}
+}
+
 void look_frame(const TheaterState& state)
 {
+	// the settings with keyframes: what the keyframes make of this frame's time
+	g_now_ms = state.position_ms;
+	if (state.playing)
+	{
+		for (Track& track : g_tracks)
+		{
+			float v[4] = {};
+			sample(track, state.position_exact, v);
+			if (track.id == "sun_color")
+			{
+				for (float& part : v)
+				{
+					part = part < 0.0f ? 0.0f : part;
+				}
+
+				sun_set_color(v);
+			}
+			else if (track.id == "sun_brightness")
+			{
+				sun_set_brightness(v[0] < 0.0f ? 0.0f : v[0]);
+			}
+			else if (track.id == "sun_direction")
+			{
+				sun_set_direction(v[0], v[1]);
+			}
+			else if (const Dvar dvar = find(track.id.c_str()))
+			{
+				char text[128] = {};
+				switch (dvar.type())
+				{
+				case 1: snprintf(text, sizeof(text), "%g", v[0]); break;
+				case 2: snprintf(text, sizeof(text), "%g %g", v[0], v[1]); break;
+				case 3:
+				case 9: snprintf(text, sizeof(text), "%g %g %g", v[0], v[1], v[2]); break;
+				case 4:
+				case 8: snprintf(text, sizeof(text), "%g %g %g %g", v[0], v[1], v[2], v[3]); break;
+				case 5: snprintf(text, sizeof(text), "%d", static_cast<int>(std::lround(v[0]))); break;
+				default: break;
+				}
+
+				if (text[0] && track.sent != text)
+				{
+					track.sent = text;
+					set(dvar, std::string(text));
+				}
+			}
+		}
+	}
+	else
+	{
+		for (Track& track : g_tracks)
+		{
+			track.sent.clear();
+		}
+	}
+
 	// playback over: the game's own settings again
 	if (!state.playing && !state.starting)
 	{

@@ -936,6 +936,72 @@ namespace
 			draw->AddQuadFilled({x, middle - diamond}, {x + diamond, middle}, {x, middle + diamond}, {x - diamond, middle}, u32(P.text));
 		}
 
+		// a row for each setting that has keyframes: a click on a keyframe goes to it, a right click removes it
+		static LookTrack track;
+		int clear = -1, remove_track = -1, remove_key = -1;
+		for (int t = 0; look_track(t, &track); ++t)
+		{
+			y += row;
+			if (y + frame > rows_bottom)
+			{
+				break;
+			}
+
+			draw->AddRectFilled({left, y}, {right, y + frame}, u32(P.surface));
+			ImGui::PushID(t);
+			ImGui::PushClipRect({origin.x, y}, {left - frame * 1.2f - style.ItemSpacing.x * 2.0f, y + frame}, true);
+			char name[96];
+			snprintf(name, sizeof(name), ICON_SLIDERS "  %s (%d)", track.label, track.keys);
+			draw->AddText({origin.x + g_font_size * 0.5f, y + style.FramePadding.y}, u32(P.text), name);
+			ImGui::PopClipRect();
+			ImGui::SetCursorScreenPos({left - frame * 1.2f - style.ItemSpacing.x, y});
+			if (ImGui::Button(ICON_TRASH "##clearTrack", {frame * 1.2f, frame}))
+			{
+				clear = t;
+			}
+
+			ImGui::SetItemTooltip("Remove these keyframes");
+			for (int i = 0; i < track.keys; ++i)
+			{
+				const float x = std::floor(x_of(static_cast<float>(track.ms[i]))), middle = y + frame * 0.5f;
+				ImGui::SetCursorScreenPos({x - diamond, y});
+				ImGui::PushID(i);
+				if (ImGui::InvisibleButton("##key", {diamond * 2.0f, frame}))
+				{
+					theater_seek(track.ms[i]);
+				}
+
+				const bool over = ImGui::IsItemHovered();
+				if (over && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+				{
+					remove_track = t;
+					remove_key = i;
+				}
+
+				if (over)
+				{
+					char at[32];
+					format_time(at, sizeof(at), track.ms[i]);
+					ImGui::SetTooltip("%s\nClick: go here.  Right click: remove.", at);
+				}
+
+				ImGui::PopID();
+				const float r = over ? diamond * 1.2f : diamond;
+				draw->AddQuadFilled({x, middle - r}, {x + r, middle}, {x, middle + r}, {x - r, middle}, u32(over ? P.text : P.accent));
+			}
+
+			ImGui::PopID();
+		}
+
+		if (clear >= 0)
+		{
+			look_track_clear(clear);
+		}
+		else if (remove_key >= 0)
+		{
+			look_track_remove_key(remove_track, remove_key);
+		}
+
 		// the playhead over all of it
 		const float head = std::floor(x_of(scrubbing ? scrub_ms : static_cast<float>(state.position_ms)));
 		draw->AddLine({head, origin.y}, {head, rows_bottom}, u32(P.text), 2.0f);
@@ -961,7 +1027,10 @@ namespace
 		ImGui::PopStyleVar(2);
 		draw_menu_bar(state, io.DisplaySize.x);
 		const ImVec2 room = ImGui::GetContentRegionAvail();
-		const float panel = std::floor(g_font_size * 26.0f), timeline = std::floor(g_font_size * 14.0f);
+		// (the timeline grows by a row for each setting with keyframes past the four it has room for)
+		const int more_rows = look_track_count() > 4 ? look_track_count() - 4 : 0;
+		const float grown = std::floor(g_font_size * 14.0f) + static_cast<float>(more_rows) * (ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y * 0.5f);
+		const float panel = std::floor(g_font_size * 26.0f), timeline = (std::min)(grown, std::floor(room.y * 0.5f));
 		const ImVec2 view = {room.x - panel, room.y - timeline};
 		const ImVec2 corner = ImGui::GetCursorScreenPos();
 		draw_view(camera, view);

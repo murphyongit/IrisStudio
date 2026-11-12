@@ -35,7 +35,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.33 (recorder, playback, IrisStudio's editor)";
+	constexpr char VERSION[] = "0.34 (recorder, playback, IrisStudio's editor)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -253,6 +253,16 @@ namespace
 	unsigned g_offset_count = 0;
 	bool g_have_time_offset = false;
 	std::int32_t g_time_offset = 0, g_last_snapshot_time = 0, g_pin_error = 0;
+	// A jump with time frozen. What the game shows of a moment is not that moment's snapshots alone: where
+	// an animation is in its cycle, and the smoothing of the player's own position (cg_errordecay), come
+	// from the frames before, and with time frozen they never catch up. The same moment looked different
+	// reached from before and from after (0.33). So such a jump goes to ROLL_MS before its time, always by
+	// way of the recording's start, and plays up to it at ROLL_SPEED: the same moment is then reached the
+	// same way every time. The position shown meanwhile is the one being gone to.
+	constexpr std::uint32_t ROLL_MS = 3000;
+	constexpr float ROLL_SPEED = 8.0f;
+	std::atomic<std::int64_t> g_roll_to{-1};
+	bool g_caught_up = false;
 	// a recording asked for by name (the editor's list), and when it may start
 	char g_wanted_name[128] = {};
 	std::atomic<bool> g_wanted{false};
@@ -694,6 +704,7 @@ namespace
 		g_predicted_missed = 0;
 		g_length_ms = g_records.empty() ? 0 : g_records.back().ms;
 		++g_playback_number;
+		g_roll_to = -1;
 		g_have_time_offset = false;
 		g_last_snapshot_time = 0;
 		g_offset_count = 0;
@@ -873,6 +884,28 @@ namespace
 		log_line("playback: back to %.1f s", ms / 1000.0);
 	}
 
+	void jump_to(const std::uint64_t target)
+	{
+		if (!g_paused)
+		{
+			g_roll_to = -1;
+			if (target < g_clock)
+			{
+				go_back_to(target);
+			}
+			else
+			{
+				g_clock = target;
+			}
+
+			return;
+		}
+
+		go_back_to(target > ROLL_MS ? target - ROLL_MS : 0);
+		g_caught_up = false;
+		g_roll_to = static_cast<std::int64_t>(target);
+	}
+
 	// Playback's step. On the main thread whenever the client has a message from the local match or would
 	// send its packet; from the key thread (main false) only what cannot wait for those: a start or a stop
 	// while nothing is being played.
@@ -980,34 +1013,29 @@ namespace
 				show(text);
 			}
 
+			// (from where a jump under way is going to, if there is one)
+			const std::int64_t rolling = g_roll_to;
+			const std::uint64_t place = rolling >= 0 ? static_cast<std::uint64_t>(rolling) : g_clock.load();
 			if (g_skip_request.exchange(false))
 			{
-				g_clock += SKIP_MS;
+				jump_to(place + SKIP_MS);
 				show("S1iris: 10 seconds on");
 			}
 
 			if (g_back_request.exchange(false))
 			{
-				const std::uint64_t clock = g_clock;
-				go_back_to(clock > BACK_MS ? clock - BACK_MS : 0);
+				jump_to(place > BACK_MS ? place - BACK_MS : 0);
 				show("S1iris: 10 seconds back");
 			}
 
 			if (const std::int64_t seek = g_seek_request.exchange(-1); seek >= 0)
 			{
-				const auto target = static_cast<std::uint64_t>(seek);
-				if (target < g_clock)
-				{
-					go_back_to(target);
-				}
-				else
-				{
-					g_clock = target;
-				}
+				jump_to(static_cast<std::uint64_t>(seek));
 			}
 
 			if (g_restart_request.exchange(false))
 			{
+				g_roll_to = -1;
 				go_back_to(0);
 				show("S1iris: from the start");
 			}
@@ -1093,6 +1121,9 @@ namespace
 		{
 			return;
 		}
+
+		g_caught_up = state == CA_ACTIVE && !g_need_snapshot &&
+			(g_next_record >= g_records.size() || g_records[g_next_record].ms + BEHIND_MS > due);
 
 		if (now - g_play_report > 5000)
 		{
@@ -1276,6 +1307,35 @@ namespace
 		if (g_play != Play::Playing)
 		{
 			return g_original_time_scale_msec(msec);
+		}
+
+		// a jump made with time frozen: played up to its time
+		if (const std::int64_t roll = g_roll_to; roll >= 0)
+		{
+			const std::uint64_t clock = g_clock;
+			if (clock >= static_cast<std::uint64_t>(roll))
+			{
+				g_roll_to = -1;
+			}
+			else if (!g_caught_up || msec <= 0)
+			{
+				pin_client_time(0);
+				return 0;
+			}
+			else
+			{
+				int step = static_cast<int>(static_cast<float>(msec > 50 ? 50 : msec) * ROLL_SPEED);
+				if (clock + static_cast<std::uint64_t>(step) >= static_cast<std::uint64_t>(roll))
+				{
+					step = static_cast<int>(static_cast<std::uint64_t>(roll) - clock);
+					g_roll_to = -1;
+				}
+
+				g_clock = clock + static_cast<std::uint64_t>(step);
+				g_clock_fraction = 0.0f;
+				pin_client_time(step);
+				return step;
+			}
 		}
 
 		if (g_paused || msec <= 0)
@@ -2143,10 +2203,11 @@ TheaterState theater_state()
 	state.starting = g_play == Play::Starting;
 	state.paused = g_paused;
 	state.speed = SPEEDS[g_speed];
-	state.position_ms = static_cast<std::uint32_t>(g_clock.load());
+	const std::int64_t roll = g_roll_to;
+	state.position_ms = static_cast<std::uint32_t>(roll >= 0 ? static_cast<std::uint64_t>(roll) : g_clock.load());
 	state.length_ms = g_length_ms;
-	state.position_exact = static_cast<double>(g_clock.load()) + g_clock_fraction;
-	state.settled = g_settled;
+	state.position_exact = roll >= 0 ? static_cast<double>(roll) : static_cast<double>(g_clock.load()) + g_clock_fraction;
+	state.settled = g_settled && roll < 0;
 	state.capture_fps = g_capture_fps;
 	strncpy_s(state.name, g_shown_name, _TRUNCATE);
 	strncpy_s(state.map, g_shown_map, _TRUNCATE);
