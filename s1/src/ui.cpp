@@ -1230,6 +1230,7 @@ namespace
 
 		f3_was_down = f3;
 		look_frame(state);
+		sky_frame(g_device, g_context, state);
 		if (!state.playing)
 		{
 			g_hidden = false;

@@ -35,7 +35,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.34 (recorder, playback, IrisStudio's editor)";
+	constexpr char VERSION[] = "0.35 (recorder, playback, IrisStudio's editor)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -665,6 +665,8 @@ namespace
 		g_records.clear();
 		g_records.shrink_to_fit();
 		g_predicted.clear();
+		// (the map is let go of next: the sky's picture is the game's own again first)
+		sky_put_back_now();
 		command("disconnect\n");
 	}
 
@@ -1649,6 +1651,7 @@ namespace
 		va_start(args, format);
 		vsnprintf(text, sizeof(text) - 1, format ? format : "", args);
 		va_end(args);
+		sky_put_back_now();
 		// with where it was raised from: the same text is raised from many places
 		char from[512] = "";
 		size_t length = 0;
@@ -2246,6 +2249,87 @@ void theater_set_paused(const bool paused)
 	if (g_paused != paused)
 	{
 		g_pause_request = true;
+	}
+}
+
+namespace
+{
+	constexpr std::uintptr_t DB_ENUM_XASSETS = 0x14026EC80;  // s1-mod: DB_EnumXAssets_Internal
+	constexpr int ASSET_GFX_WORLD = 31;
+
+	struct WorldsFound
+	{
+		void* at[8];
+		int count;
+	};
+
+	void take_world(void* header, void* data)
+	{
+		auto* found = static_cast<WorldsFound*>(data);
+		if (found->count < 8)
+		{
+			found->at[found->count++] = header;
+		}
+	}
+}
+
+int theater_sky_images(void** out, const int max, char* world, const size_t size)
+{
+	__try
+	{
+		WorldsFound found;
+		found.count = 0;
+		reinterpret_cast<void (*)(int, void (*)(void*, void*), const void*, bool)>(DB_ENUM_XASSETS)(ASSET_GFX_WORLD, take_world, &found, false);
+		for (int w = 0; w < found.count; ++w)
+		{
+			const auto* at = static_cast<const unsigned char*>(found.at[w]);
+			if (IsBadReadPtr(at, 0x30))
+			{
+				continue;
+			}
+
+			const char* name = *reinterpret_cast<const char* const*>(at);
+			const std::int32_t count = *reinterpret_cast<const std::int32_t*>(at + 0x20);
+			const auto* skies = *reinterpret_cast<const unsigned char* const*>(at + 0x28);
+			if (count < 1 || count > 16 || IsBadReadPtr(skies, 56))
+			{
+				log_line("sky: world %d of %d has %d skies at %p (not taken)", w, found.count, count, skies);
+				continue;
+			}
+
+			int taken = 0;
+			for (int i = 0; i < count && taken < max; ++i)
+			{
+				if (IsBadReadPtr(skies + i * 56, 56))
+				{
+					break;
+				}
+
+				void* image = *reinterpret_cast<void* const*>(skies + i * 56 + 0x10);
+				if (image && !IsBadReadPtr(image, 0x68))
+				{
+					out[taken++] = image;
+				}
+			}
+
+			if (name && !IsBadReadPtr(name, 1))
+			{
+				strncpy_s(world, size, name, _TRUNCATE);
+			}
+
+			log_line("sky: world %s has %d skies, %d images taken", world, count, taken);
+			if (taken > 0)
+			{
+				return taken;
+			}
+		}
+
+		return found.count ? 0 : -1;
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		log_line("sky: a fault looking for the map's sky");
+		return -2;
 	}
 }
 

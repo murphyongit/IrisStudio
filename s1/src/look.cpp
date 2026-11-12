@@ -625,6 +625,22 @@ namespace
 		  {"Medium tint", "r_filmTweakMediumTint"},
 		  {"Dark tint", "r_filmTweakDarkTint"},
 		  {"Invert", "r_filmTweakInvert"}}},
+		// How finely models are drawn. The game smooths some models by subdividing them (r_subdiv,
+		// r_adaptiveSubdiv) and swaps to coarser ones with distance (the rest).
+		{ICON_PERSON, "Models", false,
+		 {{"Detail level", "r_forceLod"},
+		  {"Detail kept longer, characters", "r_lodBiasSkinned"},
+		  {"Detail kept longer, objects", "r_lodBiasRigid"},
+		  {"Detail falloff, characters", "r_lodScaleSkinned"},
+		  {"Detail falloff, objects", "r_lodScaleRigid"},
+		  {"Smoothing (subdivision)", "r_subdiv"},
+		  {"Smoothing, which models", "r_adaptiveSubdiv"},
+		  {"Smoothing steps", "r_subdivLimit"},
+		  {"Smoothing patches", "r_subdivPatchCount"},
+		  {"Smoothing by distance", "r_adaptiveSubdivBaseFactor"},
+		  {"Surface relief", "r_tessellation"},
+		  {"Surface relief amount", "r_tessellationFactor"},
+		  {"Surface relief distance", "r_tessellationCutoffDistance"}}},
 		{ICON_WAND, "Effects", false,
 		 {{"Effects", "fx_enable"},
 		  {"Draw effects", "fx_draw"},
@@ -699,6 +715,77 @@ namespace
 		}
 
 		key_button("sun_direction", "Sun direction", 2, direction);
+	}
+
+	// The sky's picture (sky.cpp): colour and turning.
+	void draw_sky(const bool reset)
+	{
+		static const char* const TRACKS[] = {"sky_hue", "sky_saturation", "sky_brightness", "sky_turn"};
+		if (reset)
+		{
+			for (const char* track : TRACKS)
+			{
+				remove_track(track);
+			}
+
+			sky_reset();
+		}
+
+		SkyState sky = sky_state();
+		if (sky.failed)
+		{
+			ImGui::PushTextWrapPos(0.0f);
+			ImGui::TextDisabled("This map's sky picture could not be found, so it cannot be changed here. The log says what was seen.");
+			ImGui::PopTextWrapPos();
+			return;
+		}
+
+		bool changed = false;
+		ui_row_label("Hue");
+		ImGui::SetNextItemWidth(-key_button_width());
+		if (ImGui::SliderFloat("##skyHue", &sky.hsv[0], -180.0f, 180.0f, "%.0f deg"))
+		{
+			changed = true;
+			key_changed("sky_hue", &sky.hsv[0]);
+		}
+
+		key_button("sky_hue", "Sky hue", 1, &sky.hsv[0]);
+		ui_row_label("Saturation");
+		ImGui::SetNextItemWidth(-key_button_width());
+		if (ImGui::SliderFloat("##skySaturation", &sky.hsv[1], 0.0f, 3.0f, "%.2f"))
+		{
+			changed = true;
+			key_changed("sky_saturation", &sky.hsv[1]);
+		}
+
+		key_button("sky_saturation", "Sky saturation", 1, &sky.hsv[1]);
+		ui_row_label("Brightness");
+		ImGui::SetNextItemWidth(-key_button_width());
+		if (ImGui::SliderFloat("##skyValue", &sky.hsv[2], 0.0f, 4.0f, "%.2f"))
+		{
+			changed = true;
+			key_changed("sky_brightness", &sky.hsv[2]);
+		}
+
+		key_button("sky_brightness", "Sky brightness", 1, &sky.hsv[2]);
+		ui_row_label("Rotation");
+		ImGui::SetNextItemWidth(-key_button_width());
+		if (ImGui::DragFloat3("##skyTurn", sky.turn, 0.5f, -720.0f, 720.0f, "%.1f"))
+		{
+			changed = true;
+			key_changed("sky_turn", sky.turn);
+		}
+
+		if (ImGui::IsItemHovered())
+		{
+			ImGui::SetTooltip("Around, then the two tilts. The sun in the sky and the light on the map stay where they are.");
+		}
+
+		key_button("sky_turn", "Sky rotation", 3, sky.turn);
+		if (changed)
+		{
+			sky_set(sky.hsv, sky.turn);
+		}
 	}
 
 	// ---- the HUD's parts, from the game's own menus: a script the editor installs with the game
@@ -930,6 +1017,12 @@ namespace
 			fprintf(file, "sun_direction %g %g\n", sun.pitch, sun.yaw);
 		}
 
+		const SkyState sky = sky_state();
+		if (sky.changed)
+		{
+			fprintf(file, "sky %g %g %g %g %g %g\n", sky.hsv[0], sky.hsv[1], sky.hsv[2], sky.turn[0], sky.turn[1], sky.turn[2]);
+		}
+
 		fclose(file);
 		return true;
 	}
@@ -944,6 +1037,7 @@ namespace
 
 		std::set<std::string> in_preset;
 		sun_reset();
+		sky_reset();
 		char line[512];
 		while (fgets(line, sizeof(line), file))
 		{
@@ -974,6 +1068,10 @@ namespace
 			else if (sscanf_s(line, "sun_direction %f %f", &a, &b) == 2)
 			{
 				sun_set_direction(a, b);
+			}
+			else if (float s[6] = {}; sscanf_s(line, "sky %f %f %f %f %f %f", &s[0], &s[1], &s[2], &s[3], &s[4], &s[5]) == 6)
+			{
+				sky_set(s, s + 3);
 			}
 		}
 
@@ -1164,6 +1262,26 @@ void look_draw_tab(const TheaterState& state)
 
 	for (const Section& section : SECTIONS)
 	{
+		// (the Sky section comes after the Sun's)
+		if (strcmp(section.label, "Lighting") == 0)
+		{
+			reset = false;
+			const bool sky_open = ui_section(ICON_CLOUD, "Sky", &reset, false);
+			if (sky_open)
+			{
+				draw_sky(reset);
+			}
+			else if (reset)
+			{
+				for (const char* track : {"sky_hue", "sky_saturation", "sky_brightness", "sky_turn"})
+				{
+					remove_track(track);
+				}
+
+				sky_reset();
+			}
+		}
+
 		bool any = false;
 		for (const Entry& entry : section.entries)
 		{
@@ -1310,6 +1428,28 @@ void look_frame(const TheaterState& state)
 			{
 				sun_set_direction(v[0], v[1]);
 			}
+			else if (track.id.compare(0, 4, "sky_") == 0)
+			{
+				SkyState sky = sky_state();
+				if (track.id == "sky_hue")
+				{
+					sky.hsv[0] = v[0];
+				}
+				else if (track.id == "sky_saturation")
+				{
+					sky.hsv[1] = v[0] < 0.0f ? 0.0f : v[0];
+				}
+				else if (track.id == "sky_brightness")
+				{
+					sky.hsv[2] = v[0] < 0.0f ? 0.0f : v[0];
+				}
+				else
+				{
+					memcpy(sky.turn, v, sizeof(sky.turn));
+				}
+
+				sky_set(sky.hsv, sky.turn);
+			}
 			else if (const Dvar dvar = find(track.id.c_str()))
 			{
 				char text[128] = {};
@@ -1354,6 +1494,7 @@ void look_frame(const TheaterState& state)
 		}
 
 		sun_reset();
+		sky_reset();
 		if (g_hud_touched)
 		{
 			g_hud_touched = false;

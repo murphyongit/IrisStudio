@@ -115,3 +115,21 @@ void sun_set_brightness(float brightness);
 void sun_set_direction(float pitch, float yaw);
 void sun_reset();
 void sun_start();
+
+// sky.cpp: the sky's picture changed (hue in degrees, saturation and brightness as factors) and turned
+// (degrees around the engine's up, then the two axes across).
+struct SkyState
+{
+	bool known = false, failed = false, changed = false;
+	float hsv[3] = {0.0f, 1.0f, 1.0f}, turn[3] = {};
+};
+
+SkyState sky_state();
+void sky_set(const float hsv[3], const float turn[3]);
+void sky_reset();
+void sky_put_back_now();
+struct ID3D11Device;
+struct ID3D11DeviceContext;
+void sky_frame(ID3D11Device* device, ID3D11DeviceContext* context, const TheaterState& state);
+// The images of the loaded map's skies (the map's name into world): how many, or less than 1 if none.
+int theater_sky_images(void** out, int max, char* world, size_t size);
