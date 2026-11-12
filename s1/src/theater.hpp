@@ -13,6 +13,7 @@ struct TheaterState
 	float capture_fps = 0.0f;    // recording to video at this rate (0: not)
 	float speed = 1.0f;
 	std::uint32_t position_ms = 0, length_ms = 0;
+	double position_exact = 0.0;  // the position with the part of a millisecond playback keeps
 	char name[96] = {}, map[64] = {};
 };
 
@@ -81,3 +82,20 @@ void camera_set_body(bool on);
 // Playback is over: the game's own view settings again.
 void camera_playback_ended();
 void camera_start();
+
+// The sun as a light (sun.cpp): its colour, brightness and direction, through the engine's own overrides.
+struct SunState
+{
+	bool known = false;                  // the map has a sun and it has been seen
+	float color[3] = {1.0f, 1.0f, 1.0f};
+	float brightness = 1.0f;
+	float pitch = 0.0f, yaw = 0.0f;
+	bool changed = false;
+};
+
+SunState sun_state();
+void sun_set_color(const float color[3]);
+void sun_set_brightness(float brightness);
+void sun_set_direction(float pitch, float yaw);
+void sun_reset();
+void sun_start();

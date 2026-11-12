@@ -333,43 +333,17 @@ namespace
 		std::vector<Entry> entries;
 	};
 
-	// IrisStudio's Look sections, with the settings Advanced Warfare's engine family has for each.
+	// IrisStudio's Look sections, with the settings of Advanced Warfare's that were found to act (0.30
+	// listed every candidate; those that did nothing in the game, or broke the picture, are gone: the
+	// sun's own flare settings (r_sun_from_dvars turned the sun into a missing texture), the sky fog, the
+	// light strengths and r_zfar). The Sun section's light is sun.cpp's.
 	const Section SECTIONS[] = {
 		{ICON_SUN, "Sun", true,
-		 {{"Sun", "r_drawSun"},
-		  {"Sunlight", "r_lightTweakSunLight"},
-		  {"Sun color", "r_lightTweakSunColor"},
-		  {"Sun direction", "r_lightTweakSunDirection"},
-		  {"Use the sun's settings below", "r_sun_from_dvars"},
-		  {"Sun size", "r_sunsprite_size"},
-		  {"Sun position", "r_sun_fx_position"},
-		  {"Flare brightness", "r_sunflare_max_alpha"},
-		  {"Flare smallest", "r_sunflare_min_size"},
-		  {"Flare largest", "r_sunflare_max_size"},
-		  {"Glare", "r_sunglare_max_lighten"},
-		  {"Blinding", "r_sunblind_max_darken"},
+		 {{"Sun in the sky", "r_drawSun"},
 		  {"Sun shadows", "sm_sunEnable"},
-		  {"Sun shadow softness", "sm_sunFilterRadius"},
-		  {"Sun shadow scale", "sm_sunShadowScale"}}},
-		{ICON_CLOUD, "Sky", true,
-		 {{"Sky brightness", "r_hdrSkyIntensity"},
-		  {"Sky tint", "r_hdrSkyColorTint"},
-		  {"Use the sky fog below", "r_skyFogUseTweaks"},
-		  {"Sky fog", "r_sky_fog_intensity"},
-		  {"Sky fog from angle", "r_sky_fog_min_angle"},
-		  {"Sky fog to angle", "r_sky_fog_max_angle"}}},
+		  {"Sun shadow softness", "sm_sunFilterRadius"}}},
 		{ICON_LIGHTBULB, "Lighting", false,
 		 {{"Shadows", "sm_enable"},
-		  {"Spotlight shadows", "sm_spotEnable"},
-		  {"Use the light strengths below", "r_primaryLightUseTweaks"},
-		  {"Light diffuse", "r_primaryLightTweakDiffuseStrength"},
-		  {"Light specular", "r_primaryLightTweakSpecularStrength"},
-		  {"Use the light grid below", "r_lightGridEnableTweaks"},
-		  {"Light grid brightness", "r_lightGridIntensity"},
-		  {"Light grid contrast", "r_lightGridContrast"},
-		  {"Diffuse scale", "r_diffuseColorScale"},
-		  {"Specular scale", "r_specularColorScale"},
-		  {"Reflection sun", "r_envMapSunIntensity"},
 		  {"Without lighting", "r_fullbright"},
 		  {"Glow", "r_veil"},
 		  {"Use the glow strength below", "r_veilUseTweaks"},
@@ -377,11 +351,7 @@ namespace
 		  {"Ambient occlusion", "r_ssao"},
 		  {"Use the occlusion strength below", "r_ssaoUseTweaks"},
 		  {"Occlusion strength", "r_ssaoStrength"}}},
-		{ICON_CLOUD, "Fog", false,
-		 {{"Fog", "r_fog"},
-		  {"Fog exposure", "r_fog_ev_adjust"},
-		  {"Fog on the gun", "r_fog_depthhack_scale"},
-		  {"Far distance", "r_zfar"}}},
+		{ICON_CLOUD, "Fog", false, {{"Fog", "r_fog"}}},
 		{ICON_EYE, "Depth of Field", false,
 		 {{"Depth of field", "r_dof_enable"},
 		  {"Use the values below", "r_dof_tweak"},
@@ -413,15 +383,7 @@ namespace
 		  {"Light tint", "r_filmTweakLightTint"},
 		  {"Medium tint", "r_filmTweakMediumTint"},
 		  {"Dark tint", "r_filmTweakDarkTint"},
-		  {"Invert", "r_filmTweakInvert"},
-		  {"Exposure: use the values below", "r_tonemapUseTweaks"},
-		  {"Automatic exposure", "r_tonemapAuto"},
-		  {"Exposure", "r_tonemapExposure"},
-		  {"Exposure adjust", "r_tonemapExposureAdjust"},
-		  {"Brightness (screen)", "r_brightness"},
-		  {"Contrast (screen)", "r_contrast"},
-		  {"Desaturation (screen)", "r_desaturation"},
-		  {"Blur (screen)", "r_blur"}}},
+		  {"Invert", "r_filmTweakInvert"}}},
 		{ICON_WAND, "Effects", false,
 		 {{"Effects", "fx_enable"},
 		  {"Draw effects", "fx_draw"},
@@ -433,7 +395,6 @@ namespace
 		  {"Motion blur", "r_mbEnable"},
 		  {"Blood", "cg_blood"},
 		  {"Shell casings", "cg_brass"},
-		  {"Tracers", "cg_tracerLength"},
 		  {"Field of view (first person)", "cg_fov"},
 		  {"Field of view scale", "cg_fovScale"},
 		  {"Gun forward", "cg_gun_x"},
@@ -441,12 +402,50 @@ namespace
 		  {"Gun up", "cg_gun_z"}}},
 	};
 
-	const Entry HUD_SETTINGS[] = {{"2D Elements (F3)", "cg_draw2D"},          {"Gun", "cg_drawGun"},
-	                              {"Crosshair", "cg_drawCrosshair"},          {"Names over players", "cg_drawFriendlyNames"},
-	                              {"Names under the crosshair", "cg_drawCrosshairNames"},
-	                              {"Killfeed", "ui_hud_obituaries"},          {"Hardcore HUD", "ui_hud_hardcore"},
-	                              {"HUD sways with the view", "lui_hud_motion_enabled"},
-	                              {"FPS counter", "cg_drawFPS"}};
+	const Entry HUD_SETTINGS[] = {{"2D Elements (F3)", "cg_draw2D"}, {"Gun", "cg_drawGun"}, {"Names over players", "cg_drawFriendlyNames"},
+	                              {"Killfeed", "ui_hud_obituaries"}};
+
+	// The sun as a light, as IrisStudio's Sun section has it: colour, brightness, direction.
+	void draw_sun_light(const bool reset)
+	{
+		if (reset)
+		{
+			sun_reset();
+		}
+
+		const SunState sun = sun_state();
+		if (!sun.known)
+		{
+			ImGui::TextDisabled("This map's sun light has not been seen yet.");
+			return;
+		}
+
+		float color[3] = {sun.color[0], sun.color[1], sun.color[2]};
+		ui_row_label("Color");
+		if (ImGui::ColorEdit3("##sunColor", color, ImGuiColorEditFlags_NoAlpha))
+		{
+			sun_set_color(color);
+		}
+
+		float brightness = sun.brightness;
+		ui_row_label("Brightness");
+		if (ImGui::DragFloat("##sunBrightness", &brightness, brightness > 20.0f ? 0.5f : 0.05f, 0.0f, 1000.0f, "%.2f"))
+		{
+			sun_set_brightness(brightness);
+		}
+
+		float direction[2] = {sun.pitch, sun.yaw};
+		ui_row_label("Direction");
+		if (ImGui::DragFloat2("##sunDirection", direction, 0.25f, -720.0f, 720.0f, "%.1f"))
+		{
+			sun_set_direction(direction[0], direction[1]);
+		}
+
+		if (ImGui::IsItemHovered())
+		{
+			ImGui::SetTooltip("Up and down, then around: where the sunlight and its shadows come from");
+		}
+	}
 
 	// ---- the HUD's parts, from the game's own menus: a script the editor installs with the game
 	// (s1x\ui_scripts\s1iris) lists the parts of the match HUD in dvars (s1iris_hud_count, s1iris_hud_0
@@ -510,41 +509,102 @@ namespace
 			return;
 		}
 
-		ImGui::Spacing();
-		ImGui::TextDisabled("Parts of the HUD (the game's own names)");
+		struct Part
+		{
+			int depth;
+			std::string name;
+		};
+		std::vector<Part> parts;
 		for (int i = 0; i < count && i < 160; ++i)
 		{
 			char dvar_name[40];
 			snprintf(dvar_name, sizeof(dvar_name), "s1iris_hud_%d", i);
 			const std::string line = dvar_string(dvar_name);
 			const size_t space = line.find(' ');
-			if (space == std::string::npos)
+			if (space != std::string::npos)
 			{
-				continue;
+				parts.push_back({atoi(line.c_str()), line.substr(space + 1)});
+			}
+		}
+
+		// (the list goes to the log once, to name the parts by)
+		static int logged = 0;
+		if (logged != static_cast<int>(parts.size()))
+		{
+			logged = static_cast<int>(parts.size());
+			std::string all;
+			for (const Part& part : parts)
+			{
+				all += (all.empty() ? "" : ", ") + part.name;
+				if (all.size() > 1500)
+				{
+					ui_log("hud parts: %s", all.c_str());
+					all.clear();
+				}
 			}
 
-			const int depth = atoi(line.c_str());
-			const std::string name = line.substr(space + 1);
-			bool shown = !g_hud_hidden.count(name);
-			ImGui::PushID(i);
-			ImGui::Indent(depth * ui_font_size() * 0.8f + 0.01f);
-			ui_row_label(name.c_str());
-			if (ImGui::Checkbox("##shown", &shown))
-			{
-				if (shown)
-				{
-					g_hud_hidden.erase(name);
-				}
-				else
-				{
-					g_hud_hidden.insert(name);
-				}
+			ui_log("hud parts: %s", all.c_str());
+		}
 
-				send_hud_hidden();
+		auto toggle = [&](const std::string& name, bool shown) {
+			if (shown)
+			{
+				g_hud_hidden.erase(name);
+			}
+			else
+			{
+				g_hud_hidden.insert(name);
 			}
 
-			ImGui::Unindent(depth * ui_font_size() * 0.8f + 0.01f);
-			ImGui::PopID();
+			send_hud_hidden();
+		};
+
+		// the parts that have been matched to what they are
+		static const struct { const char* label; const char* part; } KNOWN[] = {{"Minimap", "wrapper_for_minimapHud"}};
+		for (const auto& known : KNOWN)
+		{
+			for (const Part& part : parts)
+			{
+				const size_t dot = part.name.rfind('.');
+				if ((dot == std::string::npos ? part.name : part.name.substr(dot + 1)) == known.part)
+				{
+					bool shown = !g_hud_hidden.count(part.name);
+					ui_row_label(known.label);
+					ImGui::PushID(known.part);
+					if (ImGui::Checkbox("##shown", &shown))
+					{
+						toggle(part.name, shown);
+					}
+
+					ImGui::PopID();
+					break;
+				}
+			}
+		}
+
+		// every part by the game's own name, out of the way
+		char label[64];
+		snprintf(label, sizeof(label), "All HUD parts (%d)", static_cast<int>(parts.size()));
+		if (ImGui::TreeNodeEx(label, ImGuiTreeNodeFlags_SpanAvailWidth))
+		{
+			int index = 0;
+			for (const Part& part : parts)
+			{
+				bool shown = !g_hud_hidden.count(part.name);
+				const size_t dot = part.name.rfind('.');
+				ImGui::PushID(index++);
+				ImGui::Indent(part.depth * ui_font_size() * 0.8f + 0.01f);
+				ui_row_label(dot == std::string::npos ? part.name.c_str() : part.name.c_str() + dot + 1);
+				if (ImGui::Checkbox("##shown", &shown))
+				{
+					toggle(part.name, shown);
+				}
+
+				ImGui::Unindent(part.depth * ui_font_size() * 0.8f + 0.01f);
+				ImGui::PopID();
+			}
+
+			ImGui::TreePop();
 		}
 	}
 
@@ -669,6 +729,22 @@ void look_draw_tab(const TheaterState& state)
 			}
 		}
 
+		const bool sun = strcmp(section.label, "Sun") == 0;
+		if (sun && (open || reset))
+		{
+			if (reset || open)
+			{
+				if (open)
+				{
+					draw_sun_light(reset);
+				}
+				else
+				{
+					sun_reset();
+				}
+			}
+		}
+
 		if (!open)
 		{
 			continue;
@@ -714,6 +790,7 @@ void look_frame(const TheaterState& state)
 			}
 		}
 
+		sun_reset();
 		if (g_hud_touched)
 		{
 			g_hud_touched = false;

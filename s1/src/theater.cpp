@@ -26,13 +26,15 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <intrin.h>
+#include <share.h>
 #include <mutex>
 #include <string>
 #include <vector>
 
 namespace
 {
-	constexpr char VERSION[] = "0.30 (recorder, playback, IrisStudio's editor)";
+	constexpr char VERSION[] = "0.31 (recorder, playback, IrisStudio's editor)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -1482,7 +1484,27 @@ namespace
 		va_start(args, format);
 		vsnprintf(text, sizeof(text) - 1, format ? format : "", args);
 		va_end(args);
-		log_line("GAME ERROR (kind %d): %s", code, text);
+		// with where it was raised from: the same text is raised from many places
+		char from[512] = "";
+		size_t length = 0;
+		const auto* stack = static_cast<const std::uint64_t*>(_AddressOfReturnAddress());
+		for (int i = 0, found = 0; i < 300 && found < 14; ++i)
+		{
+			std::uint64_t value = 0;
+			if (!read_bytes(reinterpret_cast<std::uint64_t>(stack + i), &value, sizeof(value)))
+			{
+				break;
+			}
+
+			if (value >= 0x140001000ull && value < 0x1407E9000ull)
+			{
+				length += sprintf_s(from + length, sizeof(from) - length, " %llX", value);
+				++found;
+			}
+		}
+
+		log_line("GAME ERROR (kind %d): %s; playback %d at %.2f s%s, connection state %d; from:%s", code, text, static_cast<int>(g_play.load()),
+		         g_clock.load() / 1000.0, g_paused ? " (paused)" : "", connection_state(), from);
 		g_original_com_error(code, "%s", text);
 	}
 
@@ -1986,6 +2008,7 @@ namespace
 				log_line("hook: the game's errors %s", errors ? "are written here" : "are NOT written here");
 				ui_start();
 				camera_start();
+				sun_start();
 				if (HANDLE thread = CreateThread(nullptr, 0, &keys, nullptr, 0, nullptr))
 				{
 					CloseHandle(thread);
@@ -2017,6 +2040,7 @@ TheaterState theater_state()
 	state.speed = SPEEDS[g_speed];
 	state.position_ms = static_cast<std::uint32_t>(g_clock.load());
 	state.length_ms = g_length_ms;
+	state.position_exact = static_cast<double>(g_clock.load()) + g_clock_fraction;
 	state.settled = g_settled;
 	state.capture_fps = g_capture_fps;
 	strncpy_s(state.name, g_shown_name, _TRUNCATE);
@@ -2114,7 +2138,16 @@ void theater_start(const HMODULE self)
 	CreateDirectoryA(g_folder, nullptr);
 	char log_path[MAX_PATH];
 	sprintf_s(log_path, "%s\\s1iris.log", g_folder);
-	fopen_s(&g_log, log_path, "a");
+	// a long log starts over (the last one is kept beside it); it can be read while the game runs
+	WIN32_FILE_ATTRIBUTE_DATA log_info{};
+	if (GetFileAttributesExA(log_path, GetFileExInfoStandard, &log_info) && (log_info.nFileSizeHigh || log_info.nFileSizeLow > 600000))
+	{
+		char previous[MAX_PATH];
+		sprintf_s(previous, "%s\\s1iris_previous.log", g_folder);
+		MoveFileExA(log_path, previous, MOVEFILE_REPLACE_EXISTING);
+	}
+
+	g_log = _fsopen(log_path, "a", _SH_DENYNO);
 	InitializeCriticalSection(&g_lock);
 	InitializeCriticalSection(&g_play_lock);
 	log_line("---- S1iris %s loaded ----", VERSION);

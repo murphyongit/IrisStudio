@@ -152,14 +152,15 @@ namespace
 		(void)gun;
 	}
 
-	float catmull(const float a, const float b, const float c, const float d, const float t)
-	{
-		return 0.5f * ((2.0f * b) + (-a + c) * t + (2.0f * a - 5.0f * b + 4.0f * c - d) * t * t + (-a + 3.0f * b - 3.0f * c + d) * t * t * t);
-	}
-
-	// The camera on the path at a time of the recording. The points are in time order and their angles
-	// have been made to run on without a jump of a full turn.
-	Pose sample_path(const std::vector<Point>& points, const std::uint32_t ms)
+	// The camera on the path at a time of the recording (in milliseconds, with the part of one). The
+	// points are in time order and their angles have been made to run on without a jump of a full turn.
+	//
+	// Between two points the path is a cubic that leaves the first and arrives at the second at the
+	// speeds the points have, and a point's speed is that from the point before it to the one after,
+	// over the time between those two. So the camera's speed has no jump at a point however unevenly
+	// the points are spaced in time. (0.23 to 0.30 took each stretch as a Catmull-Rom curve run through
+	// evenly: with one stretch a second long and the next a tenth, the camera sped up tenfold at the point.)
+	Pose sample_path(const std::vector<Point>& points, const double ms)
 	{
 		if (ms <= points.front().ms)
 		{
@@ -177,20 +178,35 @@ namespace
 			++i;
 		}
 
-		const Pose& p1 = points[i].pose;
-		const Pose& p2 = points[i + 1].pose;
-		const Pose& p0 = i > 0 ? points[i - 1].pose : p1;
-		const Pose& p3 = i + 2 < points.size() ? points[i + 2].pose : p2;
-		const float span = static_cast<float>(points[i + 1].ms - points[i].ms);
-		const float t = span > 0.0f ? (ms - points[i].ms) / span : 0.0f;
+		const Point& a = points[i];
+		const Point& b = points[i + 1];
+		const Point& before = i > 0 ? points[i - 1] : a;
+		const Point& after = i + 2 < points.size() ? points[i + 2] : b;
+		const float span = static_cast<float>(b.ms - a.ms);
+		if (span <= 0.0f)
+		{
+			return b.pose;
+		}
+
+		const float t = static_cast<float>((ms - a.ms) / span);
+		const float t2 = t * t, t3 = t2 * t;
+		const float h00 = 2 * t3 - 3 * t2 + 1, h10 = t3 - 2 * t2 + t, h01 = -2 * t3 + 3 * t2, h11 = t3 - t2;
+		const float span_a = static_cast<float>(b.ms - before.ms), span_b = static_cast<float>(after.ms - a.ms);
+		auto curve = [&](const float p0, const float p1, const float p2, const float p3) {
+			// the speeds at a and at b, per millisecond
+			const float speed_a = span_a > 0.0f ? (p2 - p0) / span_a : 0.0f;
+			const float speed_b = span_b > 0.0f ? (p3 - p1) / span_b : 0.0f;
+			return h00 * p1 + h10 * span * speed_a + h01 * p2 + h11 * span * speed_b;
+		};
+
 		Pose pose;
 		for (int k = 0; k < 3; ++k)
 		{
-			pose.origin[k] = catmull(p0.origin[k], p1.origin[k], p2.origin[k], p3.origin[k], t);
-			pose.angles[k] = catmull(p0.angles[k], p1.angles[k], p2.angles[k], p3.angles[k], t);
+			pose.origin[k] = curve(before.pose.origin[k], a.pose.origin[k], b.pose.origin[k], after.pose.origin[k]);
+			pose.angles[k] = curve(before.pose.angles[k], a.pose.angles[k], b.pose.angles[k], after.pose.angles[k]);
 		}
 
-		pose.fov = catmull(p0.fov, p1.fov, p2.fov, p3.fov, t);
+		pose.fov = curve(before.pose.fov, a.pose.fov, b.pose.fov, after.pose.fov);
 		return pose;
 	}
 
@@ -419,7 +435,7 @@ namespace
 
 		if (follow)
 		{
-			g_pose = sample_path(g_points, state.position_ms);
+			g_pose = sample_path(g_points, state.position_exact);
 			g_have_pose = true;
 		}
 
