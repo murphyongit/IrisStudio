@@ -276,7 +276,7 @@ namespace
 
 	const struct { CameraMode mode; const char* label; const char* title; bool built; } MODES[] = {
 		{CameraMode::FirstPerson, "First person", "First Person Camera", true},
-		{CameraMode::ThirdPerson, "Third person", "Third Person Camera", false},
+		{CameraMode::ThirdPerson, "Third person", "Third Person Camera", true},
 		{CameraMode::Free, "Free", "Free Camera", true},
 		{CameraMode::Orbit, "Orbit", "Orbit Camera", false},
 		{CameraMode::Dolly, "Dolly", "Dolly Camera", true},
@@ -319,6 +319,11 @@ namespace
 				camera_add_point();
 			}
 
+			if (ImGui::MenuItem("Go to the first campath node", nullptr, false, camera_state().points > 0))
+			{
+				theater_seek(camera_state().point_ms[0]);
+			}
+
 			if (ImGui::MenuItem("Clear campath"))
 			{
 				camera_clear_points();
@@ -340,7 +345,7 @@ namespace
 		if (ImGui::BeginMenu("Help"))
 		{
 			ImGui::TextDisabled("Playback");
-			ImGui::TextUnformatted("Space  play and pause\nUp / Down  faster / slower\nLeft / Right  10 s back / on\nHome  to the start\nF10  stop");
+			ImGui::TextUnformatted("Space  play and pause\nUp / Down  faster / slower\nLeft / Right  10 s back / on\nF10  stop\nF3  the HUD on and off");
 			ImGui::Separator();
 			ImGui::TextDisabled("Camera");
 			ImGui::TextUnformatted("F2  free camera\nHold the right mouse button on the picture to look\nW A S D  fly,  E / Q  up / down\n"
@@ -489,7 +494,7 @@ namespace
 			float fov = camera.fov;
 			row_label("Field of View");
 			ImGui::BeginDisabled(camera.mode != CameraMode::Free);
-			if (ImGui::SliderFloat("##fov", &fov, 10.0f, 150.0f, "%.1f"))
+			if (ImGui::SliderFloat("##fov", &fov, 5.0f, 160.0f, "%.1f"))
 			{
 				camera_set_fov(fov);
 			}
@@ -506,6 +511,21 @@ namespace
 			}
 		}
 
+		if (section(ICON_PERSON, "Player"))
+		{
+			bool body = camera.body;
+			row_label("Show the body");
+			if (ImGui::Checkbox("##body", &body))
+			{
+				camera_set_body(body);
+			}
+
+			ImGui::PushTextWrapPos(0.0f);
+			ImGui::TextDisabled("Draws your own soldier (the game's third person) in the Third person, Free and Dolly cameras, in place of the "
+			                    "arms and gun. Untested in Advanced Warfare: if the demo stops when it is ticked, say so.");
+			ImGui::PopTextWrapPos();
+		}
+
 		if (section(ICON_VIDEO, "Campath"))
 		{
 			ImGui::BeginDisabled(camera.mode != CameraMode::Free);
@@ -520,6 +540,14 @@ namespace
 			if (ImGui::Button(ICON_TRASH "  Clear"))
 			{
 				camera_clear_points();
+			}
+
+			ImGui::EndDisabled();
+			ImGui::SameLine();
+			ImGui::BeginDisabled(camera.points == 0);
+			if (ImGui::Button(ICON_BACKWARD_STEP "  First node"))
+			{
+				theater_seek(camera.point_ms[0]);
 			}
 
 			ImGui::EndDisabled();
@@ -545,6 +573,48 @@ namespace
 		}
 
 		(void)state;
+	}
+
+	// The HUD's parts, by the game's own settings (the names the engine family uses; they are set
+	// through the console). F3 switches the first, which takes all of the HUD with it.
+	struct HudPart
+	{
+		const char* label;
+		const char* setting;
+		bool shown;
+	};
+	HudPart g_hud[] = {{"2D Elements", "cg_draw2D", true}, {"Player HUD", "hud_drawHud", true}, {"Crosshair", "cg_drawCrosshair", true},
+	                   {"Gun", "cg_drawGun", true}};
+	bool g_hud_changed = false;
+
+	void set_hud(HudPart& part, const bool shown)
+	{
+		part.shown = shown;
+		g_hud_changed = true;
+		char text[64];
+		snprintf(text, sizeof(text), "%s %d", part.setting, shown ? 1 : 0);
+		theater_command(text);
+	}
+
+	void draw_hud_section()
+	{
+		if (!section(ICON_SLIDERS, "HUD"))
+		{
+			return;
+		}
+
+		for (HudPart& part : g_hud)
+		{
+			bool shown = part.shown;
+			ImGui::PushID(part.setting);
+			row_label(&part == &g_hud[0] ? "2D Elements (F3)" : part.label);
+			if (ImGui::Checkbox("##shown", &shown))
+			{
+				set_hud(part, shown);
+			}
+
+			ImGui::PopID();
+		}
 	}
 
 	void draw_panel(const TheaterState& state, const CameraState& camera, const ImVec2 size)
@@ -614,7 +684,9 @@ namespace
 			draw_camera_tab(state, camera);
 			break;
 		case Tab::Look:
-			not_built("The Look tab (sun, fog, depth of field, sky)");
+			draw_hud_section();
+			ImGui::Spacing();
+			not_built("The rest of the Look tab (sun, fog, depth of field, sky)");
 			break;
 		case Tab::Scene:
 			not_built("The Scene tab (actors, players)");
@@ -1000,16 +1072,37 @@ namespace
 		}
 
 		const TheaterState state = theater_state();
-		const bool f1 = GetForegroundWindow() == g_window && (GetAsyncKeyState(VK_F1) & 0x8000) != 0;
+		const bool f1 = GetForegroundWindow() == g_window && (GetAsyncKeyState(VK_F1) & 0x8000) != 0 && !theater_keys_blocked();
 		if (f1 && !g_f1_was_down && state.playing)
 		{
 			g_hidden = !g_hidden;
 		}
 
 		g_f1_was_down = f1;
+		static bool f3_was_down = false;
+		const bool f3 = GetForegroundWindow() == g_window && (GetAsyncKeyState(VK_F3) & 0x8000) != 0 && !theater_keys_blocked();
+		if (f3 && !f3_was_down && state.playing)
+		{
+			set_hud(g_hud[0], !g_hud[0].shown);
+		}
+
+		f3_was_down = f3;
 		if (!state.playing)
 		{
 			g_hidden = false;
+			camera_playback_ended();
+			if (g_hud_changed)
+			{
+				// the game's own HUD again outside playback
+				g_hud_changed = false;
+				for (HudPart& part : g_hud)
+				{
+					part.shown = true;
+					char text[64];
+					snprintf(text, sizeof(text), "%s 1", part.setting);
+					theater_command(text);
+				}
+			}
 		}
 
 		const bool shown = state.playing && !g_hidden;

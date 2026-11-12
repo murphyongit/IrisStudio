@@ -26,12 +26,13 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <mutex>
 #include <string>
 #include <vector>
 
 namespace
 {
-	constexpr char VERSION[] = "0.27 (recorder, playback, IrisStudio's editor)";
+	constexpr char VERSION[] = "0.28 (recorder, playback, IrisStudio's editor)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -586,6 +587,25 @@ namespace
 		return true;
 	}
 
+	// Console commands asked for from the editor's thread, run at a frame's start.
+	std::mutex g_commands_lock;
+	std::vector<std::string> g_commands;
+
+	void run_commands()
+	{
+		std::vector<std::string> commands;
+		{
+			std::lock_guard<std::mutex> lock(g_commands_lock);
+			commands.swap(g_commands);
+		}
+
+		for (const std::string& text : commands)
+		{
+			log_line("command: %s", text.c_str());
+			command((text + "\n").c_str());
+		}
+	}
+
 	void stop_playback(const char* why)
 	{
 		if (g_play == Play::Idle)
@@ -882,6 +902,7 @@ namespace
 
 		if (frame_start)
 		{
+
 			if (g_pause_request.exchange(false))
 			{
 				g_paused = !g_paused;
@@ -1121,6 +1142,7 @@ namespace
 		// writes the client's packet, and reads the server's, from inside its drawing of a frame as well:
 		// a recording's first messages given there (when going back) restart the client game under the
 		// drawing's feet (the crashes at 0x1401AFEEA and 0x14013C376).
+		run_commands();
 		play_tick();
 		if (g_play != Play::Playing)
 		{
@@ -1469,7 +1491,7 @@ namespace
 			}
 
 			static bool down = false, left = false, right = false, up = false, page_down = false, home = false;
-			const bool playing = focus && g_play == Play::Playing;
+			const bool playing = focus && g_play == Play::Playing && !theater_keys_blocked();
 			const bool down_now = playing && (GetAsyncKeyState(VK_SPACE) & 0x8000) != 0;      // play and pause
 			const bool left_now = playing && (GetAsyncKeyState(VK_DOWN) & 0x8000) != 0;       // slower
 			const bool right_now = playing && (GetAsyncKeyState(VK_UP) & 0x8000) != 0;        // faster
@@ -1495,7 +1517,7 @@ namespace
 			}
 
 			const bool page_down_now = playing && (GetAsyncKeyState(VK_LEFT) & 0x8000) != 0;  // 10 s back
-			const bool home_now = playing && (GetAsyncKeyState(VK_HOME) & 0x8000) != 0;
+			const bool home_now = false;  // (Home went back to the start; not wanted)
 			if (page_down_now && !page_down)
 			{
 				g_back_request = true;
@@ -1742,7 +1764,7 @@ namespace
 				log_line("hook: playback's local match: server step %s, bots %s", server ? "held" : "NOT held",
 				         bots ? "kept out" : "NOT kept out");
 				const bool time = hook(COM_TIME_SCALE_MSEC, &hooked_time_scale_msec, &g_original_time_scale_msec, "the game's time");
-				log_line("hook: playback's pause and speed %s (Space pauses, up and down arrows change speed, right skips 10 s, left goes back 10 s, Home to the start)",
+				log_line("hook: playback's pause and speed %s (Space pauses, up and down arrows change speed, right skips 10 s, left goes back 10 s)",
 				         time ? "yes" : "NO");
 				const bool save = hook(CL_SAVE_PREDICTED, &hooked_save_predicted, &g_original_save_predicted, "the player's position, kept");
 				const bool get = hook(CL_GET_PREDICTED, &hooked_get_predicted, &g_original_get_predicted, "the player's position, asked for");
@@ -1822,6 +1844,19 @@ int theater_speed_steps(const float** steps)
 }
 void theater_stop() { g_stop_request = true; }
 const char* theater_version() { return VERSION; }
+
+void theater_command(const char* text)
+{
+	std::lock_guard<std::mutex> lock(g_commands_lock);
+	g_commands.emplace_back(text);
+}
+
+// S1x's console has the keys while it is open (bit 1 of the game's key catchers, as s1-mod's
+// game_console.cpp sets it): what is typed there is not the editor's.
+bool theater_keys_blocked()
+{
+	return (*reinterpret_cast<const int*>(0x1417E168C) & 1) != 0;
+}
 HMODULE theater_module() { return g_module; }
 void theater_log(const char* text) { log_line("%s", text); }
 

@@ -24,6 +24,10 @@ void theater_set_speed(float speed);
 int theater_speed_steps(const float** steps);
 void theater_stop();
 const char* theater_version();
+// A console command for the game, run at the next frame's start.
+void theater_command(const char* text);
+// The game's console is open: keys are being typed, not meant for the editor.
+bool theater_keys_blocked();
 HMODULE theater_module();
 void theater_log(const char* text);
 
@@ -48,6 +52,7 @@ struct CameraState
 	CameraMode mode = CameraMode::FirstPerson;
 	float fov = 80.0f, speed = 400.0f;
 	int points = 0;
+	bool body = false;
 	std::uint32_t point_ms[64] = {};
 };
 
@@ -57,4 +62,8 @@ void camera_set_speed(float speed);
 void camera_set_fov(float fov);
 void camera_add_point();
 void camera_clear_points();
+// The player's own body drawn (the game's third person), for the cameras away from the eyes.
+void camera_set_body(bool on);
+// Playback is over: the game's own view settings again.
+void camera_playback_ended();
 void camera_start();

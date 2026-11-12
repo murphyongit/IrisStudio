@@ -21,7 +21,7 @@
 
 namespace
 {
-	constexpr uintptr_t CG_CALC_VIEW_VALUES = 0x1401B7BB0, CG_RENDER_SCENE = 0x1401DF410, REFDEF = 0x1415575C0;
+	constexpr uintptr_t CG_CALC_VIEW_VALUES = 0x1401B7BB0, CG_RENDER_SCENE = 0x1401DF410, REFDEF = 0x1415575C0, CG_GET_FOV = 0x1401D59D0;
 	constexpr uintptr_t REFDEF_TAN_X = 0x1415575D0, REFDEF_TAN_Y = 0x1415575D4, REFDEF_ORIGIN = 0x1415575D8,
 		REFDEF_AXIS = 0x1415575E4, VIEW_ORIGIN = 0x141557610;
 	constexpr uintptr_t DVAR_FIND_VAR = 0x1404BF8B0;
@@ -32,6 +32,13 @@ namespace
 	// the scene's drawing: (client, refdef, ...), its further arguments passed on as they came
 	using render_scene_t = void (*)(int, void*, void*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t);
 	render_scene_t g_original_render_scene = nullptr;
+	// the field of view the game means to draw with (cg_fov and aiming down the sights worked in):
+	// float (client), 0x1401D59D0, what the game's CG_CalcFov (0x1401D3F80) makes the view's tans from
+	using get_fov_t = float (*)(int);
+	get_fov_t g_original_get_fov = nullptr;
+	std::atomic<float> g_game_fov{65.0f};
+	std::atomic<bool> g_body{false};
+	bool g_body_set = false;
 
 	struct Pose
 	{
@@ -114,7 +121,7 @@ namespace
 		pose.angles[1] = std::atan2(forward[1], forward[0]) * TO_DEG;
 		pose.angles[0] = std::atan2(-forward[2], std::sqrt(forward[0] * forward[0] + forward[1] * forward[1])) * TO_DEG;
 		pose.angles[2] = 0.0f;
-		pose.fov = 2.0f * std::atan(at<float>(REFDEF_TAN_X)) * TO_DEG;
+		pose.fov = g_game_fov;
 		return pose;
 	}
 
@@ -229,7 +236,7 @@ namespace
 	// the right), the mouse looks while the game has it (not the panel).
 	void fly(const float dt)
 	{
-		if (GetForegroundWindow() != ui_window())
+		if (GetForegroundWindow() != ui_window() || theater_keys_blocked())
 		{
 			return;
 		}
@@ -284,7 +291,7 @@ namespace
 		g_original_calc_view(client);
 
 		const TheaterState state = theater_state();
-		const bool focus = state.playing && GetForegroundWindow() == ui_window();
+		const bool focus = state.playing && GetForegroundWindow() == ui_window() && !theater_keys_blocked();
 		const CameraMode mode_now = static_cast<CameraMode>(g_mode.load());
 		const bool f2 = focus && down(VK_F2);
 		if (f2 && !g_f2_was)
@@ -350,6 +357,14 @@ namespace
 
 			g_free = g_follow = false;
 			return;
+		}
+
+		// the player's body, where it was asked for and the camera is away from the eyes
+		const bool body = state.playing && g_body && (overriding || mode == CameraMode::ThirdPerson);
+		if (body != g_body_set)
+		{
+			g_body_set = body;
+			theater_command(body ? "camera_thirdPerson 1" : "camera_thirdPerson 0");
 		}
 
 		const bool was_overriding = g_overriding;
@@ -424,11 +439,6 @@ namespace
 	{
 		if (g_overriding && refdef == reinterpret_cast<void*>(REFDEF) && view_is_sane())
 		{
-			const float tan_x = at<float>(REFDEF_TAN_X), tan_y = at<float>(REFDEF_TAN_Y);
-			const float fov = g_applied.fov < 1.0f ? 1.0f : g_applied.fov > 170.0f ? 170.0f : g_applied.fov;
-			const float wanted = std::tan(fov * 0.5f * TO_RAD);
-			at<float>(REFDEF_TAN_X) = wanted;
-			at<float>(REFDEF_TAN_Y) = wanted * (tan_y / tan_x);
 			apply(g_applied);
 			static bool noted = false;
 			if (!noted)
@@ -440,6 +450,19 @@ namespace
 
 		g_original_render_scene(client, refdef, a3, a4, a5, a6, a7, a8);
 	}
+
+	float hooked_get_fov(const int client)
+	{
+		const float game = g_original_get_fov(client);
+		g_game_fov = game;
+		if (g_overriding)
+		{
+			const float fov = g_applied.fov;
+			return fov < 1.0f ? 1.0f : fov > 160.0f ? 160.0f : fov;
+		}
+
+		return game;
+	}
 }
 
 CameraState camera_state()
@@ -447,6 +470,7 @@ CameraState camera_state()
 	CameraState state;
 	state.mode = static_cast<CameraMode>(g_mode.load());
 	state.speed = g_speed;
+	state.body = g_body;
 	std::lock_guard<std::mutex> lock(g_lock);
 	state.fov = g_pose.fov;
 	state.points = static_cast<int>(g_points.size());
@@ -461,6 +485,16 @@ CameraState camera_state()
 void camera_set_mode(const CameraMode mode) { g_mode = static_cast<int>(mode); }
 void camera_set_speed(const float speed) { g_speed = speed; }
 void camera_add_point() { g_add_request = true; }
+void camera_set_body(const bool on) { g_body = on; }
+
+void camera_playback_ended()
+{
+	if (g_body_set)
+	{
+		g_body_set = false;
+		theater_command("camera_thirdPerson 0");
+	}
+}
 void camera_clear_points() { g_clear_request = true; }
 
 void camera_set_fov(const float fov)
@@ -477,6 +511,17 @@ void camera_start()
 	{
 		status = MH_CreateHook(reinterpret_cast<LPVOID>(CG_RENDER_SCENE), reinterpret_cast<LPVOID>(&hooked_render_scene),
 		                       reinterpret_cast<LPVOID*>(&g_original_render_scene));
+	}
+
+	if (status == MH_OK)
+	{
+		status = MH_CreateHook(reinterpret_cast<LPVOID>(CG_GET_FOV), reinterpret_cast<LPVOID>(&hooked_get_fov),
+		                       reinterpret_cast<LPVOID*>(&g_original_get_fov));
+	}
+
+	if (status == MH_OK)
+	{
+		status = MH_EnableHook(reinterpret_cast<LPVOID>(CG_GET_FOV));
 	}
 
 	if (status == MH_OK)
