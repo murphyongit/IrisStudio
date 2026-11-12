@@ -977,6 +977,16 @@ void camera_playback_ended()
 		g_body_set = false;
 		theater_command("camera_thirdPerson 0");
 	}
+
+	// (the HUD and the hit effects a clean outside view turned off: the game's own again)
+	if (g_cleaned)
+	{
+		g_cleaned = false;
+		char text[160];
+		snprintf(text, sizeof(text), "cg_draw2D %d; cg_drawDamageDirection %d; painVisionTriggerHealth %g", g_was_draw2d ? 1 : 0,
+		         g_was_direction ? 1 : 0, g_was_pain);
+		theater_command(text);
+	}
 }
 void camera_clear_points() { g_clear_request = true; }
 void camera_set_clean(const bool on) { g_clean = on; }
