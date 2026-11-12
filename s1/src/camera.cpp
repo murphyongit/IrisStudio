@@ -40,6 +40,11 @@ namespace
 	// size and fade, which may all be 0). The scene takes 32 a frame, the game's own effects' included.
 	constexpr uintptr_t R_ADD_OMNI_LIGHT_TO_SCENE = 0x1405C9D90;
 	constexpr int MAX_LIGHTS = 16;
+	// The exo's effects (a dash, a boost jump, a slam, a slide): CG_PlayExoFx (0x14019A230: the client, the
+	// entity, the event, its parameter, then whether it is seen in first person). In first person the
+	// game plays the "view" effects on the arms (vfx/code/dodge_forward_view and the like: the streaks at
+	// the picture's edges); otherwise the "jetpack" ones on the body's back.
+	constexpr uintptr_t CG_PLAY_EXO_FX = 0x14019A230;
 	constexpr float PI = 3.14159265358979f, TO_RAD = PI / 180.0f, TO_DEG = 180.0f / PI;
 
 	using calc_view_t = void (*)(int);
@@ -326,6 +331,16 @@ namespace
 	unsigned g_bone_scan = 0;
 	float g_dt = 0.0f;  // the frame's, for flying the bone camera where the scene is drawn
 
+	using play_exo_fx_t = std::uint64_t (*)(int, int, int, int, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t);
+	play_exo_fx_t g_original_play_exo_fx = nullptr;
+	using add_omni_light_t = void (*)(const float*, const float*, float, float, float, float, const float*);
+	add_omni_light_t g_original_add_omni_light = nullptr;
+	// the bulb and fade numbers of a light of the game's own (an effect's), for the editor's lights: with
+	// all four 0 (0.37) a light lit effects but not the map
+	float g_game_bulb[4] = {0.0f, 0.0f, 1.0f, 0.0f};
+	bool g_have_game_bulb = false;
+	int g_lights_noted = 0;
+
 	// ---- the scene's lights
 	SceneLight g_lights[MAX_LIGHTS];
 	int g_light_count = 0;
@@ -517,21 +532,58 @@ namespace
 		return true;
 	}
 
+	// The camera away from the player's eyes: the exo's effects are the ones on the body, not the ones in
+	// the player's face.
+	std::uint64_t hooked_play_exo_fx(const int client, const int entity, const int event, const int parameter, std::uint64_t first_person,
+	                                 const std::uint64_t a6, const std::uint64_t a7, const std::uint64_t a8)
+	{
+		if (g_overriding || g_body_set)
+		{
+			first_person = 0;
+		}
+
+		return g_original_play_exo_fx(client, entity, event, parameter, first_person, a6, a7, a8);
+	}
+
+	// A light of the game's own going into the scene: its numbers are noted.
+	void hooked_add_omni_light(const float* origin, const float* direction, const float radius, const float r, const float g, const float b,
+	                           const float* bulb)
+	{
+		if (bulb && !IsBadReadPtr(bulb, sizeof(g_game_bulb)))
+		{
+			memcpy(g_game_bulb, bulb, sizeof(g_game_bulb));
+			g_have_game_bulb = true;
+			if (g_lights_noted < 12)
+			{
+				++g_lights_noted;
+				log("lights: one of the game's: radius %g, colour %g %g %g, along %g %g %g, bulb %g %g, fade %g %g", radius, r, g, b,
+				    direction ? direction[0] : 0.0f, direction ? direction[1] : 0.0f, direction ? direction[2] : 0.0f, bulb[0], bulb[1], bulb[2], bulb[3]);
+			}
+		}
+
+		g_original_add_omni_light(origin, direction, radius, r, g, b, bulb);
+	}
+
 	// The editor's lights, into the scene about to be drawn.
 	void add_lights()
 	{
+		if (!g_original_add_omni_light)
+		{
+			return;
+		}
+
 		__try
 		{
 			static const float up[3] = {0.0f, 0.0f, 1.0f};
-			static const float bulb[4] = {};
+			float bulb[4];
+			memcpy(bulb, g_game_bulb, sizeof(bulb));
 			for (int i = 0; i < g_light_count; ++i)
 			{
 				const SceneLight& light = g_lights[i];
 				if (light.on && light.radius > 0.0f && light.intensity > 0.0f)
 				{
-					reinterpret_cast<void (*)(const float*, const float*, float, float, float, float, const float*)>(R_ADD_OMNI_LIGHT_TO_SCENE)(
-						light.origin, up, light.radius, light.color[0] * light.intensity, light.color[1] * light.intensity,
-						light.color[2] * light.intensity, bulb);
+					g_original_add_omni_light(light.origin, up, light.radius, light.color[0] * light.intensity, light.color[1] * light.intensity,
+					                          light.color[2] * light.intensity, bulb);
 				}
 			}
 		}
@@ -743,6 +795,12 @@ namespace
 				apply(g_applied);
 			}
 
+			if (!g_bone_wanted && theater_state().playing && g_bone_scan++ % 30 == 0)
+			{
+				// (who is in the match, for the editor's lists of players)
+				scan_bones();
+			}
+
 			memcpy(g_view_now, &at<float>(REFDEF_ORIGIN), sizeof(g_view_now));
 			if (theater_state().playing)
 			{
@@ -901,6 +959,22 @@ void camera_start()
 	if (status == MH_OK)
 	{
 		status = MH_EnableHook(reinterpret_cast<LPVOID>(CG_GET_FOV));
+	}
+
+	// (on their own: the cameras do not depend on them)
+	if (MH_CreateHook(reinterpret_cast<LPVOID>(CG_PLAY_EXO_FX), reinterpret_cast<LPVOID>(&hooked_play_exo_fx),
+	                  reinterpret_cast<LPVOID*>(&g_original_play_exo_fx)) != MH_OK ||
+	    MH_EnableHook(reinterpret_cast<LPVOID>(CG_PLAY_EXO_FX)) != MH_OK)
+	{
+		log("camera: the exo's effects NOT hooked");
+	}
+
+	if (MH_CreateHook(reinterpret_cast<LPVOID>(R_ADD_OMNI_LIGHT_TO_SCENE), reinterpret_cast<LPVOID>(&hooked_add_omni_light),
+	                  reinterpret_cast<LPVOID*>(&g_original_add_omni_light)) != MH_OK ||
+	    MH_EnableHook(reinterpret_cast<LPVOID>(R_ADD_OMNI_LIGHT_TO_SCENE)) != MH_OK)
+	{
+		g_original_add_omni_light = nullptr;
+		log("lights: the scene's lights NOT hooked");
 	}
 
 	if (status == MH_OK)

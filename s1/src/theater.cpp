@@ -35,7 +35,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.37 (recorder, playback, IrisStudio's editor)";
+	constexpr char VERSION[] = "0.38 (recorder, playback, IrisStudio's editor)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -232,7 +232,7 @@ namespace
 	std::atomic<bool> g_paused{false};
 	// the key thread's requests, taken on the main thread
 	std::atomic<bool> g_pause_request{false}, g_slower_request{false}, g_faster_request{false}, g_skip_request{false};
-	std::atomic<bool> g_back_request{false}, g_restart_request{false};
+	std::atomic<bool> g_back_request{false}, g_restart_request{false}, g_rebuild_request{false};
 	// what the panel asks for: a place in the recording (ms; -1 for none), and how long the recording is
 	std::atomic<std::int64_t> g_seek_request{-1};
 	std::atomic<std::uint32_t> g_length_ms{0};
@@ -1033,6 +1033,19 @@ namespace
 			if (const std::int64_t seek = g_seek_request.exchange(-1); seek >= 0)
 			{
 				jump_to(static_cast<std::uint64_t>(seek));
+			}
+
+			if (g_rebuild_request.exchange(false))
+			{
+				if (g_paused)
+				{
+					jump_to(place);
+				}
+				else
+				{
+					g_roll_to = -1;
+					go_back_to(place);
+				}
 			}
 
 			if (g_restart_request.exchange(false))
@@ -2177,6 +2190,7 @@ namespace
 				ui_start();
 				camera_start();
 				sun_start();
+				models_start();
 				if (HANDLE thread = CreateThread(nullptr, 0, &keys, nullptr, 0, nullptr))
 				{
 					CloseHandle(thread);
@@ -2221,6 +2235,7 @@ void theater_pause_toggle() { g_pause_request = true; }
 void theater_slower() { g_slower_request = true; }
 void theater_faster() { g_faster_request = true; }
 void theater_seek(const std::uint32_t ms) { g_seek_request = ms; }
+void theater_rebuild() { g_rebuild_request = true; }
 
 void theater_set_speed(const float speed)
 {

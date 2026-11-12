@@ -22,6 +22,8 @@ void theater_pause_toggle();
 void theater_slower();
 void theater_faster();
 void theater_seek(std::uint32_t ms);
+// The recording given again from its start up to where it is: the game makes every model anew.
+void theater_rebuild();
 // The speed nearest to one of the steps (IrisStudio's timescale steps); the steps themselves.
 void theater_set_speed(float speed);
 int theater_speed_steps(const float** steps);
@@ -110,9 +112,17 @@ struct SceneLight
 	bool on = true;
 	float origin[3] = {};
 	float color[3] = {1.0f, 1.0f, 1.0f};
-	float intensity = 1.0f, radius = 300.0f;
+	float intensity = 1048576.0f, radius = 400.0f;  // (the game's lights are in very large numbers)
 };
 
+// models.cpp: what an entity is made of, and models drawn as others (to: "" leaves the model out, null
+// ends the swap).
+int models_of(int entity, char names[][64], int max);
+void models_swap(const char* from, const char* to);
+int models_swaps(char from[][64], char to[][64], int max);
+int models_find(const char* text, char names[][64], int max);
+void models_frame(const TheaterState& state);
+void models_start();
 int scene_lights(SceneLight* out, int max);
 void scene_set_light(int index, const SceneLight& light);
 int scene_add_light();

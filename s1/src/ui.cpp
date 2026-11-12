@@ -898,8 +898,16 @@ namespace
 
 					row_label("Color");
 					changed = ImGui::ColorEdit3("##color", light.color) || changed;
+					// (the game's lights are in very large numbers: the slider is in doublings)
+					float stops = light.intensity > 1.0f ? std::log2(light.intensity) : 0.0f;
 					row_label("Brightness");
-					changed = ImGui::SliderFloat("##intensity", &light.intensity, 0.0f, 200.0f, "%.2f", ImGuiSliderFlags_Logarithmic) || changed;
+					if (ImGui::SliderFloat("##intensity", &stops, 0.0f, 40.0f, "%.1f"))
+					{
+						light.intensity = std::pow(2.0f, stops);
+						changed = true;
+					}
+
+					ImGui::SetItemTooltip("Each step up is twice as bright");
 					row_label("Reach");
 					changed = ImGui::SliderFloat("##radius", &light.radius, 10.0f, 5000.0f, "%.0f", ImGuiSliderFlags_Logarithmic) || changed;
 					row_label("Position");
@@ -918,7 +926,132 @@ namespace
 				}
 			}
 
-			not_built("Outfits, hiding players and actors");
+			if (section(ICON_PERSON, "Models"))
+			{
+				// what a player is made of, and each part drawn as another model or left out
+				static int entity = -1;
+				static char filter[48] = "";
+				const BoneState players = camera_bone_state();
+				if (entity < 0 || !(players.entities & (1ull << entity)))
+				{
+					entity = players.nearest;
+				}
+
+				char label[48];
+				snprintf(label, sizeof(label), entity < 0 ? "None in view" : entity == players.nearest ? "Player %d (nearest the camera)" : "Player %d", entity);
+				row_label("Player");
+				if (ImGui::BeginCombo("##modelEntity", label))
+				{
+					for (int e = 0; e < 64; ++e)
+					{
+						if (players.entities & (1ull << e))
+						{
+							char name[48];
+							snprintf(name, sizeof(name), e == players.nearest ? "Player %d (nearest the camera)" : "Player %d", e);
+							if (ImGui::Selectable(name, e == entity))
+							{
+								entity = e;
+							}
+						}
+					}
+
+					ImGui::EndCombo();
+				}
+
+				static char parts[32][64], from[64][64], to[64][64], found[300][64];
+				const int part_count = entity >= 0 ? models_of(entity, parts, 32) : 0;
+				const int swap_count = models_swaps(from, to, 64);
+				bool rebuilt = false;
+				if (part_count == 0)
+				{
+					ImGui::PushTextWrapPos(0.0f);
+					ImGui::TextDisabled(players.entities ? "This player's parts are listed once the game has made its model: go back a little in the recording."
+					                                     : "No player's model is in the match right now. (The list of players fills in the Bone camera too.)");
+					ImGui::PopTextWrapPos();
+				}
+
+				for (int i = 0; i < part_count; ++i)
+				{
+					const char* swapped = nullptr;
+					for (int s = 0; s < swap_count; ++s)
+					{
+						if (strcmp(from[s], parts[i]) == 0)
+						{
+							swapped = to[s];
+						}
+					}
+
+					ImGui::PushID(i);
+					ImGui::TextUnformatted(parts[i]);
+					ImGui::SetNextItemWidth(-1.0f);
+					const char* shown = !swapped ? "As it is" : swapped[0] ? swapped : "Left out";
+					if (ImGui::BeginCombo("##swap", shown, ImGuiComboFlags_HeightLarge))
+					{
+						ImGui::SetNextItemWidth(-1.0f);
+						ImGui::InputTextWithHint("##filter", "type part of a model's name", filter, sizeof(filter));
+						if (ImGui::Selectable("As it is", !swapped))
+						{
+							models_swap(parts[i], nullptr);
+							rebuilt = true;
+						}
+
+						if (i > 0 && ImGui::Selectable("Left out", swapped && !swapped[0]))
+						{
+							models_swap(parts[i], "");
+							rebuilt = true;
+						}
+
+						ImGui::Separator();
+						const int found_count = models_find(filter, found, 300);
+						for (int f = 0; f < found_count; ++f)
+						{
+							if (ImGui::Selectable(found[f], swapped && strcmp(swapped, found[f]) == 0))
+							{
+								models_swap(parts[i], found[f]);
+								rebuilt = true;
+							}
+						}
+
+						if (found_count == 300)
+						{
+							ImGui::TextDisabled("(more: type more of the name)");
+						}
+
+						ImGui::EndCombo();
+					}
+
+					ImGui::PopID();
+				}
+
+				if (swap_count > 0)
+				{
+					ImGui::Separator();
+					ImGui::TextDisabled("Swaps (every player with the model)");
+					for (int s = 0; s < swap_count; ++s)
+					{
+						ImGui::PushID(1000 + s);
+						if (ImGui::SmallButton(ICON_TRASH))
+						{
+							models_swap(from[s], nullptr);
+							rebuilt = true;
+						}
+
+						ImGui::SameLine();
+						ImGui::PushTextWrapPos(0.0f);
+						ImGui::Text("%s  ->  %s", from[s], to[s][0] ? to[s] : "left out");
+						ImGui::PopTextWrapPos();
+						ImGui::PopID();
+					}
+				}
+
+				if (rebuilt)
+				{
+					// the game makes a model when its entity comes into the match: from the start again
+					theater_rebuild();
+				}
+			}
+
+			not_built("Actors and animations");
 			break;
 		case Tab::Record:
 			capture_draw_tab(state);
@@ -1388,6 +1521,7 @@ namespace
 		f3_was_down = f3;
 		look_frame(state);
 		sky_frame(g_device, g_context, state);
+		models_frame(state);
 		if (!state.playing)
 		{
 			g_hidden = false;

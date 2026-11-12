@@ -31,7 +31,7 @@ add_library(imgui STATIC
   ${imgui_SOURCE_DIR}/backends/imgui_impl_win32.cpp)
 target_include_directories(imgui PUBLIC ${imgui_SOURCE_DIR})
 
-add_library(s1iris SHARED src/theater.cpp src/ui.cpp src/look.cpp src/capture.cpp src/camera.cpp src/sun.cpp src/sky.cpp src/proxy_xinput.cpp src/fonts.rc)
+add_library(s1iris SHARED src/theater.cpp src/ui.cpp src/look.cpp src/capture.cpp src/camera.cpp src/sun.cpp src/sky.cpp src/models.cpp src/proxy_xinput.cpp src/fonts.rc)
 set_target_properties(s1iris PROPERTIES OUTPUT_NAME "XInput1_3" PREFIX "")
 target_compile_definitions(s1iris PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(s1iris PRIVATE minhook imgui d3d11 dxgi d3dcompiler shell32)
