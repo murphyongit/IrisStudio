@@ -1276,13 +1276,13 @@ namespace
 			// between this record and the next, to the part of a millisecond: slow motion shows the steps
 			const PredictedView& next = g_predicted[low];
 			const int span = next.serverTime - predicted.serverTime;
-			float far = 0.0f;
+			float apart = 0.0f;
 			for (int i = 0; i < 3; ++i)
 			{
-				far += (next.origin[i] - predicted.origin[i]) * (next.origin[i] - predicted.origin[i]);
+				apart += (next.origin[i] - predicted.origin[i]) * (next.origin[i] - predicted.origin[i]);
 			}
 
-			if (span > 0 && span <= 100 && far < 150.0f * 150.0f)
+			if (span > 0 && span <= 100 && apart < 150.0f * 150.0f)
 			{
 				float t = (static_cast<float>(server_time - predicted.serverTime) + g_clock_fraction) / static_cast<float>(span);
 				t = t < 0.0f ? 0.0f : t > 1.0f ? 1.0f : t;

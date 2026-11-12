@@ -259,18 +259,28 @@ namespace
 		}
 		case 7:
 		{
-			static std::map<const unsigned char*, std::string> typed;
+			// while it is typed in, the box shows what was typed; otherwise what the game has
+			static const unsigned char* editing = nullptr;
+			static std::string typed;
 			const char* string = *reinterpret_cast<const char* const*>(value);
 			char text[200];
-			auto& mine = typed[dvar.at];
-			snprintf(text, sizeof(text), "%s", ImGui::GetActiveID() == id ? mine.c_str() : string ? string : "");
+			snprintf(text, sizeof(text), "%s", editing == dvar.at ? typed.c_str() : string ? string : "");
 			if (ImGui::InputText("##value", text, sizeof(text), ImGuiInputTextFlags_EnterReturnsTrue))
 			{
 				set(dvar, "\"%s\"", text);
 				changed = true;
 			}
 
-			mine = text;
+			if (ImGui::IsItemActive())
+			{
+				editing = dvar.at;
+				typed = text;
+			}
+			else if (editing == dvar.at)
+			{
+				editing = nullptr;
+			}
+
 			break;
 		}
 		case 8:
