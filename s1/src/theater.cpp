@@ -30,7 +30,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.14 (recorder, playback with rewind)";
+	constexpr char VERSION[] = "0.15 (recorder, playback with rewind)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -81,6 +81,12 @@ namespace
 	constexpr uintptr_t CG_LATEST_SNAPSHOT_NUM = 0x1414C66FC, CG_LATEST_SNAPSHOT_TIME = 0x1414C6700;
 	constexpr uintptr_t CG_SNAP = 0x1414C6708, CG_NEXT_SNAP = 0x1414C6710, CG_PROCESSED_SNAPSHOT_NUM = 0x141646C9C;
 	constexpr std::uint32_t BACK_MS = 10000;
+	// Messages are given this long before the client's time reaches theirs, as a server's come ahead of
+	// what the client shows: the client game then always has a snapshot to go to, and shows the time
+	// between two of them (with none ahead it carries the last one on, and the view does not turn).
+	constexpr std::uint32_t LEAD_MS = 100;
+	// the recording's server time less its own clock differs by more than this only after a jump
+	constexpr double TIME_JUMP_MS = 200.0;
 	// void SV_Frame(int msec): the local server's step, from the game's frame
 	constexpr uintptr_t SV_FRAME = 0x1404425B0;
 	// gentity_s* SV_AddBot(const char* name), gentity_s* SV_AddTestClient(int) (s1-mod)
@@ -188,8 +194,12 @@ namespace
 	// the key thread's requests, taken on the main thread
 	std::atomic<bool> g_pause_request{false}, g_slower_request{false}, g_faster_request{false}, g_skip_request{false};
 	std::atomic<bool> g_back_request{false}, g_restart_request{false};
-	// the client's time is to be set to the next snapshot's, once one has been given after going back
-	bool g_resync_time = false;
+	// a snapshot has to be given at once, whatever the clock says (after going back: the client has none)
+	bool g_need_snapshot = false;
+	// The recording's server time less its clock (a message's snapshot's time less the time it came at),
+	// smoothed: what the client's time is kept by. None until a snapshot has been given.
+	double g_time_offset = 0.0;
+	bool g_have_time_offset = false;
 	std::atomic<std::uint64_t> g_predicted_given{0}, g_predicted_missed{0};
 	size_t g_next_record = 0;
 	ULONGLONG g_play_start = 0, g_play_asked = 0, g_play_report = 0;
@@ -672,24 +682,53 @@ namespace
 		}
 	}
 
-	// The client's time put at the snapshot it now has (the game itself never sets it back).
-	void resync_time()
+	// The client's time kept by playback's clock. The game would keep it by the snapshots' coming (and
+	// right at the newest one's time, there being no network between): its own adjusting is switched off
+	// by telling it no snapshot is new, and the time is set from the clock and the recording's own times.
+	void keep_time(const std::uint32_t last_given_ms, const bool given)
 	{
 		__try
 		{
-			if (*reinterpret_cast<std::int32_t*>(CL_SNAP_VALID))
+			if (!*reinterpret_cast<std::int32_t*>(CL_SNAP_VALID) || connection_state() != CA_ACTIVE)
 			{
-				const std::int32_t time = *reinterpret_cast<std::int32_t*>(CL_SNAP_SERVER_TIME);
-				*reinterpret_cast<std::int32_t*>(CL_SERVER_TIME_DELTA) = time - *reinterpret_cast<std::int32_t*>(CLS_REALTIME);
+				return;
+			}
+
+			bool jump = false;
+			if (given)
+			{
+				const double offset = static_cast<double>(*reinterpret_cast<std::int32_t*>(CL_SNAP_SERVER_TIME)) -
+					static_cast<double>(last_given_ms);
+				if (!g_have_time_offset || offset - g_time_offset > TIME_JUMP_MS || g_time_offset - offset > TIME_JUMP_MS)
+				{
+					g_time_offset = offset;
+					g_have_time_offset = true;
+					jump = true;
+				}
+				else
+				{
+					g_time_offset += (offset - g_time_offset) * 0.05;
+				}
+			}
+
+			if (!g_have_time_offset)
+			{
+				return;
+			}
+
+			const auto time = static_cast<std::int32_t>(g_time_offset + static_cast<double>(g_clock.load()));
+			*reinterpret_cast<std::int32_t*>(CL_SERVER_TIME_DELTA) = time - *reinterpret_cast<std::int32_t*>(CLS_REALTIME);
+			*reinterpret_cast<std::int32_t*>(CL_NEW_SNAPSHOTS) = 0;
+			if (jump)
+			{
+				// the game never sets its time back itself
 				*reinterpret_cast<std::int32_t*>(CL_SERVER_TIME) = time;
 				*reinterpret_cast<std::int32_t*>(CL_OLD_SERVER_TIME) = time;
 				*reinterpret_cast<std::int32_t*>(CL_OLD_FRAME_SERVER_TIME) = 0;
-				g_resync_time = false;
 			}
 		}
 		__except (EXCEPTION_EXECUTE_HANDLER)
 		{
-			g_resync_time = false;
 		}
 	}
 
@@ -709,7 +748,8 @@ namespace
 		g_next_record = 0;
 		g_clock = ms;
 		g_clock_fraction = 0.0f;
-		g_resync_time = true;
+		g_need_snapshot = true;
+		g_have_time_offset = false;
 		log_line("playback: back to %.1f s", ms / 1000.0);
 	}
 
@@ -754,7 +794,8 @@ namespace
 				g_paused = false;
 				g_pause_request = g_slower_request = g_faster_request = g_skip_request = false;
 				g_back_request = g_restart_request = false;
-				g_resync_time = false;
+				g_need_snapshot = false;
+				g_have_time_offset = false;
 				g_play = Play::Playing;
 				g_play_start = now;
 				g_play_report = now;
@@ -825,8 +866,16 @@ namespace
 		}
 
 		const auto elapsed = static_cast<std::uint32_t>(g_clock.load());
-		for (int given = 0; given < 100 && g_next_record < g_records.size() && g_records[g_next_record].ms <= elapsed; ++given)
+		bool given_any = false;
+		std::uint32_t last_given_ms = 0;
+		for (int given = 0; given < 100 && g_next_record < g_records.size(); ++given)
 		{
+			const bool due = g_records[g_next_record].ms <= elapsed + LEAD_MS;
+			if (!due && !(g_need_snapshot && !*reinterpret_cast<const std::int32_t*>(CL_SNAP_VALID)))
+			{
+				break;
+			}
+
 			if (!feed_guarded(g_records[g_next_record]))
 			{
 				log_line("playback: message %zu could not be parsed (a fault in the game)", g_next_record);
@@ -834,12 +883,17 @@ namespace
 				return;
 			}
 
+			last_given_ms = g_records[g_next_record].ms;
+			given_any = true;
 			++g_next_record;
-			if (g_resync_time)
-			{
-				resync_time();
-			}
 		}
+
+		if (*reinterpret_cast<const std::int32_t*>(CL_SNAP_VALID))
+		{
+			g_need_snapshot = false;
+		}
+
+		keep_time(last_given_ms, given_any);
 
 		if (now - g_play_report > 5000)
 		{
