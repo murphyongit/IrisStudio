@@ -30,7 +30,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.13 (recorder, playback with rewind, crash notes)";
+	constexpr char VERSION[] = "0.14 (recorder, playback with rewind)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -80,16 +80,6 @@ namespace
 	// one it is going to (pointers), and the number of the last one it has read
 	constexpr uintptr_t CG_LATEST_SNAPSHOT_NUM = 0x1414C66FC, CG_LATEST_SNAPSHOT_TIME = 0x1414C6700;
 	constexpr uintptr_t CG_SNAP = 0x1414C6708, CG_NEXT_SNAP = 0x1414C6710, CG_PROCESSED_SNAPSHOT_NUM = 0x141646C9C;
-	// a client game's snapshot: its flags, of which this one changes when the map starts again
-	constexpr size_t SNAPSHOT_FLAGS = 0x5B68;
-	constexpr std::int32_t SNAPFLAG_SERVERCOUNT = 4;
-	// CG_SetInitialSnapshot (0x1401C2200) ends by taking away the snapshot the client game is going to
-	// (`mov qword ptr [cg->nextSnap], 0`, 11 bytes): until the next one is read there is none, and code
-	// that runs between reads it without looking (the crashes at 0x1401AFEEA after going back). With these
-	// bytes gone it stays the snapshot the client game is at, which CG_ProcessSnapshots takes to mean
-	// "no next one yet" just as well.
-	constexpr uintptr_t CG_INITIAL_SNAPSHOT_CLEARS_NEXT = 0x1401C23D6;
-	constexpr unsigned char CLEARS_NEXT[] = {0x48, 0xC7, 0x05, 0x2F, 0x43, 0x30, 0x01, 0x00, 0x00, 0x00, 0x00};
 	constexpr std::uint32_t BACK_MS = 10000;
 	// void SV_Frame(int msec): the local server's step, from the game's frame
 	constexpr uintptr_t SV_FRAME = 0x1404425B0;
@@ -137,7 +127,6 @@ namespace
 	constexpr ULONGLONG NEW_FILE_GAP_MS = 5000;
 
 	bool read_bytes_forward(uintptr_t address, void* out, size_t count);
-	void keep_next_snapshot(bool keep);
 
 	char g_folder[MAX_PATH] = {};
 	CRITICAL_SECTION g_lock;
@@ -549,7 +538,6 @@ namespace
 
 		log_line("playback ended (%s): %zu of %zu messages given, %llu of the local match's dropped", why, g_next_record,
 		         g_records.size(), g_dropped);
-		keep_next_snapshot(false);
 		g_play = Play::Idle;
 		g_records.clear();
 		g_records.shrink_to_fit();
@@ -633,37 +621,6 @@ namespace
 
 	// faults noted so far (a few at most after each start and each going back)
 	std::atomic<int> g_faults_noted{0};
-	bool g_keeps_next = false;
-
-	// The client game keeps a snapshot to go to through a new first snapshot (see CLEARS_NEXT), or not.
-	void keep_next_snapshot(const bool keep)
-	{
-		if (keep == g_keeps_next)
-		{
-			return;
-		}
-
-		unsigned char now[sizeof(CLEARS_NEXT)];
-		unsigned char nops[sizeof(CLEARS_NEXT)];
-		memset(nops, 0x90, sizeof(nops));
-		if (!read_bytes(CG_INITIAL_SNAPSHOT_CLEARS_NEXT, now, sizeof(now)) ||
-		    memcmp(now, keep ? CLEARS_NEXT : nops, sizeof(now)) != 0)
-		{
-			log_line("playback: the client game's code is not as expected at its first snapshot; left as it is");
-			return;
-		}
-
-		DWORD old = 0;
-		if (VirtualProtect(reinterpret_cast<LPVOID>(CG_INITIAL_SNAPSHOT_CLEARS_NEXT), sizeof(now), PAGE_EXECUTE_READWRITE, &old))
-		{
-			memcpy(reinterpret_cast<void*>(CG_INITIAL_SNAPSHOT_CLEARS_NEXT), keep ? nops : CLEARS_NEXT, sizeof(now));
-			VirtualProtect(reinterpret_cast<LPVOID>(CG_INITIAL_SNAPSHOT_CLEARS_NEXT), sizeof(now), old, &old);
-			FlushInstructionCache(GetCurrentProcess(), reinterpret_cast<LPCVOID>(CG_INITIAL_SNAPSHOT_CLEARS_NEXT), sizeof(now));
-			g_keeps_next = keep;
-			log_line("playback: the client game %s", keep ? "keeps a snapshot to go to through a new first one" : "is as the game has it again");
-		}
-	}
-
 	// What the game's place in the recording looks like, for the log.
 	void log_stream(const char* when)
 	{
@@ -704,15 +661,8 @@ namespace
 
 			*reinterpret_cast<std::int32_t*>(CG_LATEST_SNAPSHOT_NUM) = 0;
 			*reinterpret_cast<std::int32_t*>(CG_LATEST_SNAPSHOT_TIME) = 0;
-			// The snapshots the client game is at stay its (code between frames reads them: 0.11 took
-			// them away and the game crashed at 0x1401AFEEA). The one it is going to is marked as of
-			// another start of the map (the flag a map restart changes), which is how the game itself
-			// takes a snapshot older than its own: it begins again from it.
-			if (auto* next = *reinterpret_cast<unsigned char**>(CG_NEXT_SNAP))
-			{
-				*reinterpret_cast<std::int32_t*>(next + SNAPSHOT_FLAGS) ^= SNAPFLAG_SERVERCOUNT;
-			}
-
+			// (The client game's own snapshots are left to the game: the recording begins with the
+			// match's game state, at which the game restarts the client game itself.)
 			*reinterpret_cast<std::int32_t*>(CG_PROCESSED_SNAPSHOT_NUM) = 0;
 			return true;
 		}
@@ -748,7 +698,6 @@ namespace
 	void go_back_to(const std::uint64_t ms)
 	{
 		g_faults_noted = 0;
-		keep_next_snapshot(true);
 		log_stream("before going back");
 		g_log_ticks = 12;
 		if (!reset_stream())
@@ -925,10 +874,10 @@ namespace
 			return;
 		}
 
-		play_tick();
-		if (g_play == Play::Playing)
+		if (g_play == Play::Playing || (g_play == Play::Starting && g_seen_loading && connection_state() >= CA_PRIMED))
 		{
-			// the local match's: the recording is the server now
+			// the local match's: the recording is the server now (or is about to be, at the next frame's
+			// start: the local match's first snapshot is not to come before the recording's)
 			++g_dropped;
 			return;
 		}
@@ -963,7 +912,6 @@ namespace
 
 	void hooked_write_packet(const int client)
 	{
-		play_tick();
 		if (g_play == Play::Playing)
 		{
 			// nothing of the viewer's goes to the local match
@@ -1025,6 +973,11 @@ namespace
 	// when paused, the fractions kept; and what is given out is what playback's clock counts.
 	int hooked_time_scale_msec(const int msec)
 	{
+		// Playback's step is taken here, at the start of the game's frame and nowhere else. The game
+		// writes the client's packet, and reads the server's, from inside its drawing of a frame as well:
+		// a recording's first messages given there (when going back) restart the client game under the
+		// drawing's feet (the crashes at 0x1401AFEEA and 0x14013C376).
+		play_tick();
 		if (g_play != Play::Playing)
 		{
 			return g_original_time_scale_msec(msec);
