@@ -31,11 +31,13 @@
 #include <share.h>
 #include <mutex>
 #include <string>
+#include <cctype>
+#include <utility>
 #include <vector>
 
 namespace
 {
-	constexpr char VERSION[] = "0.40 (recorder, playback, IrisStudio's editor)";
+	constexpr char VERSION[] = "0.41 (recorder, playback, IrisStudio's editor)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -406,10 +408,14 @@ namespace
 		log_line("recording: map %s, game type %s", map.c_str(), type.c_str());
 	}
 
+	void finish_clip();
+
 	void close_file()
 	{
 		if (g_file)
 		{
+			// (a named recording still under way ends with the match)
+			finish_clip();
 			fclose(g_file);
 			g_file = nullptr;
 			log_line("recording closed: %llu messages, %llu bytes, %.1f s", g_file_messages, g_file_bytes,
@@ -425,9 +431,10 @@ namespace
 		sprintf_s(path, "%s\\rec_%04d%02d%02d_%02d%02d%02d.awdm", g_folder, t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute,
 		          t.wSecond);
 		strcpy_s(g_file_path, path);
-		if (fopen_s(&g_file, path, "wb") != 0 || !g_file)
+		// (shared: a named recording is cut from it while the match is still being recorded)
+		g_file = _fsopen(path, "wb", _SH_DENYNO);
+		if (!g_file)
 		{
-			g_file = nullptr;
 			log_line("could not create %s", path);
 			return false;
 		}
@@ -1302,8 +1309,208 @@ namespace
 		}
 	}
 
+	// ---- named recordings, from the console: "record <name>" in a private match, "stoprecord", and
+	// "demo <name>" to play one. A match is recorded from its start anyway (a recording has to begin
+	// with the match's game state), so a named recording is cut from the match's: everything before
+	// "record" was typed is kept, with its times set to 0, so that playback gives it to the game at once
+	// and begins where the recording was asked for; what came after "stoprecord" is left out.
+	constexpr std::uintptr_t CMD_ADD_COMMAND = 0x1403AF2C0, CMD_ARGS = 0x1479ECB00;
+	char g_clip_name[64] = {};
+	std::uint32_t g_clip_start = 0;
+	bool g_clip = false;
+
+	// The console command's argument (1 is the first after its name), or "".
+	const char* command_argument(const int index)
+	{
+		const auto* args = reinterpret_cast<const unsigned char*>(CMD_ARGS);
+		const int nesting = *reinterpret_cast<const int*>(args);
+		if (nesting < 0 || nesting >= 8 || index >= *reinterpret_cast<const int*>(args + 0x44 + nesting * 4))
+		{
+			return "";
+		}
+
+		const char* const* argv = *reinterpret_cast<const char* const* const*>(args + 0x68 + nesting * 8);
+		return argv && argv[index] ? argv[index] : "";
+	}
+
+	// A name a file can have: letters, digits, _ and -.
+	bool clean_name(const char* text, char* out, const size_t size)
+	{
+		size_t length = 0;
+		for (; text[length] && length + 1 < size; ++length)
+		{
+			const char c = text[length];
+			out[length] = isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-' ? c : '_';
+		}
+
+		out[length] = 0;
+		// (given with its ending: without)
+		if (length > 5 && _stricmp(out + length - 5, "_awdm") == 0)
+		{
+			out[length - 5] = 0;
+		}
+
+		return out[0] != 0;
+	}
+
+	bool save_clip(const std::uint32_t end_ms)
+	{
+		char source[MAX_PATH];
+		EnterCriticalSection(&g_lock);
+		if (g_file)
+		{
+			fflush(g_file);
+		}
+
+		strcpy_s(source, g_file_path);
+		LeaveCriticalSection(&g_lock);
+		char path[MAX_PATH], info_from[MAX_PATH], info_to[MAX_PATH];
+		sprintf_s(path, "%s\\%s.awdm", g_folder, g_clip_name);
+		sprintf_s(info_from, "%s.txt", source);
+		sprintf_s(info_to, "%s.txt", path);
+		FILE* in = _fsopen(source, "rb", _SH_DENYNO);
+		FILE* out = nullptr;
+		if (!in || fopen_s(&out, path, "wb") != 0 || !out)
+		{
+			if (in)
+			{
+				fclose(in);
+			}
+
+			return false;
+		}
+
+		std::uint32_t header[3] = {}, head[3] = {};
+		std::vector<unsigned char> payload;
+		unsigned kept = 0;
+		bool good = fread(header, sizeof(header), 1, in) == 1 && fwrite(header, sizeof(header), 1, out) == 1;
+		while (good && fread(head, sizeof(head), 1, in) == 1 && head[2] != 0 && head[2] <= MAX_MESSAGE && head[0] <= end_ms)
+		{
+			const bool message = head[1] != KIND_PREDICTED && head[1] != KIND_PLAYER_STATE;
+			payload.resize(head[2] + (message ? MSG_SIZE : 0));
+			if (fread(payload.data(), 1, payload.size(), in) != payload.size())
+			{
+				break;
+			}
+
+			head[0] = head[0] > g_clip_start ? head[0] - g_clip_start : 0;
+			good = fwrite(head, sizeof(head), 1, out) == 1 && fwrite(payload.data(), 1, payload.size(), out) == payload.size();
+			++kept;
+		}
+
+		fclose(in);
+		fclose(out);
+		good = good && kept > 0 && CopyFileA(info_from, info_to, FALSE);
+		log_line("recording %s: %u records kept, from %.1f s to %.1f s of the match%s", g_clip_name, kept, g_clip_start / 1000.0,
+		         end_ms == UINT32_MAX ? (g_last_message - g_file_start) / 1000.0 : end_ms / 1000.0, good ? "" : " (NOT written whole)");
+		return good;
+	}
+
+	void finish_clip()
+	{
+		if (g_clip)
+		{
+			g_clip = false;
+			save_clip(UINT32_MAX);
+		}
+	}
+
+	void command_record()
+	{
+		char name[64];
+		if (!g_file || g_play != Play::Idle)
+		{
+			show("S1iris: start a private match first, then record");
+			log_line("record: no match is being recorded");
+			return;
+		}
+
+		if (!clean_name(command_argument(1), name, sizeof(name)))
+		{
+			SYSTEMTIME t;
+			GetLocalTime(&t);
+			sprintf_s(name, "demo_%02d%02d%02d", t.wHour, t.wMinute, t.wSecond);
+		}
+
+		strcpy_s(g_clip_name, name);
+		g_clip_start = static_cast<std::uint32_t>(GetTickCount64() - g_file_start);
+		g_clip = true;
+		char text[128];
+		sprintf_s(text, "S1iris: recording %s (stoprecord ends it)", name);
+		show(text);
+		log_line("record: %s from %.1f s of the match", name, g_clip_start / 1000.0);
+	}
+
+	void command_stoprecord()
+	{
+		if (!g_clip)
+		{
+			show("S1iris: nothing is being recorded by name");
+			return;
+		}
+
+		g_clip = false;
+		const bool good = save_clip(static_cast<std::uint32_t>(GetTickCount64() - g_file_start));
+		char text[160];
+		sprintf_s(text, good ? "S1iris: %s saved (demo %s plays it)" : "S1iris: %s could not be saved", g_clip_name, g_clip_name);
+		show(text);
+	}
+
+	void command_demo()
+	{
+		char name[64], path[MAX_PATH];
+		if (!clean_name(command_argument(1), name, sizeof(name)))
+		{
+			log_line("demo: which one? (demo <name>)");
+			return;
+		}
+
+		sprintf_s(path, "%s\\%s.awdm", g_folder, name);
+		if (GetFileAttributesA(path) == INVALID_FILE_ATTRIBUTES)
+		{
+			show("S1iris: there is no recording of that name");
+			log_line("demo: %s is not there", path);
+			return;
+		}
+
+		strcat_s(name, ".awdm");
+		theater_play(name);
+	}
+
+	// (once, on the game's own thread: its list of commands is its own)
+	void add_commands()
+	{
+		static unsigned char storage[6][0x40];
+		static const struct
+		{
+			const char* name;
+			void (*function)();
+		} COMMANDS[] = {{"record", command_record}, {"stoprecord", command_stoprecord}, {"demo", command_demo},
+		                {"iris_record", command_record}, {"iris_stoprecord", command_stoprecord}, {"iris_demo", command_demo}};
+		__try
+		{
+			for (int i = 0; i < 6; ++i)
+			{
+				reinterpret_cast<void (*)(const char*, void (*)(), void*)>(CMD_ADD_COMMAND)(COMMANDS[i].name, COMMANDS[i].function, storage[i]);
+			}
+
+			log_line("commands: record <name>, stoprecord, demo <name> (and the same with iris_ before them)");
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			log_line("commands: could NOT be added");
+		}
+	}
+
 	int hooked_time_scale_msec(const int msec)
 	{
+		static bool commands_added = false;
+		if (!commands_added)
+		{
+			commands_added = true;
+			add_commands();
+		}
+
 		// Playback's step is taken here, at the start of the game's frame and nowhere else. The game
 		// writes the client's packet, and reads the server's, from inside its drawing of a frame as well:
 		// a recording's first messages given there (when going back) restart the client game under the
@@ -2413,7 +2620,7 @@ int theater_recordings(RecordingInfo* out, const int max)
 	};
 	static std::vector<Known> known;
 	char pattern[MAX_PATH];
-	sprintf_s(pattern, "%s\\rec_*.awdm.txt", g_folder);
+	sprintf_s(pattern, "%s\\*.awdm.txt", g_folder);
 	WIN32_FIND_DATAA found;
 	const HANDLE search = FindFirstFileA(pattern, &found);
 	if (search == INVALID_HANDLE_VALUE)
@@ -2421,14 +2628,21 @@ int theater_recordings(RecordingInfo* out, const int max)
 		return 0;
 	}
 
-	std::vector<std::string> names;
+	// (the named ones too; newest first by when they were written)
+	std::vector<std::pair<std::uint64_t, std::string>> dated;
 	do
 	{
 		std::string name = found.cFileName;
-		names.push_back(name.substr(0, name.size() - 4));
+		dated.push_back({(static_cast<std::uint64_t>(found.ftLastWriteTime.dwHighDateTime) << 32) | found.ftLastWriteTime.dwLowDateTime,
+		                 name.substr(0, name.size() - 4)});
 	} while (FindNextFileA(search, &found));
 	FindClose(search);
-	std::sort(names.begin(), names.end(), [](const std::string& a, const std::string& b) { return a > b; });
+	std::sort(dated.begin(), dated.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+	std::vector<std::string> names;
+	for (const auto& entry : dated)
+	{
+		names.push_back(entry.second);
+	}
 	int count = 0;
 	for (const std::string& name : names)
 	{

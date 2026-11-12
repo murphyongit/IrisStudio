@@ -109,6 +109,30 @@ namespace
 		char text[96];
 		snprintf(text, sizeof(text), "effects: the game has %d effects loaded", count);
 		theater_log(text);
+		// (the weather's, by name, to know what a map's rain is made of)
+		std::string weather;
+		for (const std::string& name : g_names)
+		{
+			for (const char* word : {"rain", "mist", "fog", "lightning", "thunder", "storm", "puddle", "drip", "splash", "weather", "cloud", "wind"})
+			{
+				if (name.find(word) != std::string::npos)
+				{
+					weather += name + " ";
+					break;
+				}
+			}
+
+			if (weather.size() > 900)
+			{
+				theater_log(("effects: weather: " + weather).c_str());
+				weather.clear();
+			}
+		}
+
+		if (!weather.empty())
+		{
+			theater_log(("effects: weather: " + weather).c_str());
+		}
 	}
 
 	void fire(const PlacedEffect& placed)
