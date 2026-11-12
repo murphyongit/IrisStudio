@@ -1170,6 +1170,15 @@ namespace
 		// drawing's feet (the crashes at 0x1401AFEEA and 0x14013C376).
 		run_commands();
 		play_tick();
+		if (g_play == Play::Playing)
+		{
+			// The client keeps a count of the commands it has for the server that the server has not
+			// taken yet, and gives the match up at 128 ("EXE_DISCONNECTED"). A recording takes them all;
+			// that was only said when a message was given, so with time frozen, or at the recording's
+			// end, the count ran up (every setting changed in the Look tab is such a command).
+			*reinterpret_cast<std::int32_t*>(CLC_RELIABLE_ACKNOWLEDGE) = *reinterpret_cast<std::int32_t*>(CLC_RELIABLE_SEQUENCE);
+		}
+
 		if (g_play != Play::Playing)
 		{
 			return g_original_time_scale_msec(msec);
