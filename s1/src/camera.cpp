@@ -37,7 +37,7 @@ namespace
 	using get_fov_t = float (*)(int);
 	get_fov_t g_original_get_fov = nullptr;
 	std::atomic<float> g_game_fov{65.0f};
-	std::atomic<bool> g_body{false};
+	std::atomic<bool> g_body{true};
 	bool g_body_set = false;
 
 	struct Pose

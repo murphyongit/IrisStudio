@@ -32,7 +32,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.28 (recorder, playback, IrisStudio's editor)";
+	constexpr char VERSION[] = "0.29 (recorder, playback, IrisStudio's editor)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -217,6 +217,7 @@ namespace
 	// what the panel asks for: a place in the recording (ms; -1 for none), and how long the recording is
 	std::atomic<std::int64_t> g_seek_request{-1};
 	std::atomic<std::uint32_t> g_length_ms{0};
+	std::uint64_t g_playback_number = 0;
 	char g_shown_name[96] = {}, g_shown_map[64] = {};
 	HMODULE g_module = nullptr;
 	// a snapshot has to be given at once, whatever the clock says (after going back: the client has none)
@@ -645,6 +646,7 @@ namespace
 		g_predicted_given = 0;
 		g_predicted_missed = 0;
 		g_length_ms = g_records.empty() ? 0 : g_records.back().ms;
+		++g_playback_number;
 		{
 			const char* slash = strrchr(g_play_name, '\\');
 			strncpy_s(g_shown_name, slash ? slash + 1 : g_play_name, _TRUNCATE);
@@ -1360,6 +1362,34 @@ namespace
 		{
 			++g_menus_kept_shut;
 			return;
+		}
+
+		// which of the server's values for the menus and HUD change in a recording, and when: each name
+		// is logged the first time it changes in a playback (the HUD's parts and the screen effects of
+		// a dash are driven by these)
+		if (g_play == Play::Playing && def && *def)
+		{
+			static std::mutex lock;
+			static std::vector<std::string> seen;
+			static std::uint64_t seen_for = ~0ull;
+			std::lock_guard<std::mutex> guard(lock);
+			if (seen_for != g_playback_number)
+			{
+				seen_for = g_playback_number;
+				seen.clear();
+			}
+
+			bool known = false;
+			for (const std::string& name : seen)
+			{
+				known = known || name == *def;
+			}
+
+			if (!known && seen.size() < 400)
+			{
+				seen.emplace_back(*def);
+				log_line("omnvar: %s first changes at %.2f s (type %d)", *def, g_clock.load() / 1000.0, reinterpret_cast<const int*>(def)[3]);
+			}
 		}
 
 		g_original_omnvar_update(client, def, value, state);

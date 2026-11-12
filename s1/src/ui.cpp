@@ -521,8 +521,7 @@ namespace
 			}
 
 			ImGui::PushTextWrapPos(0.0f);
-			ImGui::TextDisabled("Draws your own soldier (the game's third person) in the Third person, Free and Dolly cameras, in place of the "
-			                    "arms and gun. Untested in Advanced Warfare: if the demo stops when it is ticked, say so.");
+			ImGui::TextDisabled("Your own soldier in place of the arms and gun, in the Third person, Free and Dolly cameras.");
 			ImGui::PopTextWrapPos();
 		}
 
@@ -575,20 +574,27 @@ namespace
 		(void)state;
 	}
 
-	// The HUD's parts, by the game's own settings (the names the engine family uses; they are set
-	// through the console). F3 switches the first, which takes all of the HUD with it.
+	// The HUD's rows as IrisStudio has them (VisualsMenu's RenderHud). In Advanced Warfare the HUD is
+	// the game's menu system's and only two of the game's settings are known to act on it: cg_draw2D
+	// (all of it) and cg_drawGun. The rows with no setting are shown but cannot be switched yet.
 	struct HudPart
 	{
 		const char* label;
-		const char* setting;
+		const char* setting;  // null: not found yet
 		bool shown;
 	};
-	HudPart g_hud[] = {{"2D Elements", "cg_draw2D", true}, {"Player HUD", "hud_drawHud", true}, {"Crosshair", "cg_drawCrosshair", true},
-	                   {"Gun", "cg_drawGun", true}};
+	HudPart g_hud[] = {{"2D Elements", "cg_draw2D", true},   {"Player HUD", nullptr, true},     {"Shellshock/Flashbang", nullptr, true},
+	                   {"Crosshair", nullptr, true},         {"Score", nullptr, true},          {"Icons and Text", nullptr, true},
+	                   {"Blood Overlay", nullptr, true},     {"Killfeed", nullptr, true},       {"Gun", "cg_drawGun", true}};
 	bool g_hud_changed = false;
 
 	void set_hud(HudPart& part, const bool shown)
 	{
+		if (!part.setting || part.shown == shown)
+		{
+			return;
+		}
+
 		part.shown = shown;
 		g_hud_changed = true;
 		char text[64];
@@ -598,23 +604,58 @@ namespace
 
 	void draw_hud_section()
 	{
-		if (!section(ICON_SLIDERS, "HUD"))
+		const bool open = section(ICON_SLIDERS, "HUD");
+		// "Reset" at the header's right, as IrisStudio's sections have it
+		{
+			const char* label = "Reset";
+			const ImGuiStyle& style = ImGui::GetStyle();
+			const float width = ImGui::CalcTextSize(label).x + style.FramePadding.x * 2.0f;
+			ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - width - style.FramePadding.x);
+			if (ImGui::SmallButton(label))
+			{
+				for (HudPart& part : g_hud)
+				{
+					set_hud(part, true);
+				}
+			}
+		}
+
+		if (!open)
 		{
 			return;
 		}
 
+		const bool all = g_hud[0].shown;
 		for (HudPart& part : g_hud)
 		{
+			const bool first = &part == &g_hud[0], gun = part.setting && !first;
+			if (!all && !first && !gun)
+			{
+				// as in IrisStudio: the parts are under "2D Elements"
+				continue;
+			}
+
 			bool shown = part.shown;
-			ImGui::PushID(part.setting);
-			row_label(&part == &g_hud[0] ? "2D Elements (F3)" : part.label);
+			ImGui::PushID(part.label);
+			ImGui::BeginDisabled(!part.setting);
+			row_label(part.label);
 			if (ImGui::Checkbox("##shown", &shown))
 			{
 				set_hud(part, shown);
 			}
 
+			ImGui::EndDisabled();
+			if (!part.setting && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+			{
+				ImGui::SetTooltip("Not found in Advanced Warfare yet");
+			}
+
 			ImGui::PopID();
 		}
+
+		ImGui::PushTextWrapPos(0.0f);
+		ImGui::TextDisabled("F3 switches 2D Elements. The greyed rows are not wired up for Advanced Warfare yet.");
+		ImGui::PopTextWrapPos();
 	}
 
 	void draw_panel(const TheaterState& state, const CameraState& camera, const ImVec2 size)
@@ -1097,10 +1138,13 @@ namespace
 				g_hud_changed = false;
 				for (HudPart& part : g_hud)
 				{
-					part.shown = true;
-					char text[64];
-					snprintf(text, sizeof(text), "%s 1", part.setting);
-					theater_command(text);
+					if (part.setting)
+					{
+						part.shown = true;
+						char text[64];
+						snprintf(text, sizeof(text), "%s 1", part.setting);
+						theater_command(text);
+					}
 				}
 			}
 		}
