@@ -30,7 +30,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.15 (recorder, playback with rewind)";
+	constexpr char VERSION[] = "0.16 (recorder, playback with rewind)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -81,12 +81,9 @@ namespace
 	constexpr uintptr_t CG_LATEST_SNAPSHOT_NUM = 0x1414C66FC, CG_LATEST_SNAPSHOT_TIME = 0x1414C6700;
 	constexpr uintptr_t CG_SNAP = 0x1414C6708, CG_NEXT_SNAP = 0x1414C6710, CG_PROCESSED_SNAPSHOT_NUM = 0x141646C9C;
 	constexpr std::uint32_t BACK_MS = 10000;
-	// Messages are given this long before the client's time reaches theirs, as a server's come ahead of
-	// what the client shows: the client game then always has a snapshot to go to, and shows the time
-	// between two of them (with none ahead it carries the last one on, and the view does not turn).
-	constexpr std::uint32_t LEAD_MS = 100;
-	// the recording's server time less its own clock differs by more than this only after a jump
-	constexpr double TIME_JUMP_MS = 200.0;
+	// Messages more than this behind playback's clock are a jump's (a skip, or going back): they are given
+	// at the frame's start, as fast as the game takes them.
+	constexpr std::uint32_t BEHIND_MS = 250;
 	// void SV_Frame(int msec): the local server's step, from the game's frame
 	constexpr uintptr_t SV_FRAME = 0x1404425B0;
 	// gentity_s* SV_AddBot(const char* name), gentity_s* SV_AddTestClient(int) (s1-mod)
@@ -196,10 +193,8 @@ namespace
 	std::atomic<bool> g_back_request{false}, g_restart_request{false};
 	// a snapshot has to be given at once, whatever the clock says (after going back: the client has none)
 	bool g_need_snapshot = false;
-	// The recording's server time less its clock (a message's snapshot's time less the time it came at),
-	// smoothed: what the client's time is kept by. None until a snapshot has been given.
-	double g_time_offset = 0.0;
-	bool g_have_time_offset = false;
+	// the client's time is to be set to the next snapshot's, once one has been given after going back
+	bool g_resync_time = false;
 	std::atomic<std::uint64_t> g_predicted_given{0}, g_predicted_missed{0};
 	size_t g_next_record = 0;
 	ULONGLONG g_play_start = 0, g_play_asked = 0, g_play_report = 0;
@@ -650,6 +645,29 @@ namespace
 		}
 	}
 
+	// The view angles of the snapshots the client game is at and is going to (a player state's are at
+	// +0x90, +0x94), for the log: whether the recording's player turns in them.
+	void log_view()
+	{
+		__try
+		{
+			const auto* at = *reinterpret_cast<const unsigned char**>(CG_SNAP);
+			const auto* next = *reinterpret_cast<const unsigned char**>(CG_NEXT_SNAP);
+			if (at && next)
+			{
+				float a[2], n[2];
+				memcpy(a, at + 0x90, sizeof(a));
+				memcpy(n, next + 0x90, sizeof(n));
+				log_line("  view: at snapshot of time %d, pitch %.1f yaw %.1f; going to time %d, pitch %.1f yaw %.1f; demo type the game has %d",
+				         *reinterpret_cast<const std::int32_t*>(at + 0x5B70), a[0], a[1], *reinterpret_cast<const std::int32_t*>(next + 0x5B70),
+				         n[0], n[1], *reinterpret_cast<const std::int32_t*>(0x1414C66E8));
+			}
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+		}
+	}
+
 	// ticks after going back whose state is logged
 	int g_log_ticks = 0;
 
@@ -682,53 +700,24 @@ namespace
 		}
 	}
 
-	// The client's time kept by playback's clock. The game would keep it by the snapshots' coming (and
-	// right at the newest one's time, there being no network between): its own adjusting is switched off
-	// by telling it no snapshot is new, and the time is set from the clock and the recording's own times.
-	void keep_time(const std::uint32_t last_given_ms, const bool given)
+	// The client's time put at the snapshot it now has (the game itself never sets it back).
+	void resync_time()
 	{
 		__try
 		{
-			if (!*reinterpret_cast<std::int32_t*>(CL_SNAP_VALID) || connection_state() != CA_ACTIVE)
+			if (*reinterpret_cast<std::int32_t*>(CL_SNAP_VALID))
 			{
-				return;
-			}
-
-			bool jump = false;
-			if (given)
-			{
-				const double offset = static_cast<double>(*reinterpret_cast<std::int32_t*>(CL_SNAP_SERVER_TIME)) -
-					static_cast<double>(last_given_ms);
-				if (!g_have_time_offset || offset - g_time_offset > TIME_JUMP_MS || g_time_offset - offset > TIME_JUMP_MS)
-				{
-					g_time_offset = offset;
-					g_have_time_offset = true;
-					jump = true;
-				}
-				else
-				{
-					g_time_offset += (offset - g_time_offset) * 0.05;
-				}
-			}
-
-			if (!g_have_time_offset)
-			{
-				return;
-			}
-
-			const auto time = static_cast<std::int32_t>(g_time_offset + static_cast<double>(g_clock.load()));
-			*reinterpret_cast<std::int32_t*>(CL_SERVER_TIME_DELTA) = time - *reinterpret_cast<std::int32_t*>(CLS_REALTIME);
-			*reinterpret_cast<std::int32_t*>(CL_NEW_SNAPSHOTS) = 0;
-			if (jump)
-			{
-				// the game never sets its time back itself
+				const std::int32_t time = *reinterpret_cast<std::int32_t*>(CL_SNAP_SERVER_TIME);
+				*reinterpret_cast<std::int32_t*>(CL_SERVER_TIME_DELTA) = time - *reinterpret_cast<std::int32_t*>(CLS_REALTIME);
 				*reinterpret_cast<std::int32_t*>(CL_SERVER_TIME) = time;
 				*reinterpret_cast<std::int32_t*>(CL_OLD_SERVER_TIME) = time;
 				*reinterpret_cast<std::int32_t*>(CL_OLD_FRAME_SERVER_TIME) = 0;
+				g_resync_time = false;
 			}
 		}
 		__except (EXCEPTION_EXECUTE_HANDLER)
 		{
+			g_resync_time = false;
 		}
 	}
 
@@ -749,16 +738,25 @@ namespace
 		g_clock = ms;
 		g_clock_fraction = 0.0f;
 		g_need_snapshot = true;
-		g_have_time_offset = false;
+		g_resync_time = true;
 		log_line("playback: back to %.1f s", ms / 1000.0);
 	}
 
 	// Playback's step. On the main thread whenever the client has a message from the local match or would
 	// send its packet; from the key thread (main false) only what cannot wait for those: a start or a stop
 	// while nothing is being played.
-	void play_step(const bool main)
+	void play_step(const bool main, const bool frame_start)
 	{
-		if (g_stop_request && (main || g_play != Play::Playing))
+		if (main && !frame_start)
+		{
+			// in the drawing of a frame: only the messages of a match under way
+			if (g_play != Play::Playing || g_feeding)
+			{
+				return;
+			}
+		}
+
+		if (g_stop_request && (main ? frame_start : g_play != Play::Playing))
 		{
 			g_stop_request = false;
 			stop_playback("F10");
@@ -795,7 +793,7 @@ namespace
 				g_pause_request = g_slower_request = g_faster_request = g_skip_request = false;
 				g_back_request = g_restart_request = false;
 				g_need_snapshot = false;
-				g_have_time_offset = false;
+				g_resync_time = false;
 				g_play = Play::Playing;
 				g_play_start = now;
 				g_play_report = now;
@@ -823,81 +821,99 @@ namespace
 			return;
 		}
 
-		if (g_pause_request.exchange(false))
+		if (frame_start)
 		{
-			g_paused = !g_paused;
-			show(g_paused ? "S1iris: paused" : "S1iris: playing");
-		}
+			if (g_pause_request.exchange(false))
+			{
+				g_paused = !g_paused;
+				show(g_paused ? "S1iris: paused" : "S1iris: playing");
+			}
 
-		const bool slower = g_slower_request.exchange(false), faster = g_faster_request.exchange(false);
-		if (slower != faster)
-		{
-			const int count = static_cast<int>(sizeof(SPEEDS) / sizeof(SPEEDS[0]));
-			const int speed = g_speed + (faster ? 1 : -1);
-			g_speed = speed < 0 ? 0 : speed >= count ? count - 1 : speed;
-			char text[64];
-			sprintf_s(text, "S1iris: speed %gx", SPEEDS[g_speed]);
-			show(text);
-		}
+			const bool slower = g_slower_request.exchange(false), faster = g_faster_request.exchange(false);
+			if (slower != faster)
+			{
+				const int count = static_cast<int>(sizeof(SPEEDS) / sizeof(SPEEDS[0]));
+				const int speed = g_speed + (faster ? 1 : -1);
+				g_speed = speed < 0 ? 0 : speed >= count ? count - 1 : speed;
+				char text[64];
+				sprintf_s(text, "S1iris: speed %gx", SPEEDS[g_speed]);
+				show(text);
+			}
 
-		if (g_skip_request.exchange(false))
-		{
-			g_clock += SKIP_MS;
-			show("S1iris: 10 seconds on");
-		}
+			if (g_skip_request.exchange(false))
+			{
+				g_clock += SKIP_MS;
+				show("S1iris: 10 seconds on");
+			}
 
-		if (g_back_request.exchange(false))
-		{
-			const std::uint64_t clock = g_clock;
-			go_back_to(clock > BACK_MS ? clock - BACK_MS : 0);
-			show("S1iris: 10 seconds back");
-		}
+			if (g_back_request.exchange(false))
+			{
+				const std::uint64_t clock = g_clock;
+				go_back_to(clock > BACK_MS ? clock - BACK_MS : 0);
+				show("S1iris: 10 seconds back");
+			}
 
-		if (g_restart_request.exchange(false))
-		{
-			go_back_to(0);
-			show("S1iris: from the start");
-		}
+			if (g_restart_request.exchange(false))
+			{
+				go_back_to(0);
+				show("S1iris: from the start");
+			}
 
-		if (g_log_ticks > 0)
-		{
-			--g_log_ticks;
-			log_stream("tick");
+			if (g_log_ticks > 0)
+			{
+				--g_log_ticks;
+				log_stream("tick");
+			}
 		}
 
 		const auto elapsed = static_cast<std::uint32_t>(g_clock.load());
-		bool given_any = false;
-		std::uint32_t last_given_ms = 0;
-		for (int given = 0; given < 100 && g_next_record < g_records.size(); ++given)
+		// Where the messages are given. In a match under way: where the client would send its packet, in
+		// the game's drawing of a frame, the place the game has a server's messages at itself when it
+		// draws (0.14 and 0.15 gave them at the frame's start, and the view no longer turned). At the
+		// frame's start: what cannot be given there. The recording's first messages restart the client
+		// game, which the drawing does not survive (going back), and before the first snapshot there is
+		// no drawing to give them in.
+		const bool behind = g_next_record < g_records.size() && g_records[g_next_record].ms + BEHIND_MS <= elapsed;
+		const bool at_start = state != CA_ACTIVE || g_need_snapshot || behind;
+		if (frame_start == at_start)
 		{
-			const bool due = g_records[g_next_record].ms <= elapsed + LEAD_MS;
-			if (!due && !(g_need_snapshot && !*reinterpret_cast<const std::int32_t*>(CL_SNAP_VALID)))
+			for (int given = 0; given < 100 && g_next_record < g_records.size(); ++given)
 			{
-				break;
+				if (g_records[g_next_record].ms > elapsed && !(g_need_snapshot && !*reinterpret_cast<const std::int32_t*>(CL_SNAP_VALID)))
+				{
+					break;
+				}
+
+				if (!feed_guarded(g_records[g_next_record]))
+				{
+					log_line("playback: message %zu could not be parsed (a fault in the game)", g_next_record);
+					stop_playback("a message the game could not take");
+					return;
+				}
+
+				++g_next_record;
+				if (g_resync_time)
+				{
+					resync_time();
+				}
 			}
 
-			if (!feed_guarded(g_records[g_next_record]))
+			if (*reinterpret_cast<const std::int32_t*>(CL_SNAP_VALID))
 			{
-				log_line("playback: message %zu could not be parsed (a fault in the game)", g_next_record);
-				stop_playback("a message the game could not take");
-				return;
+				g_need_snapshot = false;
 			}
-
-			last_given_ms = g_records[g_next_record].ms;
-			given_any = true;
-			++g_next_record;
 		}
 
-		if (*reinterpret_cast<const std::int32_t*>(CL_SNAP_VALID))
+		if (!frame_start)
 		{
-			g_need_snapshot = false;
+			return;
 		}
-
-		keep_time(last_given_ms, given_any);
 
 		if (now - g_play_report > 5000)
 		{
 			g_play_report = now;
+			log_stream("now");
+			log_view();
 			log_line("playback: %.0f s (speed %gx%s), %zu of %zu messages given, connection state %d, %llu local messages dropped, "
 			         "%llu bots refused, %llu server steps skipped; the player's position given %llu times, not found %llu; demo mode %s",
 			         elapsed / 1000.0, SPEEDS[g_speed], g_paused ? ", paused" : "", g_next_record, g_records.size(),
@@ -912,10 +928,10 @@ namespace
 		}
 	}
 
-	void play_tick(const bool main = true)
+	void play_tick(const bool main = true, const bool frame_start = true)
 	{
 		EnterCriticalSection(&g_play_lock);
-		play_step(main);
+		play_step(main, frame_start);
 		LeaveCriticalSection(&g_play_lock);
 	}
 
@@ -966,6 +982,7 @@ namespace
 
 	void hooked_write_packet(const int client)
 	{
+		play_tick(true, false);
 		if (g_play == Play::Playing)
 		{
 			// nothing of the viewer's goes to the local match
