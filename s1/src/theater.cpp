@@ -30,7 +30,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.16 (recorder, playback with rewind)";
+	constexpr char VERSION[] = "0.17 (recorder with the view, playback with rewind)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -122,6 +122,14 @@ namespace
 	// A record that is not a message has its kind where a message has its client (0): the player's
 	// predicted position for one command.
 	constexpr std::uint32_t KIND_PREDICTED = 0x44455250;
+	// The player's own view direction is not in the server's messages either (a snapshot's player state has
+	// none for the player it is sent to). With each predicted position the recording keeps the part of cl
+	// around the positions (cl+0x5200, 0xE0 bytes), which has cl->viewangles at cl+0x52D0; and once a
+	// second, as another kind of record, the start of the player state a snapshot was read into (0x120
+	// bytes), which has what the server adds to those angles.
+	constexpr size_t CL_BLOCK = 0x5200, CL_BLOCK_SIZE = 0xE0, CL_VIEWANGLES = 0x52D0;
+	constexpr std::uint32_t KIND_PLAYER_STATE = 0x41545350;
+	constexpr size_t PLAYER_STATE_SIZE = 0x120, PS_VIEWANGLES = 0x90;
 	constexpr int HOOK_DELAY_S = 25;
 	// the match's map is surely the game's by this many messages (2 s)
 	constexpr std::uint64_t MATCH_INFO_AT = 40;
@@ -166,6 +174,13 @@ namespace
 
 	static_assert(sizeof(Predicted) == 36);
 
+	// A predicted position as playback keeps it: with the view direction, where the recording has one.
+	struct PredictedView : Predicted
+	{
+		float viewangles[3] = {};
+		bool hasView = false;
+	};
+
 	enum class Play
 	{
 		Idle,
@@ -179,7 +194,7 @@ namespace
 	std::atomic<Play> g_play{Play::Idle};
 	std::vector<Record> g_records;
 	// the recording's predicted positions, in the order of their times
-	std::vector<Predicted> g_predicted;
+	std::vector<PredictedView> g_predicted;
 	// the game's own demo mode while a recording plays (F8)
 	std::atomic<bool> g_demo_mode{true};
 	// Playback's clock: the game's own milliseconds since the recording took over, as playback's
@@ -474,15 +489,39 @@ namespace
 
 			if (head[1] == KIND_PREDICTED)
 			{
-				Predicted predicted;
-				if (head[2] != sizeof(predicted) || fread(&predicted, sizeof(predicted), 1, file) != 1)
+				PredictedView predicted;
+				unsigned char block[CL_BLOCK_SIZE];
+				if ((head[2] != sizeof(Predicted) && head[2] != sizeof(Predicted) + sizeof(block)) ||
+				    fread(static_cast<Predicted*>(&predicted), sizeof(Predicted), 1, file) != 1)
 				{
 					break;
+				}
+
+				if (head[2] > sizeof(Predicted))
+				{
+					if (fread(block, sizeof(block), 1, file) != 1)
+					{
+						break;
+					}
+
+					memcpy(predicted.viewangles, block + (CL_VIEWANGLES - CL_BLOCK), sizeof(predicted.viewangles));
+					predicted.hasView = true;
 				}
 
 				if (g_predicted.empty() || predicted.serverTime > g_predicted.back().serverTime)
 				{
 					g_predicted.push_back(predicted);
+				}
+
+				continue;
+			}
+
+			if (head[1] == KIND_PLAYER_STATE)
+			{
+				// for study only
+				if (fseek(file, static_cast<long>(head[2]), SEEK_CUR) != 0)
+				{
+					break;
 				}
 
 				continue;
@@ -1094,9 +1133,10 @@ namespace
 			memcpy(&predicted.bobCycle, cl + CL_BOB_CYCLE, sizeof(predicted.bobCycle));
 			memcpy(&predicted.movementDir, cl + CL_MOVEMENT_DIR, sizeof(predicted.movementDir));
 			const std::uint32_t head[3] = {static_cast<std::uint32_t>(GetTickCount64() - g_file_start), KIND_PREDICTED,
-			                               static_cast<std::uint32_t>(sizeof(predicted))};
+			                               static_cast<std::uint32_t>(sizeof(predicted) + CL_BLOCK_SIZE)};
 			fwrite(head, sizeof(head), 1, g_file);
 			fwrite(&predicted, sizeof(predicted), 1, g_file);
+			fwrite(cl + CL_BLOCK, CL_BLOCK_SIZE, 1, g_file);
 		}
 
 		LeaveCriticalSection(&g_lock);
@@ -1106,6 +1146,23 @@ namespace
 	bool hooked_get_predicted(unsigned char* cl, const int server_time, unsigned char* ps)
 	{
 		const bool found = g_original_get_predicted(cl, server_time, ps);
+		if (g_play == Play::Idle && ps)
+		{
+			EnterCriticalSection(&g_lock);
+			static ULONGLONG last = 0;
+			const ULONGLONG now = GetTickCount64();
+			if (g_file && now - last >= 1000)
+			{
+				last = now;
+				const std::uint32_t head[3] = {static_cast<std::uint32_t>(now - g_file_start), KIND_PLAYER_STATE,
+				                               static_cast<std::uint32_t>(PLAYER_STATE_SIZE)};
+				fwrite(head, sizeof(head), 1, g_file);
+				fwrite(ps, PLAYER_STATE_SIZE, 1, g_file);
+			}
+
+			LeaveCriticalSection(&g_lock);
+		}
+
 		if (g_play != Play::Playing || !ps || g_predicted.empty())
 		{
 			return found;
@@ -1137,6 +1194,11 @@ namespace
 		memcpy(ps + PS_VELOCITY, predicted.velocity, sizeof(predicted.velocity));
 		ps[PS_BOB_CYCLE] = static_cast<unsigned char>(predicted.bobCycle);
 		memcpy(ps + PS_MOVEMENT_DIR, &predicted.movementDir, sizeof(predicted.movementDir));
+		if (predicted.hasView)
+		{
+			memcpy(ps + PS_VIEWANGLES, predicted.viewangles, sizeof(predicted.viewangles));
+		}
+
 		++g_predicted_given;
 		return true;
 	}
