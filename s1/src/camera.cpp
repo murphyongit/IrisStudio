@@ -620,6 +620,7 @@ namespace
 		const TheaterState state = theater_state();
 		// (the editor's effects are played here, early in the client game's frame, as the game's own are)
 		effects_game_frame(state);
+		models_game_frame(state);
 		const bool focus = state.playing && GetForegroundWindow() == ui_window() && !theater_keys_blocked();
 		const CameraMode mode_now = static_cast<CameraMode>(g_mode.load());
 		const bool f2 = focus && down(VK_F2);

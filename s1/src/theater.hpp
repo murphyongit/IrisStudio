@@ -128,8 +128,10 @@ void models_clear(int entity);
 bool models_pending(int entity);
 int models_slot(const char* name);
 int models_find(const char* text, int group, int slot, char names[][64], int max);
-int models_sets(char ids[][16], int max);
-int models_apply_set(int entity, const char* id);
+int models_sets(char names[][32], int max);
+int models_apply_set(int entity, const char* name);
+void models_status(char out[200]);
+void models_game_frame(const TheaterState& state);
 void models_frame(const TheaterState& state);
 void models_start();
 // effects.cpp: effects of the game's played in the scene.

@@ -1110,7 +1110,7 @@ namespace
 				// a player's outfit and weapon, part by part, each drawn as another model or left out
 				static const char* const SLOT_LABELS[] = {"Top", "Headgear", "Head", "Pants", "Gloves", "Boots", "Kneepads", "Loadout gear", "Eyewear", "Exo"};
 				static int entity = -1, target_slot = -1, group = 0;
-				static char target[64] = "", search[48] = "", set_id[16] = "";
+				static char target[64] = "", search[48] = "", set_id[32] = "";
 				static bool only_this_kind = true;
 				const BoneState players = camera_bone_state();
 				// (2048 is the first person's arms and gun: the game makes them like an entity's model)
@@ -1151,7 +1151,7 @@ namespace
 					ImGui::EndCombo();
 				}
 
-				static char parts[32][64], added[16][64], found[400][64], sets[64][16];
+				static char parts[32][64], added[16][64], found[400][64], sets[160][32];
 				const int part_count = entity >= 0 ? models_of(entity, parts, 32) : 0;
 				const int added_count = entity >= 0 ? models_added(entity, added, 16) : 0;
 				bool rebuilt = false;
@@ -1165,7 +1165,7 @@ namespace
 				else
 				{
 					// a whole set of gear at once, as the game's own outfit menu does
-					const int set_count = entity == FIRST_PERSON ? 0 : models_sets(sets, 64);
+					const int set_count = entity == FIRST_PERSON ? 0 : models_sets(sets, 160);
 					ImGui::BeginDisabled(entity == FIRST_PERSON);
 					row_label("Gear set");
 					ImGui::SetNextItemWidth(-ImGui::CalcTextSize("Apply").x - ImGui::GetStyle().FramePadding.x * 2.0f - ImGui::GetStyle().ItemSpacing.x);
@@ -1186,12 +1186,21 @@ namespace
 					ImGui::BeginDisabled(!set_id[0]);
 					if (ImGui::Button("Apply"))
 					{
+						// (the set's models are asked for from the game's files; it is put on when they are there)
 						models_apply_set(entity, set_id);
-						rebuilt = true;
 					}
 
 					ImGui::EndDisabled();
-					ImGui::SetItemTooltip("Every part of this player's outfit that this gear has, at once (the face stays)");
+					ImGui::SetItemTooltip("The game's own sets of gear, loot included: every part at once (the face stays)");
+					char gear_status[200];
+					models_status(gear_status);
+					if (gear_status[0])
+					{
+						ImGui::PushTextWrapPos(0.0f);
+						ImGui::TextDisabled("%s", gear_status);
+						ImGui::PopTextWrapPos();
+					}
+
 					ImGui::EndDisabled();
 					if (ImGui::Button("Reset this player"))
 					{
