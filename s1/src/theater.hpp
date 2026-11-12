@@ -23,3 +23,29 @@ void theater_log(const char* text);
 
 // Hooks the game's drawing so the panel is drawn over it. MinHook must be initialised.
 void ui_start();
+
+// The panel's side of the mouse (ui.cpp). The game puts the pointer back in the middle every frame; while
+// the panel or the free camera has the mouse it is kept from doing so.
+HWND ui_window();
+bool ui_mouse_is_panels();
+void ui_camera_has_mouse(bool on);
+// How far the pointer moved since the last call (it is put back in the middle of the game's window).
+void ui_take_mouse_motion(int* dx, int* dy);
+
+// The cameras (camera.cpp).
+struct CameraState
+{
+	bool free_camera = false, follow = false;
+	float fov = 80.0f, speed = 400.0f;
+	int points = 0;
+	std::uint32_t point_ms[64] = {};
+};
+
+CameraState camera_state();
+void camera_set_free(bool on);
+void camera_set_follow(bool on);
+void camera_set_speed(float speed);
+void camera_set_fov(float fov);
+void camera_add_point();
+void camera_clear_points();
+void camera_start();

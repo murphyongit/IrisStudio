@@ -5,8 +5,7 @@
 // the code) and hooked; the panel is drawn there, on the thread the game draws on. The game's window gets
 // a second window procedure in front of its own, which only keeps the messages for the drawing thread.
 //
-// F1 gives the mouse to the panel (and back): the game is told a menu has the keys (its "key catchers"),
-// which makes it let go of the mouse.
+// F1 gives the mouse to the panel (and back).
 #include "theater.hpp"
 
 #include <MinHook.h>
@@ -28,8 +27,14 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg
 
 namespace
 {
-	constexpr uintptr_t KEY_CATCHERS = 0x1417E168C;
-	constexpr int KEYCATCH_UI = 0x10;
+	// The game puts the pointer back in the middle of its window every frame and keeps it inside the
+	// window (SetCursorPos, ClipCursor). While the panel or the free camera has the mouse, those calls of
+	// the game's do nothing.
+	using set_cursor_pos_t = BOOL(WINAPI*)(int, int);
+	using clip_cursor_t = BOOL(WINAPI*)(const RECT*);
+	set_cursor_pos_t g_original_set_cursor_pos = nullptr;
+	clip_cursor_t g_original_clip_cursor = nullptr;
+	std::atomic<bool> g_camera_mouse{false};
 
 	using present_t = HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain*, UINT, UINT);
 	using resize_t = HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain*, UINT, UINT, UINT, DXGI_FORMAT, UINT);
@@ -64,6 +69,26 @@ namespace
 		vsnprintf(text, sizeof(text), format, args);
 		va_end(args);
 		theater_log(text);
+	}
+
+	BOOL WINAPI hooked_set_cursor_pos(const int x, const int y)
+	{
+		if (g_mouse || g_camera_mouse)
+		{
+			return TRUE;
+		}
+
+		return g_original_set_cursor_pos(x, y);
+	}
+
+	BOOL WINAPI hooked_clip_cursor(const RECT* rect)
+	{
+		if (g_mouse)
+		{
+			return g_original_clip_cursor(nullptr);
+		}
+
+		return g_original_clip_cursor(rect);
 	}
 
 	LRESULT CALLBACK window_proc(const HWND window, const UINT message, const WPARAM wparam, const LPARAM lparam)
@@ -156,6 +181,8 @@ namespace
 			dragging = true;
 		}
 
+		const ImVec2 bar_min = ImGui::GetItemRectMin(), bar_max = ImGui::GetItemRectMax();
+
 		// going back in a recording starts it over underneath, so only once the mouse lets go
 		if (dragging && ImGui::IsItemDeactivated())
 		{
@@ -210,6 +237,72 @@ namespace
 		ImGui::SameLine(0.0f, 24.0f);
 		ImGui::AlignTextToFramePadding();
 		ImGui::TextDisabled(g_mouse ? "F1: give the mouse back" : "F1: use the mouse here");
+
+		// the path's points, marked on the position bar
+		const CameraState camera = camera_state();
+		ImGui::Separator();
+		bool free_camera = camera.free_camera;
+		if (ImGui::Checkbox("Free camera (F2)", &free_camera))
+		{
+			camera_set_free(free_camera);
+		}
+
+		ImGui::SameLine(0.0f, 20.0f);
+		float fov = camera.fov;
+		ImGui::SetNextItemWidth(width * 0.16f);
+		if (ImGui::SliderFloat("##fov", &fov, 10.0f, 150.0f, "Field of view %.0f"))
+		{
+			camera_set_fov(fov);
+		}
+
+		ImGui::SameLine();
+		float speed = camera.speed;
+		ImGui::SetNextItemWidth(width * 0.16f);
+		if (ImGui::SliderFloat("##speed", &speed, 50.0f, 3000.0f, "Fly speed %.0f", ImGuiSliderFlags_Logarithmic))
+		{
+			camera_set_speed(speed);
+		}
+
+		ImGui::SameLine(0.0f, 20.0f);
+		ImGui::BeginDisabled(!camera.free_camera);
+		if (ImGui::Button("Add path point (K)"))
+		{
+			camera_add_point();
+		}
+
+		ImGui::EndDisabled();
+		ImGui::SameLine();
+		ImGui::BeginDisabled(camera.points < 2);
+		bool follow = camera.follow;
+		if (ImGui::Checkbox("Follow path (L)", &follow))
+		{
+			camera_set_follow(follow);
+		}
+
+		ImGui::EndDisabled();
+		ImGui::SameLine();
+		ImGui::BeginDisabled(camera.points == 0);
+		if (ImGui::Button("Clear path"))
+		{
+			camera_clear_points();
+		}
+
+		ImGui::EndDisabled();
+		ImGui::SameLine();
+		ImGui::AlignTextToFramePadding();
+		ImGui::TextDisabled("%d point%s", camera.points, camera.points == 1 ? "" : "s");
+		if (camera.free_camera)
+		{
+			ImGui::TextDisabled("Fly: W A S D, Space up, C down, Shift fast, Ctrl slow, Q E roll, mouse looks");
+		}
+
+		for (int i = 0; i < camera.points && i < 64; ++i)
+		{
+			const float at = bar_min.x + (bar_max.x - bar_min.x) * (state.length_ms ? camera.point_ms[i] / static_cast<float>(state.length_ms) : 0.0f);
+			ImGui::GetWindowDrawList()->AddTriangleFilled({at - 5.0f, bar_min.y - 1.0f}, {at + 5.0f, bar_min.y - 1.0f}, {at, bar_min.y + 7.0f},
+			                                              IM_COL32(0xD4, 0xAA, 0x55, 0xFF));
+		}
+
 		ImGui::End();
 	}
 
@@ -248,14 +341,15 @@ namespace
 	void set_mouse(const bool on)
 	{
 		g_mouse = on;
-		int* catchers = reinterpret_cast<int*>(KEY_CATCHERS);
 		if (on)
 		{
-			*catchers |= KEYCATCH_UI;
+			if (g_original_clip_cursor)
+			{
+				g_original_clip_cursor(nullptr);
+			}
 		}
 		else
 		{
-			*catchers &= ~KEYCATCH_UI;
 			std::lock_guard<std::mutex> lock(g_messages_lock);
 			g_messages.clear();
 		}
@@ -296,12 +390,6 @@ namespace
 		if (g_mouse && !state.playing)
 		{
 			set_mouse(false);
-		}
-
-		if (g_mouse)
-		{
-			// the game clears it when its own menus close
-			*reinterpret_cast<int*>(KEY_CATCHERS) |= KEYCATCH_UI;
 		}
 
 		if (!state.playing)
@@ -388,8 +476,54 @@ namespace
 	}
 }
 
+HWND ui_window()
+{
+	return g_window;
+}
+
+bool ui_mouse_is_panels()
+{
+	return g_mouse;
+}
+
+void ui_camera_has_mouse(const bool on)
+{
+	g_camera_mouse = on;
+}
+
+void ui_take_mouse_motion(int* dx, int* dy)
+{
+	*dx = *dy = 0;
+	RECT rect{};
+	POINT now{};
+	if (!g_window || !g_original_set_cursor_pos || !GetClientRect(g_window, &rect) || !GetCursorPos(&now))
+	{
+		return;
+	}
+
+	POINT middle{(rect.right - rect.left) / 2, (rect.bottom - rect.top) / 2};
+	ClientToScreen(g_window, &middle);
+	*dx = now.x - middle.x;
+	*dy = now.y - middle.y;
+	if (*dx || *dy)
+	{
+		g_original_set_cursor_pos(middle.x, middle.y);
+	}
+}
+
 void ui_start()
 {
+	if (HMODULE user32 = GetModuleHandleA("user32.dll"))
+	{
+		void* set_pos = reinterpret_cast<void*>(GetProcAddress(user32, "SetCursorPos"));
+		void* clip = reinterpret_cast<void*>(GetProcAddress(user32, "ClipCursor"));
+		const bool hooked = set_pos && clip &&
+			MH_CreateHook(set_pos, reinterpret_cast<LPVOID>(&hooked_set_cursor_pos), reinterpret_cast<LPVOID*>(&g_original_set_cursor_pos)) == MH_OK &&
+			MH_CreateHook(clip, reinterpret_cast<LPVOID>(&hooked_clip_cursor), reinterpret_cast<LPVOID*>(&g_original_clip_cursor)) == MH_OK &&
+			MH_EnableHook(set_pos) == MH_OK && MH_EnableHook(clip) == MH_OK;
+		log("panel: the game's hold on the pointer %s", hooked ? "can be let go" : "can NOT be let go");
+	}
+
 	// a swap chain of our own, only to read where the code every swap chain shares is
 	WNDCLASSEXA window_class{sizeof(WNDCLASSEXA)};
 	window_class.lpfnWndProc = DefWindowProcA;

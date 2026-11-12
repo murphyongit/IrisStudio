@@ -30,7 +30,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.22 (recorder, playback with rewind, first panel)";
+	constexpr char VERSION[] = "0.23 (recorder, playback with rewind, panel, cameras)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -1730,6 +1730,7 @@ namespace
 				log_line("hook: playback's team and class menus %s, their value %s", menus ? "kept shut" : "NOT kept shut",
 				         values ? "cleared" : "NOT cleared");
 				ui_start();
+				camera_start();
 				if (HANDLE thread = CreateThread(nullptr, 0, &keys, nullptr, 0, nullptr))
 				{
 					CloseHandle(thread);
