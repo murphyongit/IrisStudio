@@ -9,6 +9,8 @@ void theater_start(HMODULE self);
 struct TheaterState
 {
 	bool playing = false, starting = false, paused = false;
+	bool settled = false;        // every message due has been given: the picture is where the clock is
+	float capture_fps = 0.0f;    // recording to video at this rate (0: not)
 	float speed = 1.0f;
 	std::uint32_t position_ms = 0, length_ms = 0;
 	char name[96] = {}, map[64] = {};
@@ -23,6 +25,16 @@ void theater_seek(std::uint32_t ms);
 void theater_set_speed(float speed);
 int theater_speed_steps(const float** steps);
 void theater_stop();
+void theater_set_paused(bool paused);
+// Recording: the clock goes on by one frame of this rate for every frame drawn (0 ends it).
+void theater_capture(float fps);
+// The game's settings ("dvars"): one by name, how many there are, one by its place in the sorted list.
+// A dvar's fields are read where they lie (theater.cpp has the layout).
+void* theater_dvar(const char* name);
+int theater_dvar_count();
+void* theater_dvar_at(int index);
+// The game's folder.
+const char* theater_folder();
 const char* theater_version();
 // A console command for the game, run at the next frame's start.
 void theater_command(const char* text);
@@ -37,6 +49,8 @@ void ui_start();
 // The panel's side of the mouse (ui.cpp). The game puts the pointer back in the middle every frame; while
 // the panel or the free camera has the mouse it is kept from doing so.
 HWND ui_window();
+// A text box of the editor has the keyboard.
+bool ui_typing();
 bool ui_mouse_is_panels();
 void ui_camera_has_mouse(bool on);
 // How far the pointer moved since the last call (it is put back in the middle of the game's window).

@@ -32,7 +32,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.29 (recorder, playback, IrisStudio's editor)";
+	constexpr char VERSION[] = "0.30 (recorder, playback, IrisStudio's editor)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -98,6 +98,14 @@ namespace
 	// dvar_t* Dvar_FindVar(const char* name) (s1-mod); a dvar's current value is at +0x10 (after its name,
 	// its flags, and its type and modified flag of a byte each)
 	constexpr uintptr_t DVAR_FIND_VAR = 0x1404BF8B0;
+	// every dvar, sorted by name: how many, and the pointers to them (s1-mod's symbols). A dvar: its
+	// name, flags at +8, type at +0xC, the current value at +0x10, the latched one at +0x20, the one it
+	// resets to at +0x30, its limits at +0x40 (s1-mod's structs).
+	constexpr uintptr_t DVAR_COUNT = 0x14B32AA30, SORTED_DVARS = 0x14B32AA50;
+	// CG_SetFrameInterpolation: how far the client game is between its two snapshots, from whole
+	// milliseconds (stored at 0x141557578)
+	constexpr uintptr_t CG_SET_FRAME_INTERPOLATION = 0x140193B50, CG_FRAME_INTERPOLATION = 0x141557578;
+	constexpr size_t CG_SNAPSHOT_SERVER_TIME = 0x5B70;
 	constexpr size_t DVAR_CURRENT = 0x10;
 	// clientUIActive.connectionState (s1-mod's rcon.cpp; CL_PacketEvent tests it)
 	constexpr uintptr_t CONNECTION_STATE = 0x1417E1690;
@@ -218,6 +226,11 @@ namespace
 	std::atomic<std::int64_t> g_seek_request{-1};
 	std::atomic<std::uint32_t> g_length_ms{0};
 	std::uint64_t g_playback_number = 0;
+	// every message due by the clock has been given (after a jump the picture takes some frames to arrive)
+	std::atomic<bool> g_settled{false};
+	// recording to video: the clock goes on by exactly a frame of this rate each frame the game draws,
+	// however long the frame took (0: not recording)
+	std::atomic<float> g_capture_fps{0.0f};
 	char g_shown_name[96] = {}, g_shown_map[64] = {};
 	HMODULE g_module = nullptr;
 	// a snapshot has to be given at once, whatever the clock says (after going back: the client has none)
@@ -607,6 +620,8 @@ namespace
 		}
 	}
 
+	void dump_dvars();
+
 	void stop_playback(const char* why)
 	{
 		if (g_play == Play::Idle)
@@ -879,6 +894,7 @@ namespace
 				g_play_start = now;
 				g_play_report = now;
 				log_line("playback: the client is ready (connection state %d); the recording is its server from here", state);
+			dump_dvars();
 			}
 			else if (now - g_play_asked > 120000 || (!g_seen_loading && now - g_play_asked > 30000))
 			{
@@ -970,6 +986,12 @@ namespace
 		// no drawing to give them in.
 		const bool behind = g_next_record < g_records.size() && g_records[g_next_record].ms + BEHIND_MS <= elapsed;
 		const bool at_start = state != CA_ACTIVE || g_need_snapshot || behind;
+		if (frame_start)
+		{
+			g_settled = state == CA_ACTIVE && !g_need_snapshot && g_seek_request < 0 &&
+				(g_next_record >= g_records.size() || g_records[g_next_record].ms > elapsed);
+		}
+
 		if (frame_start == at_start)
 		{
 			for (int given = 0; given < 100 && g_next_record < g_records.size(); ++given)
@@ -1156,7 +1178,8 @@ namespace
 			return 0;
 		}
 
-		g_clock_fraction += static_cast<float>(msec > 200 ? 200 : msec) * SPEEDS[g_speed];
+		const float capture = g_capture_fps;
+		g_clock_fraction += (capture > 0.0f ? 1000.0f / capture : static_cast<float>(msec > 200 ? 200 : msec)) * SPEEDS[g_speed];
 		const int whole = static_cast<int>(g_clock_fraction);
 		g_clock_fraction -= static_cast<float>(whole);
 		g_clock += static_cast<std::uint64_t>(whole);
@@ -1247,7 +1270,35 @@ namespace
 			return found;
 		}
 
-		const auto& predicted = g_predicted[low - 1];
+		PredictedView predicted = g_predicted[low - 1];
+		if (low < g_predicted.size())
+		{
+			// between this record and the next, to the part of a millisecond: slow motion shows the steps
+			const PredictedView& next = g_predicted[low];
+			const int span = next.serverTime - predicted.serverTime;
+			float far = 0.0f;
+			for (int i = 0; i < 3; ++i)
+			{
+				far += (next.origin[i] - predicted.origin[i]) * (next.origin[i] - predicted.origin[i]);
+			}
+
+			if (span > 0 && span <= 100 && far < 150.0f * 150.0f)
+			{
+				float t = (static_cast<float>(server_time - predicted.serverTime) + g_clock_fraction) / static_cast<float>(span);
+				t = t < 0.0f ? 0.0f : t > 1.0f ? 1.0f : t;
+				for (int i = 0; i < 3; ++i)
+				{
+					predicted.origin[i] += (next.origin[i] - predicted.origin[i]) * t;
+					if (predicted.hasView && next.hasView)
+					{
+						float turn = next.viewangles[i] - predicted.viewangles[i];
+						turn -= 360.0f * floorf(turn / 360.0f + 0.5f);
+						predicted.viewangles[i] += turn * t;
+					}
+				}
+			}
+		}
+
 		memcpy(ps + PS_ORIGIN, predicted.origin, sizeof(predicted.origin));
 		memcpy(ps + PS_VELOCITY, predicted.velocity, sizeof(predicted.velocity));
 		ps[PS_BOB_CYCLE] = static_cast<unsigned char>(predicted.bobCycle);
@@ -1433,6 +1484,126 @@ namespace
 		va_end(args);
 		log_line("GAME ERROR (kind %d): %s", code, text);
 		g_original_com_error(code, "%s", text);
+	}
+
+	// The game's clock is in whole milliseconds, so in slow motion the world moved a step every few
+	// frames (below about 0.1x it showed). Playback keeps the part of a millisecond left over; it is
+	// added to how far between its two snapshots the client game takes itself to be, which is what
+	// everything in the world is placed by.
+	using set_frame_interpolation_t = void (*)(int);
+	set_frame_interpolation_t g_original_set_frame_interpolation = nullptr;
+
+	void hooked_set_frame_interpolation(const int client)
+	{
+		g_original_set_frame_interpolation(client);
+		if (g_play != Play::Playing)
+		{
+			return;
+		}
+
+		const auto* snap = *reinterpret_cast<const unsigned char**>(CG_SNAP);
+		const auto* next = *reinterpret_cast<const unsigned char**>(CG_NEXT_SNAP);
+		if (!snap || !next)
+		{
+			return;
+		}
+
+		const int span = *reinterpret_cast<const int*>(next + CG_SNAPSHOT_SERVER_TIME) - *reinterpret_cast<const int*>(snap + CG_SNAPSHOT_SERVER_TIME);
+		if (span > 0)
+		{
+			*reinterpret_cast<float*>(CG_FRAME_INTERPOLATION) += g_clock_fraction / static_cast<float>(span);
+		}
+	}
+
+	// Every setting the game has, written out once a session (theater\dvars.txt): what the Look tab
+	// can be built from.
+	void dump_dvars()
+	{
+		static bool done = false;
+		if (done)
+		{
+			return;
+		}
+
+		done = true;
+		char path[MAX_PATH];
+		sprintf_s(path, "%s\\dvars.txt", g_folder);
+		FILE* file = nullptr;
+		if (fopen_s(&file, path, "w") || !file)
+		{
+			return;
+		}
+
+		const int count = theater_dvar_count();
+		fprintf(file, "%d dvars: name | type | flags | current | reset | limits\n", count);
+		for (int i = 0; i < count; ++i)
+		{
+			const auto* dvar = static_cast<const unsigned char*>(theater_dvar_at(i));
+			if (!dvar || IsBadReadPtr(dvar, 0x50))
+			{
+				continue;
+			}
+
+			const char* name = *reinterpret_cast<const char* const*>(dvar);
+			if (!name || IsBadReadPtr(name, 4))
+			{
+				continue;
+			}
+
+			const int type = static_cast<signed char>(dvar[0xC]);
+			const unsigned flags = *reinterpret_cast<const unsigned*>(dvar + 8);
+			fprintf(file, "%s | %d | %X | ", name, type, flags);
+			for (const size_t at : {size_t{0x10}, size_t{0x30}})
+			{
+				const auto* value = dvar + at;
+				const float* f = reinterpret_cast<const float*>(value);
+				switch (type)
+				{
+				case 0: fprintf(file, "%d", value[0] ? 1 : 0); break;
+				case 1: fprintf(file, "%g", f[0]); break;
+				case 2: fprintf(file, "%g %g", f[0], f[1]); break;
+				case 3: fprintf(file, "%g %g %g", f[0], f[1], f[2]); break;
+				case 4: fprintf(file, "%g %g %g %g", f[0], f[1], f[2], f[3]); break;
+				case 5:
+				case 6: fprintf(file, "%d", *reinterpret_cast<const int*>(value)); break;
+				case 7:
+				{
+					const char* text = *reinterpret_cast<const char* const*>(value);
+					fprintf(file, "\"%.200s\"", text && !IsBadReadPtr(text, 1) ? text : "");
+					break;
+				}
+				case 8:
+				case 9: fprintf(file, "%u %u %u %u", value[0], value[1], value[2], value[3]); break;
+				default: fprintf(file, "?"); break;
+				}
+
+				fprintf(file, " | ");
+			}
+
+			const auto* limits = dvar + 0x40;
+			if (type == 5)
+			{
+				fprintf(file, "%d..%d", *reinterpret_cast<const int*>(limits), *reinterpret_cast<const int*>(limits + 4));
+			}
+			else if (type >= 1 && type <= 4)
+			{
+				fprintf(file, "%g..%g", *reinterpret_cast<const float*>(limits), *reinterpret_cast<const float*>(limits + 4));
+			}
+			else if (type == 6)
+			{
+				const int names = *reinterpret_cast<const int*>(limits);
+				const char* const* list = *reinterpret_cast<const char* const* const*>(limits + 8);
+				for (int n = 0; n < names && n < 40 && list && !IsBadReadPtr(list + n, 8); ++n)
+				{
+					fprintf(file, "%s%s", n ? "," : "", list[n] && !IsBadReadPtr(list[n], 1) ? list[n] : "?");
+				}
+			}
+
+			fprintf(file, "\n");
+		}
+
+		fclose(file);
+		log_line("the game's %d settings are listed in theater\\dvars.txt", count);
 	}
 
 	bool hook(const uintptr_t address, void* detour, void* original, const char* name)
@@ -1808,6 +1979,9 @@ namespace
 				const bool values = hook(CG_OMNVARS_CHANGED, &hooked_omnvars_changed, &g_original_omnvars_changed, "the menus' values");
 				log_line("hook: playback's team and class menus %s, their value %s", menus ? "kept shut" : "NOT kept shut",
 				         values ? "cleared" : "NOT cleared");
+				const bool smooth = hook(CG_SET_FRAME_INTERPOLATION, &hooked_set_frame_interpolation, &g_original_set_frame_interpolation,
+				                         "the time between snapshots");
+				log_line("hook: slow motion %s", smooth ? "is smooth below a millisecond a frame" : "is NOT smoothed");
 				const bool errors = hook(COM_ERROR, &hooked_com_error, &g_original_com_error, "the game's errors");
 				log_line("hook: the game's errors %s", errors ? "are written here" : "are NOT written here");
 				ui_start();
@@ -1843,6 +2017,8 @@ TheaterState theater_state()
 	state.speed = SPEEDS[g_speed];
 	state.position_ms = static_cast<std::uint32_t>(g_clock.load());
 	state.length_ms = g_length_ms;
+	state.settled = g_settled;
+	state.capture_fps = g_capture_fps;
 	strncpy_s(state.name, g_shown_name, _TRUNCATE);
 	strncpy_s(state.map, g_shown_map, _TRUNCATE);
 	return state;
@@ -1873,6 +2049,33 @@ int theater_speed_steps(const float** steps)
 	return static_cast<int>(sizeof(SPEEDS) / sizeof(SPEEDS[0]));
 }
 void theater_stop() { g_stop_request = true; }
+void theater_capture(const float fps) { g_capture_fps = fps; }
+
+void theater_set_paused(const bool paused)
+{
+	if (g_paused != paused)
+	{
+		g_pause_request = true;
+	}
+}
+
+void* theater_dvar(const char* name)
+{
+	return reinterpret_cast<void* (*)(const char*)>(DVAR_FIND_VAR)(name);
+}
+
+int theater_dvar_count()
+{
+	const int count = *reinterpret_cast<const int*>(DVAR_COUNT);
+	return count < 0 ? 0 : count > 20000 ? 20000 : count;
+}
+
+void* theater_dvar_at(const int index)
+{
+	return reinterpret_cast<void**>(SORTED_DVARS)[index];
+}
+
+const char* theater_folder() { return g_folder; }
 const char* theater_version() { return VERSION; }
 
 void theater_command(const char* text)
@@ -1885,7 +2088,7 @@ void theater_command(const char* text)
 // game_console.cpp sets it): what is typed there is not the editor's.
 bool theater_keys_blocked()
 {
-	return (*reinterpret_cast<const int*>(0x1417E168C) & 1) != 0;
+	return (*reinterpret_cast<const int*>(0x1417E168C) & 1) != 0 || ui_typing();
 }
 HMODULE theater_module() { return g_module; }
 void theater_log(const char* text) { log_line("%s", text); }

@@ -6,7 +6,7 @@
 // a second window procedure in front of its own, which only keeps the messages for the drawing thread.
 //
 // F1 gives the mouse to the panel (and back).
-#include "theater.hpp"
+#include "ui_parts.hpp"
 
 #include <MinHook.h>
 #include <d3d11.h>
@@ -116,23 +116,6 @@ namespace
 	// ---- IrisStudio's editor (core/src/UI): the Graphite palette, Rubik with Font Awesome's icons, the
 	// game's picture at the top left under the menu bar, the side panel with its five tabs to the right
 	// and the timeline under both.
-
-	// Font Awesome 6 (solid), the icons the editor uses
-	#define ICON_FILM "\xef\x80\x88"
-	#define ICON_VIDEO "\xef\x80\xbd"
-	#define ICON_SLIDERS "\xef\x87\x9e"
-	#define ICON_PERSON "\xef\x86\x83"
-	#define ICON_CIRCLE "\xef\x84\x91"
-	#define ICON_CAMERA "\xef\x80\xb0"
-	#define ICON_LOCK "\xef\x80\xa3"
-	#define ICON_LOCK_OPEN "\xef\x8f\x81"
-	#define ICON_BACKWARD_STEP "\xef\x81\x88"
-	#define ICON_FORWARD_STEP "\xef\x81\x91"
-	#define ICON_PLAY "\xef\x81\x8b"
-	#define ICON_PAUSE "\xef\x81\x8c"
-	#define ICON_FLAG "\xef\x80\xa4"
-	#define ICON_TRASH "\xef\x87\xb8"
-	#define ICON_PLUS "\x2b"
 
 	struct Palette
 	{
@@ -273,6 +256,8 @@ namespace
 	ID3D11Texture2D* g_copy = nullptr;      // the game's picture, to draw inside the editor
 	ID3D11ShaderResourceView* g_copy_view = nullptr;
 	ID3D11BlendState* g_opaque = nullptr;
+	DXGI_FORMAT g_copy_format = DXGI_FORMAT_UNKNOWN;  // the copy's pixels, as a format that says what they are
+	std::atomic<bool> g_typing{false};
 
 	const struct { CameraMode mode; const char* label; const char* title; bool built; } MODES[] = {
 		{CameraMode::FirstPerson, "First person", "First Person Camera", true},
@@ -443,13 +428,25 @@ namespace
 		ImGui::PopStyleVar();
 	}
 
-	bool section(const char* icon, const char* label)
+	bool section(const char* icon, const char* label, bool* reset = nullptr, const bool open_by_default = true)
 	{
 		char text[96];
 		snprintf(text, sizeof(text), "%s  %s", icon, label);
 		ImGui::PushStyleColor(ImGuiCol_Header, color(P.raised));
-		const bool open = ImGui::CollapsingHeader(text, ImGuiTreeNodeFlags_DefaultOpen);
+		const bool open = ImGui::CollapsingHeader(text, (open_by_default ? ImGuiTreeNodeFlags_DefaultOpen : 0) | ImGuiTreeNodeFlags_AllowOverlap);
 		ImGui::PopStyleColor();
+		if (reset)
+		{
+			// "Reset" at the header's right, as IrisStudio's sections have it
+			const ImGuiStyle& style = ImGui::GetStyle();
+			const char* reset_label = ICON_ROTATE " Reset";
+			const float width = ImGui::CalcTextSize(reset_label).x + style.FramePadding.x * 2.0f;
+			ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - width - style.FramePadding.x);
+			ImGui::PushID(label);
+			*reset = ImGui::SmallButton(reset_label);
+			ImGui::PopID();
+		}
+
 		return open;
 	}
 
@@ -574,90 +571,6 @@ namespace
 		(void)state;
 	}
 
-	// The HUD's rows as IrisStudio has them (VisualsMenu's RenderHud). In Advanced Warfare the HUD is
-	// the game's menu system's and only two of the game's settings are known to act on it: cg_draw2D
-	// (all of it) and cg_drawGun. The rows with no setting are shown but cannot be switched yet.
-	struct HudPart
-	{
-		const char* label;
-		const char* setting;  // null: not found yet
-		bool shown;
-	};
-	HudPart g_hud[] = {{"2D Elements", "cg_draw2D", true},   {"Player HUD", nullptr, true},     {"Shellshock/Flashbang", nullptr, true},
-	                   {"Crosshair", nullptr, true},         {"Score", nullptr, true},          {"Icons and Text", nullptr, true},
-	                   {"Blood Overlay", nullptr, true},     {"Killfeed", nullptr, true},       {"Gun", "cg_drawGun", true}};
-	bool g_hud_changed = false;
-
-	void set_hud(HudPart& part, const bool shown)
-	{
-		if (!part.setting || part.shown == shown)
-		{
-			return;
-		}
-
-		part.shown = shown;
-		g_hud_changed = true;
-		char text[64];
-		snprintf(text, sizeof(text), "%s %d", part.setting, shown ? 1 : 0);
-		theater_command(text);
-	}
-
-	void draw_hud_section()
-	{
-		const bool open = section(ICON_SLIDERS, "HUD");
-		// "Reset" at the header's right, as IrisStudio's sections have it
-		{
-			const char* label = "Reset";
-			const ImGuiStyle& style = ImGui::GetStyle();
-			const float width = ImGui::CalcTextSize(label).x + style.FramePadding.x * 2.0f;
-			ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - width - style.FramePadding.x);
-			if (ImGui::SmallButton(label))
-			{
-				for (HudPart& part : g_hud)
-				{
-					set_hud(part, true);
-				}
-			}
-		}
-
-		if (!open)
-		{
-			return;
-		}
-
-		const bool all = g_hud[0].shown;
-		for (HudPart& part : g_hud)
-		{
-			const bool first = &part == &g_hud[0], gun = part.setting && !first;
-			if (!all && !first && !gun)
-			{
-				// as in IrisStudio: the parts are under "2D Elements"
-				continue;
-			}
-
-			bool shown = part.shown;
-			ImGui::PushID(part.label);
-			ImGui::BeginDisabled(!part.setting);
-			row_label(part.label);
-			if (ImGui::Checkbox("##shown", &shown))
-			{
-				set_hud(part, shown);
-			}
-
-			ImGui::EndDisabled();
-			if (!part.setting && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-			{
-				ImGui::SetTooltip("Not found in Advanced Warfare yet");
-			}
-
-			ImGui::PopID();
-		}
-
-		ImGui::PushTextWrapPos(0.0f);
-		ImGui::TextDisabled("F3 switches 2D Elements. The greyed rows are not wired up for Advanced Warfare yet.");
-		ImGui::PopTextWrapPos();
-	}
-
 	void draw_panel(const TheaterState& state, const CameraState& camera, const ImVec2 size)
 	{
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {g_font_size * 0.5f, g_font_size * 0.5f});
@@ -725,15 +638,13 @@ namespace
 			draw_camera_tab(state, camera);
 			break;
 		case Tab::Look:
-			draw_hud_section();
-			ImGui::Spacing();
-			not_built("The rest of the Look tab (sun, fog, depth of field, sky)");
+			look_draw_tab(state);
 			break;
 		case Tab::Scene:
-			not_built("The Scene tab (actors, players)");
+			not_built("The Scene tab (actors and players)");
 			break;
 		case Tab::Record:
-			not_built("The Record tab (capture)");
+			capture_draw_tab(state);
 			break;
 		}
 
@@ -1059,6 +970,7 @@ namespace
 			wanted.MiscFlags = 0;
 			wanted.MipLevels = 1;
 			wanted.ArraySize = 1;
+			g_copy_format = plain;
 			if (SUCCEEDED(g_device->CreateTexture2D(&wanted, nullptr, &g_copy)) && g_copy)
 			{
 				D3D11_SHADER_RESOURCE_VIEW_DESC view{};
@@ -1124,35 +1036,35 @@ namespace
 		const bool f3 = GetForegroundWindow() == g_window && (GetAsyncKeyState(VK_F3) & 0x8000) != 0 && !theater_keys_blocked();
 		if (f3 && !f3_was_down && state.playing)
 		{
-			set_hud(g_hud[0], !g_hud[0].shown);
+			look_toggle_hud();
 		}
 
 		f3_was_down = f3;
+		look_frame(state);
 		if (!state.playing)
 		{
 			g_hidden = false;
 			camera_playback_ended();
-			if (g_hud_changed)
-			{
-				// the game's own HUD again outside playback
-				g_hud_changed = false;
-				for (HudPart& part : g_hud)
-				{
-					if (part.setting)
-					{
-						part.shown = true;
-						char text[64];
-						snprintf(text, sizeof(text), "%s 1", part.setting);
-						theater_command(text);
-					}
-				}
-			}
 		}
 
 		const bool shown = state.playing && !g_hidden;
 		set_mouse(shown);
-		if (!shown || !targets(swap_chain, true))
+		const bool recording = state.playing && capture_wants_picture();
+		if ((!shown && !recording) || !targets(swap_chain, true))
 		{
+			g_typing = false;
+			return;
+		}
+
+		// the game's picture as it was drawn, for the video
+		if (state.playing)
+		{
+			capture_frame(state, g_device, g_context, g_copy, g_copy_format);
+		}
+
+		if (!shown)
+		{
+			g_typing = false;
 			return;
 		}
 
@@ -1174,6 +1086,7 @@ namespace
 		ImGui_ImplWin32_NewFrame();
 		ImGui::NewFrame();
 		draw_editor();
+		g_typing = ImGui::GetIO().WantTextInput;
 		ImGui::Render();
 		g_context->OMSetRenderTargets(1, &g_target, nullptr);
 		const ImVec4 background = color(P.bg);
@@ -1214,6 +1127,46 @@ namespace
 
 		return g_original_resize(swap_chain, count, width, height, format, flags);
 	}
+}
+
+bool ui_section(const char* icon, const char* label, bool* reset, const bool open_by_default)
+{
+	return section(icon, label, reset, open_by_default);
+}
+
+void ui_row_label(const char* label)
+{
+	row_label(label);
+}
+
+float ui_font_size()
+{
+	return g_font_size;
+}
+
+ImFont* ui_bold_font()
+{
+	return g_bold;
+}
+
+void ui_not_built(const char* what)
+{
+	not_built(what);
+}
+
+void ui_log(const char* format, ...)
+{
+	char text[2100];
+	va_list args;
+	va_start(args, format);
+	vsnprintf(text, sizeof(text), format, args);
+	va_end(args);
+	theater_log(text);
+}
+
+bool ui_typing()
+{
+	return g_typing;
 }
 
 HWND ui_window()
