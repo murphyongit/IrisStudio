@@ -37,6 +37,7 @@ namespace
 	// what the editor wants
 	bool g_color_on = false, g_brightness_on = false, g_direction_on = false;
 	float g_color[3] = {1, 1, 1}, g_brightness = 1.0f, g_direction[3] = {0, 0, 1};
+	float g_pitch = 0.0f, g_yaw = 0.0f;  // as they were set: a direction alone only gives a pitch within a quarter turn
 	// what the game's overrides were before
 	bool g_applied = false;
 	unsigned char g_saved[OVERRIDES_SIZE] = {};
@@ -136,9 +137,21 @@ SunState sun_state()
 	}
 
 	state.brightness = g_brightness_on ? g_brightness : largest(g_map_color);
-	const float* direction = g_direction_on ? g_direction : g_map_direction;
-	state.yaw = std::atan2(direction[1], direction[0]) * 180.0f / PI;
-	state.pitch = std::atan2(-direction[2], std::sqrt(direction[0] * direction[0] + direction[1] * direction[1])) * 180.0f / PI;
+	if (g_direction_on)
+	{
+		state.pitch = g_pitch;
+		state.yaw = g_yaw;
+	}
+	else
+	{
+		const float* direction = g_map_direction;
+		state.yaw = std::atan2(direction[1], direction[0]) * 180.0f / PI;
+		state.pitch = std::atan2(-direction[2], std::sqrt(direction[0] * direction[0] + direction[1] * direction[1])) * 180.0f / PI;
+	}
+
+	state.color_set = g_color_on;
+	state.brightness_set = g_brightness_on;
+	state.direction_set = g_direction_on;
 	state.changed = g_color_on || g_brightness_on || g_direction_on;
 	return state;
 }
@@ -160,7 +173,10 @@ void sun_set_brightness(const float brightness)
 void sun_set_direction(const float pitch, const float yaw)
 {
 	std::lock_guard<std::mutex> lock(g_lock);
-	direction_of(pitch, yaw, g_direction);
+	// (kept within a turn either way, so dragging on comes round again)
+	g_pitch = pitch > 360.0f ? pitch - 720.0f : pitch < -360.0f ? pitch + 720.0f : pitch;
+	g_yaw = yaw > 360.0f ? yaw - 720.0f : yaw < -360.0f ? yaw + 720.0f : yaw;
+	direction_of(g_pitch, g_yaw, g_direction);
 	g_direction_on = true;
 }
 

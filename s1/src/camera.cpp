@@ -288,7 +288,17 @@ namespace
 		}
 
 		g_pose.origin[2] += up * speed;
-		g_pose.angles[2] += ui_take_mouse_wheel() * 3.0f;
+		// the wheel rolls the camera; with Shift held it changes the field of view
+		const int wheel = ui_take_mouse_wheel();
+		if (down(VK_SHIFT))
+		{
+			g_pose.fov += wheel * 2.0f;
+			g_pose.fov = g_pose.fov < 5.0f ? 5.0f : g_pose.fov > 160.0f ? 160.0f : g_pose.fov;
+		}
+		else
+		{
+			g_pose.angles[2] += wheel * 3.0f;
+		}
 	}
 
 	void apply(const Pose& pose)

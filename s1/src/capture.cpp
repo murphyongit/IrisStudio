@@ -569,6 +569,22 @@ void capture_draw_tab(const TheaterState& state)
 		g_end = length;
 	}
 
+	// the campath's first and last nodes are the start and end, each time the path changes (they can
+	// still be set by hand afterwards)
+	const CameraState camera = camera_state();
+	if (camera.points >= 2)
+	{
+		const std::uint32_t first = camera.point_ms[0], last = camera.point_ms[(camera.points < 64 ? camera.points : 64) - 1];
+		static std::uint32_t path_first = ~0u, path_last = ~0u;
+		if (first != path_first || last != path_last)
+		{
+			path_first = first;
+			path_last = last;
+			g_start = first / 1000.0f;
+			g_end = last / 1000.0f;
+		}
+	}
+
 	const Step step = g_step;
 	const bool busy = step != Step::Idle;
 	if (ui_section(ICON_CIRCLE, "Record"))
@@ -681,6 +697,12 @@ void capture_draw_tab(const TheaterState& state)
 			{
 				g_message.clear();
 				g_waited = 0;
+				if (camera.points >= 2)
+				{
+					// a path there is: it is what is recorded, from wherever the camera was left
+					camera_set_mode(CameraMode::Dolly);
+				}
+
 				theater_set_paused(true);
 				theater_seek(static_cast<std::uint32_t>(g_start * 1000.0f));
 				g_step = Step::Seeking;
@@ -722,6 +744,11 @@ void capture_draw_tab(const TheaterState& state)
 		{
 			ImGui::TextDisabled("FFmpeg was not found: only an image sequence (TGA pictures) can be recorded. Iris Studio's launcher downloads "
 			                    "FFmpeg when it is started.");
+		}
+
+		if (camera.points >= 2)
+		{
+			ImGui::TextDisabled("Start and End follow the campath's first and last nodes; recording switches to the dolly camera.");
 		}
 
 		ImGui::TextDisabled("The video is what the picture shows: the camera, the Look tab and the HUD as they are set. The timescale applies, so "

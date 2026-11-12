@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cctype>
 #include <map>
 #include <set>
 #include <string>
@@ -344,6 +345,7 @@ namespace
 		  {"Sun shadow softness", "sm_sunFilterRadius"}}},
 		{ICON_LIGHTBULB, "Lighting", false,
 		 {{"Shadows", "sm_enable"},
+		  {"Baked lighting", "r_lightMap"},
 		  {"Without lighting", "r_fullbright"},
 		  {"Glow", "r_veil"},
 		  {"Use the glow strength below", "r_veilUseTweaks"},
@@ -608,6 +610,203 @@ namespace
 		}
 	}
 
+	// ---- presets: what the Look tab was set to, kept by name in theater\presets and put back on at a click.
+	// A preset holds every setting the editor has changed and the sun's light where that was set.
+	std::string presets_folder()
+	{
+		const std::string folder = std::string(theater_folder()) + "\\presets";
+		CreateDirectoryA(folder.c_str(), nullptr);
+		return folder;
+	}
+
+	std::vector<std::string> list_presets()
+	{
+		static std::vector<std::string> names;
+		static ULONGLONG listed = 0;
+		const ULONGLONG now = GetTickCount64();
+		if (listed && now - listed < 1500)
+		{
+			return names;
+		}
+
+		listed = now;
+		names.clear();
+		WIN32_FIND_DATAA found;
+		const HANDLE search = FindFirstFileA((presets_folder() + "\\*.txt").c_str(), &found);
+		if (search != INVALID_HANDLE_VALUE)
+		{
+			do
+			{
+				std::string name = found.cFileName;
+				names.push_back(name.substr(0, name.size() - 4));
+			} while (FindNextFileA(search, &found));
+			FindClose(search);
+		}
+
+		return names;
+	}
+
+	bool save_preset(const std::string& name)
+	{
+		FILE* file = nullptr;
+		if (fopen_s(&file, (presets_folder() + "\\" + name + ".txt").c_str(), "w") != 0 || !file)
+		{
+			return false;
+		}
+
+		for (const auto& changed : g_originals)
+		{
+			if (const Dvar dvar = find(changed.first.c_str()))
+			{
+				fprintf(file, "dvar %s %s\n", changed.first.c_str(), text_of(dvar, dvar.current()).c_str());
+			}
+		}
+
+		const SunState sun = sun_state();
+		if (sun.color_set)
+		{
+			fprintf(file, "sun_color %g %g %g\n", sun.color[0], sun.color[1], sun.color[2]);
+		}
+
+		if (sun.brightness_set)
+		{
+			fprintf(file, "sun_brightness %g\n", sun.brightness);
+		}
+
+		if (sun.direction_set)
+		{
+			fprintf(file, "sun_direction %g %g\n", sun.pitch, sun.yaw);
+		}
+
+		fclose(file);
+		return true;
+	}
+
+	bool load_preset(const std::string& name)
+	{
+		FILE* file = nullptr;
+		if (fopen_s(&file, (presets_folder() + "\\" + name + ".txt").c_str(), "r") != 0 || !file)
+		{
+			return false;
+		}
+
+		std::set<std::string> in_preset;
+		sun_reset();
+		char line[512];
+		while (fgets(line, sizeof(line), file))
+		{
+			line[strcspn(line, "\r\n")] = 0;
+			float a = 0.0f, b = 0.0f, c = 0.0f;
+			if (strncmp(line, "dvar ", 5) == 0)
+			{
+				char* value = strchr(line + 5, ' ');
+				if (value)
+				{
+					*value++ = 0;
+					if (const Dvar dvar = find(line + 5))
+					{
+						in_preset.insert(line + 5);
+						set(dvar, std::string(value));
+					}
+				}
+			}
+			else if (sscanf_s(line, "sun_color %f %f %f", &a, &b, &c) == 3)
+			{
+				const float color[3] = {a, b, c};
+				sun_set_color(color);
+			}
+			else if (sscanf_s(line, "sun_brightness %f", &a) == 1)
+			{
+				sun_set_brightness(a);
+			}
+			else if (sscanf_s(line, "sun_direction %f %f", &a, &b) == 2)
+			{
+				sun_set_direction(a, b);
+			}
+		}
+
+		fclose(file);
+		// what was changed before and is not in the preset goes back to the game's own
+		const auto originals = g_originals;
+		for (const auto& original : originals)
+		{
+			if (!in_preset.count(original.first))
+			{
+				restore(original.first);
+			}
+		}
+
+		return true;
+	}
+
+	void draw_presets()
+	{
+		static std::string selected;
+		static char name[48] = "";
+		static std::string message;
+		const std::vector<std::string> presets = list_presets();
+		const ImGuiStyle& style = ImGui::GetStyle();
+		const float load_width = ImGui::CalcTextSize("Load").x + style.FramePadding.x * 2.0f;
+		const float delete_width = ImGui::CalcTextSize("Delete").x + style.FramePadding.x * 2.0f;
+		const float save_width = ImGui::CalcTextSize("Save").x + style.FramePadding.x * 2.0f;
+		ui_row_label("Preset");
+		ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - load_width - delete_width - style.ItemSpacing.x * 2.0f);
+		if (ImGui::BeginCombo("##preset", selected.empty() ? (presets.empty() ? "none saved" : "choose") : selected.c_str()))
+		{
+			for (const std::string& preset : presets)
+			{
+				if (ImGui::Selectable(preset.c_str(), preset == selected))
+				{
+					selected = preset;
+				}
+			}
+
+			ImGui::EndCombo();
+		}
+
+		ImGui::SameLine();
+		ImGui::BeginDisabled(selected.empty());
+		if (ImGui::Button("Load"))
+		{
+			message = load_preset(selected) ? "Loaded " + selected + "." : "That preset could not be read.";
+		}
+
+		ImGui::SameLine();
+		if (ImGui::Button("Delete"))
+		{
+			DeleteFileA((presets_folder() + "\\" + selected + ".txt").c_str());
+			message = "Deleted " + selected + ".";
+			selected.clear();
+		}
+
+		ImGui::EndDisabled();
+		ui_row_label("Save as");
+		ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - save_width - style.ItemSpacing.x);
+		ImGui::InputTextWithHint("##presetName", "a name", name, sizeof(name));
+		std::string clean;
+		for (const char* c = name; *c; ++c)
+		{
+			if (isalnum(static_cast<unsigned char>(*c)) || *c == ' ' || *c == '-' || *c == '_')
+			{
+				clean += *c;
+			}
+		}
+
+		ImGui::SameLine();
+		ImGui::BeginDisabled(clean.empty());
+		if (ImGui::Button("Save"))
+		{
+			message = save_preset(clean) ? "Saved " + clean + "." : "The preset could not be written.";
+			selected = clean;
+		}
+
+		ImGui::EndDisabled();
+		if (!message.empty())
+		{
+			ImGui::TextDisabled("%s", message.c_str());
+		}
+	}
+
 	// ---- every setting the game has, to look through and try
 	void draw_all()
 	{
@@ -701,6 +900,11 @@ void look_draw_tab(const TheaterState& state)
 {
 	(void)state;
 	bool reset = false;
+	if (ui_section(ICON_SLIDERS, "Presets"))
+	{
+		draw_presets();
+	}
+
 	if (ui_section(ICON_BURGER, "HUD", &reset))
 	{
 		draw_hud(reset);

@@ -16,12 +16,14 @@
 #include <backends/imgui_impl_dx11.h>
 #include <backends/imgui_impl_win32.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cfloat>
 #include <cmath>
 #include <string>
 #include <cstdarg>
 #include <cstdio>
+#include <cstring>
 #include <mutex>
 #include <vector>
 
@@ -52,6 +54,7 @@ namespace
 	WNDPROC g_original_window_proc = nullptr;
 	bool g_ready = false, g_failed = false;
 	std::atomic<bool> g_mouse{false};
+	std::atomic<bool> g_menu_ui{false}, g_over_menu_ui{false};  // the recordings list at the game's menus
 	bool g_f1_was_down = false;
 
 	struct Message
@@ -101,13 +104,19 @@ namespace
 			g_wheel += GET_WHEEL_DELTA_WPARAM(wparam) / WHEEL_DELTA;
 		}
 
-		if (g_mouse)
+		if (g_mouse || g_menu_ui)
 		{
 			std::lock_guard<std::mutex> lock(g_messages_lock);
 			if (g_messages.size() < 4096)
 			{
 				g_messages.push_back({window, message, wparam, lparam});
 			}
+		}
+
+		// at the game's menus, a click on the recordings list is not also the game's
+		if (g_menu_ui && g_over_menu_ui && message >= WM_LBUTTONDOWN && message <= WM_MOUSEWHEEL)
+		{
+			return 0;
 		}
 
 		return CallWindowProcA(g_original_window_proc, window, message, wparam, lparam);
@@ -289,6 +298,11 @@ namespace
 
 		if (ImGui::BeginMenu("File"))
 		{
+			if (ImGui::MenuItem("Recordings..."))
+			{
+				g_tab = Tab::Demo;
+			}
+
 			if (ImGui::MenuItem("Stop playback", "F10"))
 			{
 				theater_stop();
@@ -334,7 +348,7 @@ namespace
 			ImGui::Separator();
 			ImGui::TextDisabled("Camera");
 			ImGui::TextUnformatted("F2  free camera\nHold the right mouse button on the picture to look\nW A S D  fly,  E / Q  up / down\n"
-			                       "Shift / Ctrl  faster / slower\nMouse wheel  roll\nK  add a campath node\nL  dolly camera\nF1  hide the editor");
+			                       "Shift / Ctrl  faster / slower\nMouse wheel  roll,  Shift + wheel  field of view\nK  add a campath node\nL  dolly camera\nF1  hide the editor");
 			ImGui::EndMenu();
 		}
 
@@ -571,6 +585,109 @@ namespace
 		(void)state;
 	}
 
+	// The recordings in the theater folder, newest first; a click plays one.
+	void draw_recordings(const TheaterState& state, const float height)
+	{
+		static RecordingInfo list[200];
+		static int count = 0;
+		static ULONGLONG listed = 0;
+		const ULONGLONG now = GetTickCount64();
+		if (!listed || now - listed > 2500)
+		{
+			listed = now;
+			count = theater_recordings(list, 200);
+		}
+
+		if (count == 0)
+		{
+			ImGui::PushTextWrapPos(0.0f);
+			ImGui::TextDisabled("No recordings yet. Every private match is recorded by itself; it shows up here when the match ends.");
+			ImGui::PopTextWrapPos();
+			return;
+		}
+
+		if (!ImGui::BeginTable("recordings", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp, {0.0f, height}))
+		{
+			return;
+		}
+
+		ImGui::TableSetupScrollFreeze(0, 1);
+		ImGui::TableSetupColumn("Recorded", ImGuiTableColumnFlags_None, 2.2f);
+		ImGui::TableSetupColumn("Map", ImGuiTableColumnFlags_None, 1.6f);
+		ImGui::TableSetupColumn("Mode", ImGuiTableColumnFlags_None, 0.8f);
+		ImGui::TableSetupColumn("Length", ImGuiTableColumnFlags_None, 0.9f);
+		ImGui::TableHeadersRow();
+		for (int i = 0; i < count; ++i)
+		{
+			const RecordingInfo& info = list[i];
+			// rec_YYYYMMDD_HHMMSS.awdm
+			char when[40];
+			const char* f = info.file;
+			if (strlen(f) >= 19 && strncmp(f, "rec_", 4) == 0)
+			{
+				snprintf(when, sizeof(when), "%.4s-%.2s-%.2s  %.2s:%.2s:%.2s", f + 4, f + 8, f + 10, f + 13, f + 15, f + 17);
+			}
+			else
+			{
+				snprintf(when, sizeof(when), "%.39s", f);
+			}
+
+			const bool current = state.playing && strcmp(state.name, info.file) == 0;
+			ImGui::TableNextRow();
+			ImGui::TableNextColumn();
+			ImGui::PushID(i);
+			if (ImGui::Selectable(when, current, ImGuiSelectableFlags_SpanAllColumns) && !current)
+			{
+				theater_play(info.file);
+			}
+
+			ImGui::PopID();
+			ImGui::TableNextColumn();
+			ImGui::TextUnformatted(info.map);
+			ImGui::TableNextColumn();
+			ImGui::TextUnformatted(info.gametype);
+			ImGui::TableNextColumn();
+			ImGui::Text("%u:%02u", info.length_ms / 60000, (info.length_ms / 1000) % 60);
+		}
+
+		ImGui::EndTable();
+	}
+
+	// At the game's menus: a small button, and the recordings behind it.
+	void draw_menu_browser(const TheaterState& state)
+	{
+		static bool open = false;
+		const ImGuiIO& io = ImGui::GetIO();
+		ImGui::SetNextWindowPos({g_font_size * 0.6f, g_font_size * 0.6f});
+		ImGui::Begin("##s1irisButton", nullptr,
+		             ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize |
+		                 ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoBackground);
+		ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(open ? ImGuiCol_Header : ImGuiCol_Button));
+		if (ImGui::Button(ICON_FILM "  S1iris recordings"))
+		{
+			open = !open;
+		}
+
+		ImGui::PopStyleColor();
+		ImGui::End();
+		if (open)
+		{
+			ImGui::SetNextWindowPos({g_font_size * 0.6f, g_font_size * 3.0f}, ImGuiCond_Appearing);
+			ImGui::SetNextWindowSize({g_font_size * 34.0f, g_font_size * 24.0f}, ImGuiCond_Appearing);
+			ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+			if (ImGui::Begin("Recordings", &open, ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoNav))
+			{
+				ImGui::TextDisabled("Click a recording to play it.");
+				draw_recordings(state, 0.0f);
+			}
+
+			ImGui::End();
+			ImGui::PopStyleVar();
+		}
+
+		g_over_menu_ui = io.WantCaptureMouse;
+	}
+
 	void draw_panel(const TheaterState& state, const CameraState& camera, const ImVec2 size)
 	{
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {g_font_size * 0.5f, g_font_size * 0.5f});
@@ -629,8 +746,11 @@ namespace
 					theater_stop();
 				}
 
-				ImGui::Spacing();
-				not_built("Browsing recordings (F9 at the game's menu plays the newest)");
+			}
+
+			if (section(ICON_FOLDER_OPEN, "Recordings"))
+			{
+				draw_recordings(state, (std::max)(g_font_size * 8.0f, ImGui::GetContentRegionAvail().y - ImGui::GetStyle().WindowPadding.y));
 			}
 
 			break;
@@ -1049,7 +1169,43 @@ namespace
 
 		const bool shown = state.playing && !g_hidden;
 		set_mouse(shown);
-		const bool recording = state.playing && capture_wants_picture();
+		const bool recording = capture_wants_picture();
+		const bool menu = !shown && !recording && !state.starting && theater_idle();
+		g_menu_ui = menu;
+		if (menu)
+		{
+			// at the game's menus: the recordings, drawn over the game's own picture
+			g_typing = false;
+			if (!targets(swap_chain, false))
+			{
+				return;
+			}
+
+			std::vector<Message> messages;
+			{
+				std::lock_guard<std::mutex> lock(g_messages_lock);
+				messages.swap(g_messages);
+			}
+
+			for (const Message& m : messages)
+			{
+				ImGui_ImplWin32_WndProcHandler(m.window, m.message, m.wparam, m.lparam);
+			}
+
+			// the game's own pointer is the pointer here
+			ImGui::GetIO().MouseDrawCursor = false;
+			ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
+			ImGui_ImplDX11_NewFrame();
+			ImGui_ImplWin32_NewFrame();
+			ImGui::NewFrame();
+			draw_menu_browser(state);
+			ImGui::Render();
+			g_context->OMSetRenderTargets(1, &g_target, nullptr);
+			ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+			return;
+		}
+
+		g_over_menu_ui = false;
 		if ((!shown && !recording) || !targets(swap_chain, true))
 		{
 			g_typing = false;
@@ -1057,11 +1213,7 @@ namespace
 		}
 
 		// the game's picture as it was drawn, for the video
-		if (state.playing)
-		{
-			capture_frame(state, g_device, g_context, g_copy, g_copy_format);
-		}
-
+		capture_frame(state, g_device, g_context, g_copy, g_copy_format);
 		if (!shown)
 		{
 			g_typing = false;
@@ -1081,6 +1233,7 @@ namespace
 			}
 		}
 
+		ImGui::GetIO().ConfigFlags &= ~ImGuiConfigFlags_NoMouseCursorChange;
 		ImGui::GetIO().MouseDrawCursor = !g_looking;
 		ImGui_ImplDX11_NewFrame();
 		ImGui_ImplWin32_NewFrame();

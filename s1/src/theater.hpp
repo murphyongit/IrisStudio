@@ -37,6 +37,21 @@ void* theater_dvar_at(int index);
 // The game's folder.
 const char* theater_folder();
 const char* theater_version();
+
+// The recordings in the theater folder that can be played, newest first.
+struct RecordingInfo
+{
+	char file[64] = {};
+	char map[64] = {}, gametype[64] = {};
+	std::uint64_t size = 0;
+	std::uint32_t length_ms = 0;
+};
+
+int theater_recordings(RecordingInfo* out, int max);
+// Plays one (by its file name); what is playing is stopped first.
+void theater_play(const char* file);
+// Nothing is playing or about to, and no match is being recorded: the game is at its menus.
+bool theater_idle();
 // A console command for the game, run at the next frame's start.
 void theater_command(const char* text);
 // The game's console is open: keys are being typed, not meant for the editor.
@@ -91,6 +106,7 @@ struct SunState
 	float brightness = 1.0f;
 	float pitch = 0.0f, yaw = 0.0f;
 	bool changed = false;
+	bool color_set = false, brightness_set = false, direction_set = false;
 };
 
 SunState sun_state();

@@ -20,6 +20,7 @@
 
 #include <MinHook.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdarg>
@@ -34,7 +35,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.32 (recorder, playback, IrisStudio's editor)";
+	constexpr char VERSION[] = "0.33 (recorder, playback, IrisStudio's editor)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -90,6 +91,14 @@ namespace
 	// Messages more than this behind playback's clock are a jump's (a skip, or going back): they are given
 	// at the frame's start, as fast as the game takes them.
 	constexpr std::uint32_t BEHIND_MS = 250;
+	// The client's clock in playback. The game sets its clock from the snapshots as they come: a
+	// millisecond or two forward or back at each one, and running on past the newest for a few
+	// milliseconds when the next is late. In a live match that cannot be seen; in slow motion every
+	// snapshot (20 a second) showed as a hitch. A recording knows what comes: its messages are given
+	// LEAD_MS before they came, and the client's clock is set each frame to the playback clock plus what
+	// separates a snapshot's time from when it came (the largest seen: the one least delayed), so it is
+	// always between two snapshots and moves evenly.
+	constexpr std::uint32_t LEAD_MS = 150;
 	// void SV_Frame(int msec): the local server's step, from the game's frame
 	constexpr uintptr_t SV_FRAME = 0x1404425B0;
 	// gentity_s* SV_AddBot(const char* name), gentity_s* SV_AddTestClient(int) (s1-mod)
@@ -239,6 +248,15 @@ namespace
 	bool g_need_snapshot = false;
 	// the client's time is to be set to the next snapshot's, once one has been given after going back
 	bool g_resync_time = false;
+	constexpr unsigned OFFSETS = 64;
+	std::int32_t g_offsets[OFFSETS] = {};
+	unsigned g_offset_count = 0;
+	bool g_have_time_offset = false;
+	std::int32_t g_time_offset = 0, g_last_snapshot_time = 0, g_pin_error = 0;
+	// a recording asked for by name (the editor's list), and when it may start
+	char g_wanted_name[128] = {};
+	std::atomic<bool> g_wanted{false};
+	ULONGLONG g_wanted_after = 0;
 	std::atomic<std::uint64_t> g_predicted_given{0}, g_predicted_missed{0};
 	size_t g_next_record = 0;
 	ULONGLONG g_play_start = 0, g_play_asked = 0, g_play_report = 0;
@@ -654,7 +672,19 @@ namespace
 		}
 
 		std::string map, type;
-		if (!find_newest(g_play_name) || !load_recording(g_play_name, map, type))
+		bool found = false;
+		if (g_wanted_name[0])
+		{
+			sprintf_s(g_play_name, "%s\\%s", g_folder, g_wanted_name);
+			g_wanted_name[0] = 0;
+			found = true;
+		}
+		else
+		{
+			found = find_newest(g_play_name);
+		}
+
+		if (!found || !load_recording(g_play_name, map, type))
 		{
 			log_line("playback: no recording with its map beside it (one recorded with this version) was found");
 			return;
@@ -664,6 +694,9 @@ namespace
 		g_predicted_missed = 0;
 		g_length_ms = g_records.empty() ? 0 : g_records.back().ms;
 		++g_playback_number;
+		g_have_time_offset = false;
+		g_last_snapshot_time = 0;
+		g_offset_count = 0;
 		{
 			const char* slash = strrchr(g_play_name, '\\');
 			strncpy_s(g_shown_name, slash ? slash + 1 : g_play_name, _TRUNCATE);
@@ -860,6 +893,13 @@ namespace
 			stop_playback("F10");
 		}
 
+		if (g_wanted && g_play == Play::Idle && GetTickCount64() >= g_wanted_after)
+		{
+			g_wanted = false;
+			g_play_request = false;
+			start_playback();
+		}
+
 		if (g_play_request && g_play == Play::Idle)
 		{
 			g_play_request = false;
@@ -986,19 +1026,20 @@ namespace
 		// frame's start: what cannot be given there. The recording's first messages restart the client
 		// game, which the drawing does not survive (going back), and before the first snapshot there is
 		// no drawing to give them in.
-		const bool behind = g_next_record < g_records.size() && g_records[g_next_record].ms + BEHIND_MS <= elapsed;
+		const std::uint32_t due = elapsed + LEAD_MS;
+		const bool behind = g_next_record < g_records.size() && g_records[g_next_record].ms + BEHIND_MS <= due;
 		const bool at_start = state != CA_ACTIVE || g_need_snapshot || behind;
 		if (frame_start)
 		{
 			g_settled = state == CA_ACTIVE && !g_need_snapshot && g_seek_request < 0 &&
-				(g_next_record >= g_records.size() || g_records[g_next_record].ms > elapsed);
+				(g_next_record >= g_records.size() || g_records[g_next_record].ms > due);
 		}
 
 		if (frame_start == at_start)
 		{
 			for (int given = 0; given < 100 && g_next_record < g_records.size(); ++given)
 			{
-				if (g_records[g_next_record].ms > elapsed && !(g_need_snapshot && !*reinterpret_cast<const std::int32_t*>(CL_SNAP_VALID)))
+				if (g_records[g_next_record].ms > due && !(g_need_snapshot && !*reinterpret_cast<const std::int32_t*>(CL_SNAP_VALID)))
 				{
 					break;
 				}
@@ -1008,6 +1049,31 @@ namespace
 					log_line("playback: message %zu could not be parsed (a fault in the game)", g_next_record);
 					stop_playback("a message the game could not take");
 					return;
+				}
+
+				// what separates this snapshot's time from when it came
+				if (*reinterpret_cast<const std::int32_t*>(CL_SNAP_VALID))
+				{
+					const std::int32_t time = *reinterpret_cast<const std::int32_t*>(CL_SNAP_SERVER_TIME);
+					if (time != g_last_snapshot_time)
+					{
+						g_last_snapshot_time = time;
+						// the largest of the last few seconds' (the least delayed), and only taken when it
+						// is well off the one in use: a server that fell behind is followed, the jitter is not
+						const std::int32_t offset = time - static_cast<std::int32_t>(g_records[g_next_record].ms);
+						g_offsets[g_offset_count++ % OFFSETS] = offset;
+						std::int32_t largest = offset;
+						for (unsigned i = 0; i < g_offset_count && i < OFFSETS; ++i)
+						{
+							largest = g_offsets[i] > largest ? g_offsets[i] : largest;
+						}
+
+						if (!g_have_time_offset || largest - g_time_offset > 8 || g_time_offset - largest > 8)
+						{
+							g_time_offset = largest;
+							g_have_time_offset = true;
+						}
+					}
 				}
 
 				++g_next_record;
@@ -1039,10 +1105,11 @@ namespace
 			         connection_state(), g_dropped, g_bots_refused.load(),
 			         g_server_frames_skipped.load(), g_predicted_given.load(), g_predicted_missed.load(),
 			         g_demo_mode ? "on" : "off");
-			log_line("playback: team and class menu openings kept shut: %u", g_menus_kept_shut.load());
+			log_line("playback: team and class menu openings kept shut: %u; the client's clock is %d ms from where it is set (snapshots %d ms from when they came)",
+			         g_menus_kept_shut.load(), g_pin_error, g_have_time_offset ? g_time_offset : 0);
 		}
 
-		if (g_next_record >= g_records.size())
+		if (g_next_record >= g_records.size() && elapsed >= g_records.back().ms)
 		{
 			stop_playback("the recording's end");
 		}
@@ -1162,6 +1229,33 @@ namespace
 
 	// While a recording plays, the game's time is playback's: a frame's milliseconds times the speed, none
 	// when paused, the fractions kept; and what is given out is what playback's clock counts.
+	// The client's clock for the frame that is starting: the playback clock plus what separates the
+	// snapshots' time from when they came. The game adds the frame's milliseconds (what this hook hands
+	// out) to its own running time and its clock is that plus a difference it keeps; the difference is
+	// set so the sum is the clock wanted. Going back (a jump), its clock is put back as well: on its own
+	// it never runs backwards.
+	void pin_client_time(const int frame_ms)
+	{
+		if (!g_have_time_offset || g_need_snapshot || g_resync_time || connection_state() != CA_ACTIVE ||
+		    !*reinterpret_cast<const std::int32_t*>(CL_SNAP_VALID))
+		{
+			return;
+		}
+
+		const std::int32_t wanted = static_cast<std::int32_t>(g_clock.load()) + g_time_offset;
+		const std::int32_t real = *reinterpret_cast<const std::int32_t*>(CLS_REALTIME);
+		auto* client_time = reinterpret_cast<std::int32_t*>(CL_SERVER_TIME);
+		// (how far the last frame's clock ended up from the one set for it less this frame's step: 0 if
+		// the game's time is this hook's, as assumed)
+		g_pin_error = *client_time - (wanted - frame_ms);
+		*reinterpret_cast<std::int32_t*>(CL_SERVER_TIME_DELTA) = wanted - (real + frame_ms);
+		if (wanted < *client_time)
+		{
+			*client_time = wanted;
+			*reinterpret_cast<std::int32_t*>(CL_OLD_SERVER_TIME) = wanted;
+		}
+	}
+
 	int hooked_time_scale_msec(const int msec)
 	{
 		// Playback's step is taken here, at the start of the game's frame and nowhere else. The game
@@ -1186,6 +1280,7 @@ namespace
 
 		if (g_paused || msec <= 0)
 		{
+			pin_client_time(0);
 			return 0;
 		}
 
@@ -1194,6 +1289,7 @@ namespace
 		const int whole = static_cast<int>(g_clock_fraction);
 		g_clock_fraction -= static_cast<float>(whole);
 		g_clock += static_cast<std::uint64_t>(whole);
+		pin_client_time(whole);
 		return whole;
 	}
 
@@ -2110,6 +2206,143 @@ void* theater_dvar_at(const int index)
 
 const char* theater_folder() { return g_folder; }
 const char* theater_version() { return VERSION; }
+
+namespace
+{
+	// How long a recording is: the time of its last message, read from the file's record headers.
+	std::uint32_t recording_length(const char* path)
+	{
+		FILE* file = nullptr;
+		if (fopen_s(&file, path, "rb") != 0 || !file)
+		{
+			return 0;
+		}
+
+		std::uint32_t header[3] = {}, last = 0;
+		if (fread(header, sizeof(header), 1, file) == 1 && header[0] == 0x4D445741 && header[2] == MSG_SIZE)
+		{
+			std::uint32_t head[3];
+			while (fread(head, sizeof(head), 1, file) == 1 && head[2] != 0 && head[2] <= MAX_MESSAGE)
+			{
+				const bool message = head[1] != KIND_PREDICTED && head[1] != KIND_PLAYER_STATE;
+				if (message)
+				{
+					last = head[0];
+				}
+
+				if (fseek(file, static_cast<long>(head[2] + (message ? MSG_SIZE : 0)), SEEK_CUR) != 0)
+				{
+					break;
+				}
+			}
+		}
+
+		fclose(file);
+		return last;
+	}
+}
+
+int theater_recordings(RecordingInfo* out, const int max)
+{
+	// (lengths are kept by file name and size: reading them takes a moment)
+	struct Known
+	{
+		std::string file;
+		std::uint64_t size;
+		std::uint32_t length;
+	};
+	static std::vector<Known> known;
+	char pattern[MAX_PATH];
+	sprintf_s(pattern, "%s\\rec_*.awdm.txt", g_folder);
+	WIN32_FIND_DATAA found;
+	const HANDLE search = FindFirstFileA(pattern, &found);
+	if (search == INVALID_HANDLE_VALUE)
+	{
+		return 0;
+	}
+
+	std::vector<std::string> names;
+	do
+	{
+		std::string name = found.cFileName;
+		names.push_back(name.substr(0, name.size() - 4));
+	} while (FindNextFileA(search, &found));
+	FindClose(search);
+	std::sort(names.begin(), names.end(), [](const std::string& a, const std::string& b) { return a > b; });
+	int count = 0;
+	for (const std::string& name : names)
+	{
+		if (count >= max)
+		{
+			break;
+		}
+
+		RecordingInfo& info = out[count];
+		info = RecordingInfo();
+		strncpy_s(info.file, name.c_str(), _TRUNCATE);
+		char path[MAX_PATH], info_path[MAX_PATH];
+		sprintf_s(path, "%s\\%s", g_folder, name.c_str());
+		sprintf_s(info_path, "%s.txt", path);
+		WIN32_FILE_ATTRIBUTE_DATA data{};
+		if (!GetFileAttributesExA(path, GetFileExInfoStandard, &data))
+		{
+			continue;
+		}
+
+		info.size = (static_cast<std::uint64_t>(data.nFileSizeHigh) << 32) | data.nFileSizeLow;
+		FILE* file = nullptr;
+		if (fopen_s(&file, info_path, "r") == 0 && file)
+		{
+			char key[32], value[64];
+			while (fscanf_s(file, "%31s %63s", key, static_cast<unsigned>(sizeof(key)), value, static_cast<unsigned>(sizeof(value))) == 2)
+			{
+				strncpy_s(strcmp(key, "map") == 0 ? info.map : info.gametype, sizeof(info.map), value, _TRUNCATE);
+			}
+
+			fclose(file);
+		}
+
+		bool have = false;
+		for (const Known& k : known)
+		{
+			if (k.file == name && k.size == info.size)
+			{
+				info.length_ms = k.length;
+				have = true;
+			}
+		}
+
+		if (!have)
+		{
+			info.length_ms = recording_length(path);
+			known.push_back({name, info.size, info.length_ms});
+		}
+
+		++count;
+	}
+
+	return count;
+}
+
+void theater_play(const char* file)
+{
+	strncpy_s(g_wanted_name, file, _TRUNCATE);
+	// one playing now is stopped first, and the game given a moment to leave its match
+	const bool playing = g_play != Play::Idle;
+	if (playing)
+	{
+		g_stop_request = true;
+	}
+
+	g_wanted_after = GetTickCount64() + (playing ? 3000 : 0);
+	g_wanted = true;
+	log_line("asked for: %s", file);
+}
+
+bool theater_idle()
+{
+	return g_play == Play::Idle && !g_file && !g_wanted;
+}
 
 void theater_command(const char* text)
 {
