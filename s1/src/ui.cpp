@@ -264,7 +264,7 @@ namespace
 		{
 			// IrisStudio's camera modes; the two not built yet cannot be picked
 			static const struct { CameraMode mode; const char* label; bool built; } MODES[] = {
-				{CameraMode::FirstPerson, "First person", true}, {CameraMode::ThirdPerson, "Third person", true},
+				{CameraMode::FirstPerson, "First person", true}, {CameraMode::ThirdPerson, "Third person", false},
 				{CameraMode::Free, "Free", true},                {CameraMode::Orbit, "Orbit", false},
 				{CameraMode::Dolly, "Dolly", true},              {CameraMode::Bone, "Bone", false}};
 			const char* current = "";

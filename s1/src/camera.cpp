@@ -134,10 +134,12 @@ namespace
 
 	// With the camera away from the player's eyes: the player's body is drawn and the gun in the hands
 	// of the camera is not.
+	// (0.24 switched both when the free camera came on, and the game stopped the match with an error at
+	// that moment; until the log says which of the two it was, neither is touched.)
 	void set_outside_view(const bool third_person, const bool gun)
 	{
-		set_dvar_bool("camera_thirdPerson", third_person);
-		set_dvar_bool("cg_drawGun", gun);
+		(void)third_person;
+		(void)gun;
 	}
 
 	float catmull(const float a, const float b, const float c, const float d, const float t)

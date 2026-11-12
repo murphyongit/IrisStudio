@@ -31,7 +31,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.24 (recorder, playback with rewind, panel, cameras)";
+	constexpr char VERSION[] = "0.25 (recorder, playback with rewind, panel, cameras)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -1359,6 +1359,23 @@ namespace
 		}
 	}
 
+	// The game's errors (Com_Error, s1-mod's symbols), written to the log with their text: an error
+	// that ends a match says why only on a screen that may never be seen.
+	constexpr uintptr_t COM_ERROR = 0x1403CE480;
+	using com_error_t = void (*)(int, const char*, ...);
+	com_error_t g_original_com_error = nullptr;
+
+	void hooked_com_error(const int code, const char* format, ...)
+	{
+		char text[1024] = {};
+		va_list args;
+		va_start(args, format);
+		vsnprintf(text, sizeof(text) - 1, format ? format : "", args);
+		va_end(args);
+		log_line("GAME ERROR (kind %d): %s", code, text);
+		g_original_com_error(code, "%s", text);
+	}
+
 	bool hook(const uintptr_t address, void* detour, void* original, const char* name)
 	{
 		MH_STATUS status = MH_CreateHook(reinterpret_cast<LPVOID>(address), detour, static_cast<LPVOID*>(original));
@@ -1732,6 +1749,8 @@ namespace
 				const bool values = hook(CG_OMNVARS_CHANGED, &hooked_omnvars_changed, &g_original_omnvars_changed, "the menus' values");
 				log_line("hook: playback's team and class menus %s, their value %s", menus ? "kept shut" : "NOT kept shut",
 				         values ? "cleared" : "NOT cleared");
+				const bool errors = hook(COM_ERROR, &hooked_com_error, &g_original_com_error, "the game's errors");
+				log_line("hook: the game's errors %s", errors ? "are written here" : "are NOT written here");
 				ui_start();
 				camera_start();
 				if (HANDLE thread = CreateThread(nullptr, 0, &keys, nullptr, 0, nullptr))
