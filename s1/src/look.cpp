@@ -1359,6 +1359,26 @@ void look_draw_tab(const TheaterState& state)
 	}
 }
 
+float look_key_width()
+{
+	return key_button_width();
+}
+
+void look_key_button(const char* id, const char* label, const int count, const float* values)
+{
+	key_button(id, label, count, values);
+}
+
+void look_key_changed(const char* id, const float* values)
+{
+	key_changed(id, values);
+}
+
+void look_key_remove(const char* id)
+{
+	remove_track(id);
+}
+
 int look_track_count()
 {
 	return static_cast<int>(g_tracks.size());
@@ -1432,6 +1452,40 @@ void look_frame(const TheaterState& state)
 			else if (track.id == "sun_direction")
 			{
 				sun_set_direction(v[0], v[1]);
+			}
+			else if (track.id.compare(0, 5, "light") == 0)
+			{
+				// light<N>_color, _brightness (in doublings), _reach, _position
+				SceneLight lights[16];
+				const int count = scene_lights(lights, 16);
+				const int index = atoi(track.id.c_str() + 5);
+				const size_t under = track.id.find('_');
+				if (index >= 0 && index < count && under != std::string::npos)
+				{
+					SceneLight light = lights[index];
+					const std::string what = track.id.substr(under + 1);
+					if (what == "color")
+					{
+						for (int i = 0; i < 3; ++i)
+						{
+							light.color[i] = v[i] < 0.0f ? 0.0f : v[i];
+						}
+					}
+					else if (what == "brightness")
+					{
+						light.intensity = std::pow(2.0f, v[0]);
+					}
+					else if (what == "reach")
+					{
+						light.radius = v[0] < 1.0f ? 1.0f : v[0];
+					}
+					else
+					{
+						memcpy(light.origin, v, sizeof(light.origin));
+					}
+
+					scene_set_light(index, light);
+				}
 			}
 			else if (track.id.compare(0, 4, "sky_") == 0)
 			{

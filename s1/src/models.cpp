@@ -13,6 +13,7 @@
 #include <MinHook.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
@@ -30,13 +31,79 @@ namespace
 	using create_t = void* (*)(unsigned char*, unsigned short, void*, int);
 	create_t g_original_create = nullptr;
 	std::mutex g_lock;
-	std::map<int, std::vector<std::string>> g_seen;   // an entity's models, by their own names
-	std::map<std::string, std::string> g_swaps;       // a model's name, and what is drawn for it ("": nothing)
-	std::unordered_map<std::string, void*> g_loaded;  // the models the game has loaded
+	std::map<int, std::vector<std::string>> g_seen;                // an entity's models, by their own names
+	std::map<int, std::map<std::string, std::string>> g_swaps;     // per entity: a model's name, and what is drawn for it ("": nothing)
+	std::map<int, std::vector<std::string>> g_adds;                // per entity: models put on as well
+	std::map<int, unsigned> g_built;                               // per entity: the changes its model was last made with
+	std::unordered_map<std::string, void*> g_loaded;               // the models the game has loaded
 	std::vector<std::string> g_names;
 	bool g_listed = false;
 	size_t g_stride = 0;
 	int g_noted = 0;
+	std::map<int, unsigned> g_changed;                             // per entity: how many changes were asked for
+
+	// The parts of a multiplayer outfit, by how their models' names begin (headgear before head).
+	const char* const SLOTS[] = {"mp_top", "mp_headgear", "mp_head", "mp_pants", "mp_glove", "mp_boot", "mp_kneepad", "mp_loadouts", "mp_eyewear", "mp_exo"};
+	constexpr int SLOT_COUNT = 10, SLOT_HEAD = 2;
+
+	bool ends_with(const std::string& text, const char* end)
+	{
+		const size_t length = strlen(end);
+		return text.size() >= length && text.compare(text.size() - length, length, end) == 0;
+	}
+
+	int slot_of(const std::string& name)
+	{
+		if (name.compare(0, 8, "mp_view_") == 0)
+		{
+			return -1;
+		}
+
+		for (int i = 0; i < SLOT_COUNT; ++i)
+		{
+			const size_t length = strlen(SLOTS[i]);
+			if (name.compare(0, length, SLOTS[i]) == 0 && (name.size() == length || name[length] == '_'))
+			{
+				return i;
+			}
+		}
+
+		return -1;
+	}
+
+	std::vector<std::string> tokens_of(const std::string& name)
+	{
+		std::vector<std::string> tokens;
+		size_t at = 0;
+		while (at <= name.size())
+		{
+			const size_t next = name.find('_', at);
+			tokens.push_back(name.substr(at, next == std::string::npos ? std::string::npos : next - at));
+			if (next == std::string::npos)
+			{
+				break;
+			}
+
+			at = next + 1;
+		}
+
+		return tokens;
+	}
+
+	// The gear a part belongs to, as its name has it: two digits and a letter (mp_top_m_a_01a: 01a).
+	std::string set_of(const std::string& name)
+	{
+		for (const std::string& token : tokens_of(name))
+		{
+			if (token.size() == 3 && isdigit(static_cast<unsigned char>(token[0])) && isdigit(static_cast<unsigned char>(token[1])) &&
+			    isalpha(static_cast<unsigned char>(token[2])))
+			{
+				return token;
+			}
+		}
+
+		return {};
+	}
 
 	void note(const char* format, ...)
 	{
@@ -126,13 +193,16 @@ namespace
 			}
 		}
 
+		int outfit = 0, weapons = 0;
 		for (const auto& model : g_loaded)
 		{
 			g_names.push_back(model.first);
+			outfit += slot_of(model.first) >= 0 ? 1 : 0;
+			weapons += model.first.compare(0, 4, "npc_") == 0 ? 1 : 0;
 		}
 
 		std::sort(g_names.begin(), g_names.end());
-		note("models: the game has %d models loaded (%zu by name)", count, g_names.size());
+		note("models: the game has %d models loaded: %d outfit parts, %d world weapons and their parts", count, outfit, weapons);
 	}
 
 	void* hooked_create(unsigned char* models, const unsigned short count, void* tree, const int handle)
@@ -146,12 +216,11 @@ namespace
 			if (!g_stride && count >= 2)
 			{
 				// how far apart the list's entries are: the second entry is a model too
-				for (const size_t stride : {size_t(0x10), size_t(0x18), size_t(0x20), size_t(8)})
+				for (const size_t stride : {size_t(0x20), size_t(0x10), size_t(0x18), size_t(8)})
 				{
 					if (!IsBadReadPtr(models, stride * 2) && name_of(*reinterpret_cast<void**>(models + stride)))
 					{
 						g_stride = stride;
-						note("models: a model list's entries are %zu bytes", stride);
 						break;
 					}
 				}
@@ -176,53 +245,78 @@ namespace
 
 			if (!names.empty())
 			{
-				if (g_noted < 40)
-				{
-					++g_noted;
-					std::string all;
-					for (const std::string& name : names)
-					{
-						all += (all.empty() ? "" : ", ") + name;
-					}
-
-					note("models: entity %d is made of %s", handle, all.c_str());
-				}
-
 				g_seen[handle] = names;
+				g_built[handle] = g_changed[handle];
 				const TheaterState state = theater_state();
-				if (!g_swaps.empty() && stride && (state.playing || state.starting))
+				const auto swaps = g_swaps.find(handle);
+				const auto adds = g_adds.find(handle);
+				const bool any = (swaps != g_swaps.end() && !swaps->second.empty()) || (adds != g_adds.end() && !adds->second.empty());
+				if (any && stride && stride <= 0x20 && (state.playing || state.starting))
 				{
 					if (!g_listed)
 					{
 						list_loaded();
 					}
 
+					std::string made;
 					out = 0;
 					for (int i = 0; i < count; ++i)
 					{
 						void* model = *reinterpret_cast<void**>(models + stride * i);
-						const auto swap = g_swaps.find(names[static_cast<size_t>(i)]);
-						if (swap != g_swaps.end())
+						if (swaps != g_swaps.end())
 						{
-							if (swap->second.empty())
+							const auto swap = swaps->second.find(names[static_cast<size_t>(i)]);
+							if (swap != swaps->second.end())
 							{
-								// left out (the first is what the rest hang on: it stays)
-								if (i > 0)
+								if (swap->second.empty())
 								{
-									changed = true;
-									continue;
+									// left out (the first is what the rest hang on: it stays)
+									if (i > 0)
+									{
+										changed = true;
+										made += " -" + names[static_cast<size_t>(i)];
+										continue;
+									}
 								}
-							}
-							else if (const auto loaded = g_loaded.find(swap->second); loaded != g_loaded.end() && name_of(loaded->second))
-							{
-								model = loaded->second;
-								changed = true;
+								else if (const auto loaded = g_loaded.find(swap->second); loaded != g_loaded.end() && name_of(loaded->second))
+								{
+									model = loaded->second;
+									changed = true;
+									made += " " + names[static_cast<size_t>(i)] + ">" + swap->second;
+								}
 							}
 						}
 
 						memcpy(copy + stride * out, models + stride * i, stride);
 						*reinterpret_cast<void**>(copy + stride * out) = model;
 						++out;
+					}
+
+					if (adds != g_adds.end())
+					{
+						// a part put on as well: an entry like the outfit's second part's (it hangs on the
+						// same bones), with the model
+						for (const std::string& name : adds->second)
+						{
+							const auto loaded = g_loaded.find(name);
+							if (out >= MAX_IN_LIST || loaded == g_loaded.end() || !name_of(loaded->second))
+							{
+								continue;
+							}
+
+							const int like = count > 1 && slot_of(names[1]) >= 0 ? 1 : 0;
+							memcpy(copy + stride * out, models + stride * like, stride);
+							*reinterpret_cast<void**>(copy + stride * out) = loaded->second;
+							++out;
+							changed = true;
+							made += " +" + name;
+						}
+					}
+
+					if (changed && g_noted < 200)
+					{
+						++g_noted;
+						note("models: entity %d made with:%s", handle, made.c_str());
 					}
 				}
 			}
@@ -258,38 +352,96 @@ int models_of(const int entity, char names[][64], const int max)
 	return count;
 }
 
-void models_swap(const char* from, const char* to)
+void models_swap(const int entity, const char* from, const char* to)
 {
 	std::lock_guard<std::mutex> lock(g_lock);
+	++g_changed[entity];
 	if (to)
 	{
-		g_swaps[from] = to;
+		g_swaps[entity][from] = to;
 	}
 	else
 	{
-		g_swaps.erase(from);
+		g_swaps[entity].erase(from);
 	}
 }
 
-int models_swaps(char from[][64], char to[][64], const int max)
+// What a model of the entity's is drawn as: false if as it is.
+bool models_swapped(const int entity, const char* from, char to[64])
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	const auto swaps = g_swaps.find(entity);
+	if (swaps == g_swaps.end())
+	{
+		return false;
+	}
+
+	const auto swap = swaps->second.find(from);
+	if (swap == swaps->second.end())
+	{
+		return false;
+	}
+
+	copy_name(to, swap->second);
+	return true;
+}
+
+void models_add(const int entity, const char* name, const bool on)
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	++g_changed[entity];
+	std::vector<std::string>& adds = g_adds[entity];
+	adds.erase(std::remove(adds.begin(), adds.end(), std::string(name)), adds.end());
+	if (on)
+	{
+		adds.push_back(name);
+	}
+}
+
+int models_added(const int entity, char names[][64], const int max)
 {
 	std::lock_guard<std::mutex> lock(g_lock);
 	int count = 0;
-	for (const auto& swap : g_swaps)
+	const auto adds = g_adds.find(entity);
+	if (adds != g_adds.end())
 	{
-		if (count < max)
+		for (const std::string& name : adds->second)
 		{
-			copy_name(from[count], swap.first);
-			copy_name(to[count], swap.second);
-			++count;
+			if (count < max)
+			{
+				copy_name(names[count++], name);
+			}
 		}
 	}
 
 	return count;
 }
 
-// The loaded models whose names have the text in them.
-int models_find(const char* text, char names[][64], const int max)
+void models_clear(const int entity)
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	++g_changed[entity];
+	g_swaps.erase(entity);
+	g_adds.erase(entity);
+}
+
+// The entity has changes its model has not been made with yet.
+bool models_pending(const int entity)
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	const auto built = g_built.find(entity);
+	return built != g_built.end() && built->second != g_changed[entity];
+}
+
+// The outfit part a model is (an index into models_slot_names), or -1.
+int models_slot(const char* name)
+{
+	return slot_of(name);
+}
+
+// The loaded models whose names have the text in them. group: 0 outfit parts (slot: which, or -1 for
+// all), 1 weapons and their parts as others see them, 2 the first person's, 3 every model.
+int models_find(const char* text, const int group, const int slot, char names[][64], const int max)
 {
 	std::lock_guard<std::mutex> lock(g_lock);
 	if (!g_listed)
@@ -305,13 +457,138 @@ int models_find(const char* text, char names[][64], const int max)
 			break;
 		}
 
-		if (!text[0] || name.find(text) != std::string::npos)
+		const bool first_person = name.compare(0, 3, "vm_") == 0 || name.compare(0, 10, "viewmodel_") == 0 || name.compare(0, 8, "mp_view_") == 0;
+		const int part = slot_of(name);
+		const bool in_group = group == 0 ? part >= 0 && (slot < 0 || part == slot) && !ends_with(name, "_lob")
+			: group == 1 ? name.compare(0, 4, "npc_") == 0
+			: group == 2 ? first_person
+			: true;
+		if (in_group && (!text[0] || name.find(text) != std::string::npos))
 		{
 			copy_name(names[count++], name);
 		}
 	}
 
 	return count;
+}
+
+// The gear the loaded outfit parts come in (their names' "01a", "05a"...): those with parts for three
+// kinds of part or more.
+int models_sets(char ids[][16], const int max)
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	if (!g_listed)
+	{
+		list_loaded();
+	}
+
+	std::map<std::string, unsigned> sets;
+	for (const std::string& name : g_names)
+	{
+		const int slot = slot_of(name);
+		const std::string set = set_of(name);
+		if (slot >= 0 && slot != SLOT_HEAD && !set.empty() && !ends_with(name, "_lob"))
+		{
+			sets[set] |= 1u << slot;
+		}
+	}
+
+	int count = 0;
+	for (const auto& set : sets)
+	{
+		unsigned kinds = 0;
+		for (unsigned bits = set.second; bits; bits &= bits - 1)
+		{
+			++kinds;
+		}
+
+		if (kinds >= 3 && count < max)
+		{
+			strncpy_s(ids[count++], 16, set.first.c_str(), _TRUNCATE);
+		}
+	}
+
+	return count;
+}
+
+// Every part of the entity's outfit that the gear has, at once (the face stays): how many parts.
+int models_apply_set(const int entity, const char* id)
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	if (!g_listed)
+	{
+		list_loaded();
+	}
+
+	const auto seen = g_seen.find(entity);
+	if (seen == g_seen.end())
+	{
+		return 0;
+	}
+
+	++g_changed[entity];
+	g_swaps.erase(entity);
+	g_adds.erase(entity);
+	int applied = 0;
+	const bool lob = !seen->second.empty() && ends_with(seen->second[0], "_lob");
+	for (int slot = 0; slot < SLOT_COUNT; ++slot)
+	{
+		if (slot == SLOT_HEAD)
+		{
+			continue;
+		}
+
+		std::string own;
+		for (const std::string& name : seen->second)
+		{
+			if (slot_of(name) == slot)
+			{
+				own = name;
+			}
+		}
+
+		// of the gear's parts of this kind, the one whose name has the most in common with the part worn
+		const std::vector<std::string> own_tokens = tokens_of(own);
+		std::string best;
+		int best_score = -1;
+		for (const std::string& name : g_names)
+		{
+			if (slot_of(name) != slot || set_of(name) != id || ends_with(name, "_lob") != lob)
+			{
+				continue;
+			}
+
+			int score = 0;
+			for (const std::string& token : tokens_of(name))
+			{
+				score += std::find(own_tokens.begin(), own_tokens.end(), token) != own_tokens.end() ? 1 : 0;
+			}
+
+			if (score > best_score)
+			{
+				best_score = score;
+				best = name;
+			}
+		}
+
+		if (best.empty() || best == own)
+		{
+			continue;
+		}
+
+		if (own.empty())
+		{
+			g_adds[entity].push_back(best);
+		}
+		else
+		{
+			g_swaps[entity][own] = best;
+		}
+
+		++applied;
+	}
+
+	return applied;
 }
 
 // Each frame: between playbacks the game may load another map's models.
@@ -322,6 +599,7 @@ void models_frame(const TheaterState& state)
 		std::lock_guard<std::mutex> lock(g_lock);
 		g_listed = false;
 		g_seen.clear();
+		g_built.clear();
 	}
 }
 

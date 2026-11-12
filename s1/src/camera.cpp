@@ -337,7 +337,7 @@ namespace
 	add_omni_light_t g_original_add_omni_light = nullptr;
 	// the bulb and fade numbers of a light of the game's own (an effect's), for the editor's lights: with
 	// all four 0 (0.37) a light lit effects but not the map
-	float g_game_bulb[4] = {0.0f, 0.0f, 1.0f, 0.0f};
+	float g_game_bulb[4] = {1.0f, 0.0f, 0.0f, -1.0f};  // (what the game's own were seen to have)
 	bool g_have_game_bulb = false;
 	int g_lights_noted = 0;
 

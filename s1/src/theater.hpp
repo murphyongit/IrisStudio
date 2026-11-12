@@ -112,15 +112,22 @@ struct SceneLight
 	bool on = true;
 	float origin[3] = {};
 	float color[3] = {1.0f, 1.0f, 1.0f};
-	float intensity = 1048576.0f, radius = 400.0f;  // (the game's lights are in very large numbers)
+	float intensity = 256.0f, radius = 400.0f;  // (the game's own lights' colours are in the hundreds)
 };
 
 // models.cpp: what an entity is made of, and models drawn as others (to: "" leaves the model out, null
 // ends the swap).
 int models_of(int entity, char names[][64], int max);
-void models_swap(const char* from, const char* to);
-int models_swaps(char from[][64], char to[][64], int max);
-int models_find(const char* text, char names[][64], int max);
+void models_swap(int entity, const char* from, const char* to);
+bool models_swapped(int entity, const char* from, char to[64]);
+void models_add(int entity, const char* name, bool on);
+int models_added(int entity, char names[][64], int max);
+void models_clear(int entity);
+bool models_pending(int entity);
+int models_slot(const char* name);
+int models_find(const char* text, int group, int slot, char names[][64], int max);
+int models_sets(char ids[][16], int max);
+int models_apply_set(int entity, const char* id);
 void models_frame(const TheaterState& state);
 void models_start();
 int scene_lights(SceneLight* out, int max);

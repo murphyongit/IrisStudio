@@ -885,6 +885,14 @@ namespace
 					if (ImGui::SmallButton("Move here"))
 					{
 						scene_move_light_here(i);
+						SceneLight moved[16];
+						if (scene_lights(moved, 16) > i)
+						{
+							char id[32];
+							snprintf(id, sizeof(id), "light%d_position", i);
+							look_key_changed(id, moved[i].origin);
+						}
+
 						ImGui::PopID();
 						continue;
 					}
@@ -896,22 +904,57 @@ namespace
 						remove = i;
 					}
 
+					// (each row can have keyframes: light<N>_...)
+					char id[32], name[48];
+					const float key = look_key_width();
+					snprintf(id, sizeof(id), "light%d_color", i);
+					snprintf(name, sizeof(name), "Light %d color", i + 1);
 					row_label("Color");
-					changed = ImGui::ColorEdit3("##color", light.color) || changed;
-					// (the game's lights are in very large numbers: the slider is in doublings)
+					ImGui::SetNextItemWidth(-key);
+					if (ImGui::ColorEdit3("##color", light.color))
+					{
+						changed = true;
+						look_key_changed(id, light.color);
+					}
+
+					look_key_button(id, name, 3, light.color);
+					// (the slider is in doublings: the game's own lights' colours are in the hundreds)
 					float stops = light.intensity > 1.0f ? std::log2(light.intensity) : 0.0f;
+					snprintf(id, sizeof(id), "light%d_brightness", i);
+					snprintf(name, sizeof(name), "Light %d brightness", i + 1);
 					row_label("Brightness");
-					if (ImGui::SliderFloat("##intensity", &stops, 0.0f, 40.0f, "%.1f"))
+					ImGui::SetNextItemWidth(-key);
+					if (ImGui::SliderFloat("##intensity", &stops, 0.0f, 30.0f, "%.1f"))
 					{
 						light.intensity = std::pow(2.0f, stops);
 						changed = true;
+						look_key_changed(id, &stops);
 					}
 
 					ImGui::SetItemTooltip("Each step up is twice as bright");
+					look_key_button(id, name, 1, &stops);
+					snprintf(id, sizeof(id), "light%d_reach", i);
+					snprintf(name, sizeof(name), "Light %d reach", i + 1);
 					row_label("Reach");
-					changed = ImGui::SliderFloat("##radius", &light.radius, 10.0f, 5000.0f, "%.0f", ImGuiSliderFlags_Logarithmic) || changed;
+					ImGui::SetNextItemWidth(-key);
+					if (ImGui::SliderFloat("##radius", &light.radius, 10.0f, 5000.0f, "%.0f", ImGuiSliderFlags_Logarithmic))
+					{
+						changed = true;
+						look_key_changed(id, &light.radius);
+					}
+
+					look_key_button(id, name, 1, &light.radius);
+					snprintf(id, sizeof(id), "light%d_position", i);
+					snprintf(name, sizeof(name), "Light %d position", i + 1);
 					row_label("Position");
-					changed = ImGui::DragFloat3("##origin", light.origin, 1.0f, 0.0f, 0.0f, "%.0f") || changed;
+					ImGui::SetNextItemWidth(-key);
+					if (ImGui::DragFloat3("##origin", light.origin, 1.0f, 0.0f, 0.0f, "%.0f"))
+					{
+						changed = true;
+						look_key_changed(id, light.origin);
+					}
+
+					look_key_button(id, name, 3, light.origin);
 					if (changed)
 					{
 						scene_set_light(i, light);
@@ -922,15 +965,28 @@ namespace
 
 				if (remove >= 0)
 				{
+					// (keyframes are by a light's number: this light's and the later ones' go with it)
+					for (int i = remove; i < count; ++i)
+					{
+						for (const char* what : {"color", "brightness", "reach", "position"})
+						{
+							char id[32];
+							snprintf(id, sizeof(id), "light%d_%s", i, what);
+							look_key_remove(id);
+						}
+					}
+
 					scene_remove_light(remove);
 				}
 			}
 
 			if (section(ICON_PERSON, "Models"))
 			{
-				// what a player is made of, and each part drawn as another model or left out
-				static int entity = -1;
-				static char filter[48] = "";
+				// a player's outfit and weapon, part by part, each drawn as another model or left out
+				static const char* const SLOT_LABELS[] = {"Top", "Headgear", "Head", "Pants", "Gloves", "Boots", "Kneepads", "Loadout gear", "Eyewear", "Exo"};
+				static int entity = -1, target_slot = -1, group = 0;
+				static char target[64] = "", search[48] = "", set_id[16] = "";
+				static bool only_this_kind = true;
 				const BoneState players = camera_bone_state();
 				if (entity < 0 || !(players.entities & (1ull << entity)))
 				{
@@ -951,6 +1007,8 @@ namespace
 							if (ImGui::Selectable(name, e == entity))
 							{
 								entity = e;
+								target[0] = 0;
+								target_slot = -1;
 							}
 						}
 					}
@@ -958,89 +1016,221 @@ namespace
 					ImGui::EndCombo();
 				}
 
-				static char parts[32][64], from[64][64], to[64][64], found[300][64];
+				static char parts[32][64], added[16][64], found[400][64], sets[64][16];
 				const int part_count = entity >= 0 ? models_of(entity, parts, 32) : 0;
-				const int swap_count = models_swaps(from, to, 64);
+				const int added_count = entity >= 0 ? models_added(entity, added, 16) : 0;
 				bool rebuilt = false;
 				if (part_count == 0)
 				{
 					ImGui::PushTextWrapPos(0.0f);
 					ImGui::TextDisabled(players.entities ? "This player's parts are listed once the game has made its model: go back a little in the recording."
-					                                     : "No player's model is in the match right now. (The list of players fills in the Bone camera too.)");
+					                                     : "No player's model is in the match right now.");
 					ImGui::PopTextWrapPos();
 				}
-
-				for (int i = 0; i < part_count; ++i)
+				else
 				{
-					const char* swapped = nullptr;
-					for (int s = 0; s < swap_count; ++s)
+					// a whole set of gear at once, as the game's own outfit menu does
+					const int set_count = models_sets(sets, 64);
+					row_label("Gear set");
+					ImGui::SetNextItemWidth(-ImGui::CalcTextSize("Apply").x - ImGui::GetStyle().FramePadding.x * 2.0f - ImGui::GetStyle().ItemSpacing.x);
+					if (ImGui::BeginCombo("##gearSet", set_id[0] ? set_id : "Choose..."))
 					{
-						if (strcmp(from[s], parts[i]) == 0)
+						for (int i = 0; i < set_count; ++i)
 						{
-							swapped = to[s];
-						}
-					}
-
-					ImGui::PushID(i);
-					ImGui::TextUnformatted(parts[i]);
-					ImGui::SetNextItemWidth(-1.0f);
-					const char* shown = !swapped ? "As it is" : swapped[0] ? swapped : "Left out";
-					if (ImGui::BeginCombo("##swap", shown, ImGuiComboFlags_HeightLarge))
-					{
-						ImGui::SetNextItemWidth(-1.0f);
-						ImGui::InputTextWithHint("##filter", "type part of a model's name", filter, sizeof(filter));
-						if (ImGui::Selectable("As it is", !swapped))
-						{
-							models_swap(parts[i], nullptr);
-							rebuilt = true;
-						}
-
-						if (i > 0 && ImGui::Selectable("Left out", swapped && !swapped[0]))
-						{
-							models_swap(parts[i], "");
-							rebuilt = true;
-						}
-
-						ImGui::Separator();
-						const int found_count = models_find(filter, found, 300);
-						for (int f = 0; f < found_count; ++f)
-						{
-							if (ImGui::Selectable(found[f], swapped && strcmp(swapped, found[f]) == 0))
+							if (ImGui::Selectable(sets[i], strcmp(sets[i], set_id) == 0))
 							{
-								models_swap(parts[i], found[f]);
-								rebuilt = true;
+								snprintf(set_id, sizeof(set_id), "%s", sets[i]);
 							}
-						}
-
-						if (found_count == 300)
-						{
-							ImGui::TextDisabled("(more: type more of the name)");
 						}
 
 						ImGui::EndCombo();
 					}
 
-					ImGui::PopID();
-				}
-
-				if (swap_count > 0)
-				{
-					ImGui::Separator();
-					ImGui::TextDisabled("Swaps (every player with the model)");
-					for (int s = 0; s < swap_count; ++s)
+					ImGui::SameLine();
+					ImGui::BeginDisabled(!set_id[0]);
+					if (ImGui::Button("Apply"))
 					{
-						ImGui::PushID(1000 + s);
-						if (ImGui::SmallButton(ICON_TRASH))
+						models_apply_set(entity, set_id);
+						rebuilt = true;
+					}
+
+					ImGui::EndDisabled();
+					ImGui::SetItemTooltip("Every part of this player's outfit that this gear has, at once (the face stays)");
+					if (ImGui::Button("Reset this player"))
+					{
+						models_clear(entity);
+						target[0] = 0;
+						target_slot = -1;
+						rebuilt = true;
+					}
+
+					// the outfit's parts, then the rest (the weapon and what is on it)
+					auto row = [&](const char* kind, const char* own, const int slot) {
+						char swapped[64] = "";
+						const bool is_swapped = own[0] && models_swapped(entity, own, swapped);
+						const char* extra = nullptr;
+						if (!own[0])
 						{
-							models_swap(from[s], nullptr);
+							for (int a = 0; a < added_count; ++a)
+							{
+								if (models_slot(added[a]) == slot)
+								{
+									extra = added[a];
+								}
+							}
+						}
+
+						const bool chosen = own[0] ? strcmp(target, own) == 0 : target_slot == slot && !target[0];
+						const char* shown = is_swapped ? (swapped[0] ? swapped : "(left out)") : own[0] ? own : extra ? extra : "(none)";
+						ImGui::PushID(kind);
+						ImGui::PushID(own);
+						ImGui::AlignTextToFramePadding();
+						ImGui::TextDisabled("%s", kind);
+						ImGui::SameLine(ImGui::GetContentRegionAvail().x * 0.34f);
+						if (is_swapped || extra)
+						{
+							ImGui::PushStyleColor(ImGuiCol_Text, color(P.accent));
+						}
+
+						if (ImGui::Selectable(shown, chosen))
+						{
+							snprintf(target, sizeof(target), "%s", own);
+							target_slot = slot;
+							group = slot >= 0 ? 0 : strncmp(own, "npc_", 4) == 0 ? 1 : strncmp(own, "mp_", 3) == 0 || !own[0] ? 0 : 2;
+							search[0] = 0;
+						}
+
+						if (is_swapped || extra)
+						{
+							ImGui::PopStyleColor();
+						}
+
+						ImGui::PopID();
+						ImGui::PopID();
+					};
+					ImGui::Separator();
+					for (int slot = 0; slot < 10; ++slot)
+					{
+						const char* own = "";
+						for (int i = 0; i < part_count; ++i)
+						{
+							if (models_slot(parts[i]) == slot)
+							{
+								own = parts[i];
+							}
+						}
+
+						row(SLOT_LABELS[slot], own, slot);
+					}
+
+					for (int i = 0; i < part_count; ++i)
+					{
+						if (models_slot(parts[i]) < 0)
+						{
+							row(strncmp(parts[i], "npc_", 4) == 0 || strncmp(parts[i], "vm_", 3) == 0 ? "Weapon part" : "Part", parts[i], -1);
+						}
+					}
+
+					// the picker for the row chosen
+					if (target[0] || target_slot >= 0)
+					{
+						ImGui::Separator();
+						ImGui::TextDisabled("Draw %s as", target[0] ? target : SLOT_LABELS[target_slot]);
+						if (ImGui::SmallButton(target[0] ? "As it is" : "None"))
+						{
+							if (target[0])
+							{
+								models_swap(entity, target, nullptr);
+							}
+							else
+							{
+								for (int a = 0; a < added_count; ++a)
+								{
+									if (models_slot(added[a]) == target_slot)
+									{
+										models_add(entity, added[a], false);
+									}
+								}
+							}
+
 							rebuilt = true;
 						}
 
-						ImGui::SameLine();
+						if (target[0] && strcmp(target, parts[0]) != 0)
+						{
+							ImGui::SameLine();
+							if (ImGui::SmallButton("Leave out"))
+							{
+								models_swap(entity, target, "");
+								rebuilt = true;
+							}
+						}
+
+						ImGui::SetNextItemWidth(-1.0f);
+						ImGui::InputTextWithHint("##modelSearch", ICON_SEARCH "  search the models by name", search, sizeof(search));
+						static const char* const GROUPS[] = {"Outfit", "Weapons", "First person", "Everything"};
+						for (int g = 0; g < 4; ++g)
+						{
+							if (g)
+							{
+								ImGui::SameLine();
+							}
+
+							if (ImGui::RadioButton(GROUPS[g], group == g))
+							{
+								group = g;
+							}
+						}
+
+						if (group == 0 && target_slot >= 0)
+						{
+							ImGui::Checkbox("Only this kind of part", &only_this_kind);
+						}
+
+						const int found_count = models_find(search, group, group == 0 && only_this_kind ? target_slot : -1, found, 400);
+						ImGui::BeginChild("modelResults", {0.0f, g_font_size * 14.0f}, ImGuiChildFlags_Border);
+						ImGuiListClipper clipper;
+						clipper.Begin(found_count);
+						while (clipper.Step())
+						{
+							for (int f = clipper.DisplayStart; f < clipper.DisplayEnd; ++f)
+							{
+								if (ImGui::Selectable(found[f]))
+								{
+									if (target[0])
+									{
+										models_swap(entity, target, found[f]);
+									}
+									else
+									{
+										for (int a = 0; a < added_count; ++a)
+										{
+											if (models_slot(added[a]) == target_slot)
+											{
+												models_add(entity, added[a], false);
+											}
+										}
+
+										models_add(entity, found[f], true);
+									}
+
+									rebuilt = true;
+								}
+							}
+						}
+
+						ImGui::EndChild();
+						if (found_count == 400)
+						{
+							ImGui::TextDisabled("More than 400: type more of the name.");
+						}
+					}
+
+					if (models_pending(entity))
+					{
 						ImGui::PushTextWrapPos(0.0f);
-						ImGui::Text("%s  ->  %s", from[s], to[s][0] ? to[s] : "left out");
+						ImGui::TextColored(color(P.warn), "Waiting for the game to rebuild this player. If nothing changes, go back a few seconds in the recording.");
 						ImGui::PopTextWrapPos();
-						ImGui::PopID();
 					}
 				}
 

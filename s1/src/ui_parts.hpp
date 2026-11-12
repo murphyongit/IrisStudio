@@ -55,6 +55,12 @@ struct LookTrack
 	int keys = 0;
 	std::uint32_t ms[256] = {};
 };
+// A keyframe diamond for a row of the editor's that is not a game setting (the width to leave for it;
+// the diamond after the row's control; a change made by hand).
+float look_key_width();
+void look_key_button(const char* id, const char* label, int count, const float* values);
+void look_key_changed(const char* id, const float* values);
+void look_key_remove(const char* id);
 int look_track_count();
 bool look_track(int index, LookTrack* out);
 void look_track_clear(int index);
