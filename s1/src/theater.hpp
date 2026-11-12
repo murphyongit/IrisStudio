@@ -86,6 +86,26 @@ struct CameraState
 	std::uint32_t point_ms[64] = {};
 };
 
+// The bone camera: on a part of an entity's model (a player's head, hand, gun), moved along that part's
+// own axis (forward, right, up) and turned (pitch, yaw, roll) with it, or not turning with it.
+struct BoneCamera
+{
+	int entity = -1;  // -1: the one nearest the camera when the bone camera is first used
+	char bone[48] = "j_head";
+	float offset[3] = {}, turn[3] = {};
+	bool rotate = true;
+};
+
+struct BoneState
+{
+	BoneCamera camera;
+	std::uint64_t entities = 0;  // those with a model that has a head
+	int nearest = -1;
+	bool found = false;
+};
+
+BoneState camera_bone_state();
+void camera_set_bone(const BoneCamera& bone);
 CameraState camera_state();
 void camera_set_mode(CameraMode mode);
 void camera_set_speed(float speed);

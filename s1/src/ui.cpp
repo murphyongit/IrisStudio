@@ -23,6 +23,7 @@
 #include <string>
 #include <cstdarg>
 #include <cstdio>
+#include <cctype>
 #include <cstring>
 #include <mutex>
 #include <vector>
@@ -274,7 +275,7 @@ namespace
 		{CameraMode::Free, "Free", "Free Camera", true},
 		{CameraMode::Orbit, "Orbit", "Orbit Camera", false},
 		{CameraMode::Dolly, "Dolly", "Dolly Camera", true},
-		{CameraMode::Bone, "Bone", "Bone Camera", false}};
+		{CameraMode::Bone, "Bone", "Bone Camera", true}};
 
 	void opaque_callback(const ImDrawList*, const ImDrawCmd*)
 	{
@@ -504,7 +505,7 @@ namespace
 
 			float fov = camera.fov;
 			row_label("Field of View");
-			ImGui::BeginDisabled(camera.mode != CameraMode::Free);
+			ImGui::BeginDisabled(camera.mode != CameraMode::Free && camera.mode != CameraMode::Bone);
 			if (ImGui::SliderFloat("##fov", &fov, 5.0f, 160.0f, "%.1f"))
 			{
 				camera_set_fov(fov);
@@ -519,6 +520,98 @@ namespace
 				{
 					camera_set_speed(speed);
 				}
+			}
+		}
+
+		if (camera.mode == CameraMode::Bone && section(ICON_VIDEO, "Bone camera"))
+		{
+			// the camera rides on a part of a player's model
+			static const char* const BONES[] = {"j_head", "tag_eye", "j_helmet", "j_neck", "j_spineupper", "j_spinelower", "j_mainroot",
+			                                    "tag_weapon_right", "tag_weapon_left", "tag_flash", "j_wrist_ri", "j_wrist_le",
+			                                    "j_shoulder_ri", "j_shoulder_le", "j_ankle_ri", "j_ankle_le", "tag_origin"};
+			BoneState bone = camera_bone_state();
+			BoneCamera wanted = bone.camera;
+			bool changed = false;
+			char label[48];
+			auto name_of = [&](const int entity, char* out, const size_t size) {
+				snprintf(out, size, entity == bone.nearest ? "Player %d (nearest the camera)" : "Player %d", entity);
+			};
+			if (wanted.entity >= 0)
+			{
+				name_of(wanted.entity, label, sizeof(label));
+			}
+			else
+			{
+				snprintf(label, sizeof(label), "None in view");
+			}
+
+			row_label("Player");
+			if (ImGui::BeginCombo("##boneEntity", label))
+			{
+				for (int entity = 0; entity < 64; ++entity)
+				{
+					if (bone.entities & (1ull << entity))
+					{
+						char name[48];
+						name_of(entity, name, sizeof(name));
+						if (ImGui::Selectable(name, entity == wanted.entity))
+						{
+							wanted.entity = entity;
+							changed = true;
+						}
+					}
+				}
+
+				ImGui::EndCombo();
+			}
+
+			row_label("Bone");
+			if (ImGui::BeginCombo("##boneName", wanted.bone))
+			{
+				for (const char* name : BONES)
+				{
+					if (ImGui::Selectable(name, strcmp(name, wanted.bone) == 0))
+					{
+						snprintf(wanted.bone, sizeof(wanted.bone), "%s", name);
+						changed = true;
+					}
+				}
+
+				ImGui::EndCombo();
+			}
+
+			row_label("Other bone");
+			static char typed[48] = "";
+			if (ImGui::InputTextWithHint("##boneTyped", "a bone's name, then Enter", typed, sizeof(typed), ImGuiInputTextFlags_EnterReturnsTrue) && typed[0])
+			{
+				for (char* c = typed; *c; ++c)
+				{
+					*c = static_cast<char>(tolower(static_cast<unsigned char>(*c)));
+				}
+
+				snprintf(wanted.bone, sizeof(wanted.bone), "%s", typed);
+				changed = true;
+			}
+
+			row_label("Offset");
+			changed = ImGui::DragFloat3("##boneOffset", wanted.offset, 0.25f, -2000.0f, 2000.0f, "%.1f") || changed;
+			ImGui::SetItemTooltip("Forward, right, up, along the bone's own directions");
+			row_label("Rotation");
+			changed = ImGui::DragFloat3("##boneTurn", wanted.turn, 0.5f, -720.0f, 720.0f, "%.1f") || changed;
+			ImGui::SetItemTooltip("Up and down, around, roll");
+			row_label("Turn with the bone");
+			changed = ImGui::Checkbox("##boneRotate", &wanted.rotate) || changed;
+			if (changed)
+			{
+				camera_set_bone(wanted);
+			}
+
+			if (!bone.found)
+			{
+				ImGui::PushTextWrapPos(0.0f);
+				ImGui::TextDisabled(bone.entities ? "This player's model does not have that bone, or the player is not in the match right now."
+				                                  : "No player's model is in the match right now.");
+				ImGui::PopTextWrapPos();
 			}
 		}
 

@@ -25,6 +25,16 @@ namespace
 	constexpr uintptr_t REFDEF_TAN_X = 0x1415575D0, REFDEF_TAN_Y = 0x1415575D4, REFDEF_ORIGIN = 0x1415575D8,
 		REFDEF_AXIS = 0x1415575E4, VIEW_ORIGIN = 0x141557610;
 	constexpr uintptr_t DVAR_FIND_VAR = 0x1404BF8B0;
+	// The bone camera's. The game ties its own view to a part of a model in one place (0x1401DCD70, from
+	// its view calculation): an entity of the client game's (0x288 bytes each from 0x141655F60, its number
+	// a word at +0x144), that entity's model as it is posed (Com_GetClientDObj 0x1403D2BA0: the number,
+	// the client), the part's name as one of the game's strings (SL_FindString 0x1403F11C0) and
+	// CG_DObjGetWorldTagMatrix (0x140190D00: the entity, the model, the name, the part's axis out, its
+	// origin out; not 0 if the model has the part).
+	constexpr uintptr_t CG_ENTITIES = 0x141655F60, COM_GET_CLIENT_DOBJ = 0x1403D2BA0, SL_FIND_STRING = 0x1403F11C0,
+		CG_DOBJ_GET_WORLD_TAG_MATRIX = 0x140190D00;
+	constexpr size_t CENTITY_SIZE = 0x288, CENTITY_NUMBER = 0x144;
+	constexpr int BONE_ENTITIES = 64;
 	constexpr float PI = 3.14159265358979f, TO_RAD = PI / 180.0f, TO_DEG = 180.0f / PI;
 
 	using calc_view_t = void (*)(int);
@@ -45,6 +55,8 @@ namespace
 		float origin[3] = {};
 		float angles[3] = {};  // pitch, yaw, roll
 		float fov = 80.0f;
+		bool has_axis = false;  // the bone camera's: its axis as it is, not from the angles
+		float axis[3][3] = {};
 	};
 
 	struct Point
@@ -301,10 +313,136 @@ namespace
 		}
 	}
 
+	// ---- the bone camera
+	BoneCamera g_bone;
+	std::atomic<std::uint64_t> g_bone_entities{0};
+	std::atomic<int> g_bone_nearest{-1};
+	std::atomic<bool> g_bone_found{false};
+	unsigned g_bone_scan = 0;
+
+	// A part of an entity's model: where it is and how it is turned (forward, left, up).
+	bool bone_matrix(const int entity, const char* name, float axis[3][3], float origin[3])
+	{
+		if (entity < 0 || entity >= BONE_ENTITIES)
+		{
+			return false;
+		}
+
+		__try
+		{
+			auto* centity = reinterpret_cast<unsigned char*>(CG_ENTITIES + static_cast<size_t>(entity) * CENTITY_SIZE);
+			const int number = *reinterpret_cast<const std::int16_t*>(centity + CENTITY_NUMBER);
+			if (number != entity)
+			{
+				return false;
+			}
+
+			void* model = reinterpret_cast<void* (*)(int, int)>(COM_GET_CLIENT_DOBJ)(number, 0);
+			if (!model)
+			{
+				return false;
+			}
+
+			const unsigned tag = reinterpret_cast<unsigned (*)(const char*)>(SL_FIND_STRING)(name);
+			if (!tag)
+			{
+				return false;
+			}
+
+			return reinterpret_cast<int (*)(const void*, const void*, unsigned, float (*)[3], float*)>(CG_DOBJ_GET_WORLD_TAG_MATRIX)(
+				       centity, model, tag, axis, origin) != 0;
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			return false;
+		}
+	}
+
+	// Which entities have a model with a head, and the one nearest where the view is.
+	void scan_bones()
+	{
+		std::uint64_t have = 0;
+		int nearest = -1;
+		float nearest_distance = 250.0f * 250.0f;
+		const float* eye = &at<float>(REFDEF_ORIGIN);
+		for (int entity = 0; entity < BONE_ENTITIES; ++entity)
+		{
+			float axis[3][3], origin[3];
+			if (!bone_matrix(entity, "j_head", axis, origin))
+			{
+				continue;
+			}
+
+			have |= 1ull << entity;
+			float distance = 0.0f;
+			for (int i = 0; i < 3; ++i)
+			{
+				distance += (origin[i] - eye[i]) * (origin[i] - eye[i]);
+			}
+
+			if (distance < nearest_distance)
+			{
+				nearest_distance = distance;
+				nearest = entity;
+			}
+		}
+
+		g_bone_entities = have;
+		g_bone_nearest = nearest;
+	}
+
+	// The camera on the bone: the bone's place and the offset along its own axis; its turning, with the
+	// angles on top, or the angles alone.
+	bool bone_pose(const BoneCamera& bone, Pose* pose)
+	{
+		float axis[3][3], origin[3];
+		if (!bone_matrix(bone.entity, bone.bone, axis, origin))
+		{
+			return false;
+		}
+
+		for (int i = 0; i < 3; ++i)
+		{
+			pose->origin[i] = origin[i] + axis[0][i] * bone.offset[0] - axis[1][i] * bone.offset[1] + axis[2][i] * bone.offset[2];
+		}
+
+		float turn[3][3];
+		angles_to_axis(bone.turn, turn);
+		if (bone.rotate)
+		{
+			for (int r = 0; r < 3; ++r)
+			{
+				for (int c = 0; c < 3; ++c)
+				{
+					pose->axis[r][c] = turn[r][0] * axis[0][c] + turn[r][1] * axis[1][c] + turn[r][2] * axis[2][c];
+				}
+			}
+		}
+		else
+		{
+			memcpy(pose->axis, turn, sizeof(turn));
+		}
+
+		pose->has_axis = true;
+		// (the angles too, for the free camera to start from)
+		pose->angles[1] = std::atan2(pose->axis[0][1], pose->axis[0][0]) * TO_DEG;
+		pose->angles[0] = std::atan2(-pose->axis[0][2], std::sqrt(pose->axis[0][0] * pose->axis[0][0] + pose->axis[0][1] * pose->axis[0][1])) * TO_DEG;
+		pose->angles[2] = 0.0f;
+		return true;
+	}
+
 	void apply(const Pose& pose)
 	{
 		float axis[3][3];
-		angles_to_axis(pose.angles, axis);
+		if (pose.has_axis)
+		{
+			memcpy(axis, pose.axis, sizeof(axis));
+		}
+		else
+		{
+			angles_to_axis(pose.angles, axis);
+		}
+
 		memcpy(&at<float>(REFDEF_AXIS), axis, sizeof(axis));
 		memcpy(&at<float>(REFDEF_ORIGIN), pose.origin, sizeof(pose.origin));
 		memcpy(&at<float>(VIEW_ORIGIN), pose.origin, sizeof(pose.origin));
@@ -364,7 +502,34 @@ namespace
 		const bool follow = state.playing && mode == CameraMode::Dolly && g_points.size() >= 2;
 		const bool parked = state.playing && mode == CameraMode::Dolly && !follow && g_have_pose;
 		const bool free_camera = state.playing && mode == CameraMode::Free;
-		const bool overriding = follow || free_camera || parked;
+		bool on_bone = false;
+		if (state.playing && mode == CameraMode::Bone)
+		{
+			if (g_bone_scan++ % 20 == 0)
+			{
+				scan_bones();
+			}
+
+			if (g_bone.entity < 0)
+			{
+				g_bone.entity = g_bone_nearest;
+			}
+
+			if (!g_have_pose)
+			{
+				g_pose = pose_of_game_view();
+			}
+
+			on_bone = view_is_sane() && bone_pose(g_bone, &g_pose);
+			g_have_pose = g_have_pose || on_bone;
+		}
+		else
+		{
+			g_pose.has_axis = false;
+		}
+
+		g_bone_found = on_bone;
+		const bool overriding = follow || free_camera || parked || on_bone;
 		const int view_state = !state.playing ? 0 : overriding ? 2 : mode == CameraMode::ThirdPerson ? 1 : 0;
 		if (view_state != g_view_state)
 		{
@@ -407,7 +572,7 @@ namespace
 				    at<float>(REFDEF_TAN_Y), o[0], o[1], o[2], a[0], a[1], a[2], a[6], a[7], a[8]);
 			}
 
-			log("camera: %s", follow ? "following the path" : free_camera ? "free" : "the player's own again");
+			log("camera: %s", follow ? "following the path" : free_camera ? "free" : on_bone ? "on a bone" : "the player's own again");
 		}
 		else if (free_camera != g_free)
 		{
@@ -465,6 +630,13 @@ namespace
 	{
 		if (g_overriding && refdef == reinterpret_cast<void*>(REFDEF) && view_is_sane())
 		{
+			if (g_applied.has_axis)
+			{
+				// the bone again, as it is now: the entities may have moved since the view was worked out
+				std::lock_guard<std::mutex> lock(g_lock);
+				bone_pose(g_bone, &g_applied);
+			}
+
 			apply(g_applied);
 			static bool noted = false;
 			if (!noted)
@@ -506,6 +678,24 @@ CameraState camera_state()
 	}
 
 	return state;
+}
+
+BoneState camera_bone_state()
+{
+	BoneState state;
+	state.entities = g_bone_entities;
+	state.nearest = g_bone_nearest;
+	state.found = g_bone_found;
+	std::lock_guard<std::mutex> lock(g_lock);
+	state.camera = g_bone;
+	return state;
+}
+
+void camera_set_bone(const BoneCamera& bone)
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	g_bone = bone;
+	g_bone.bone[sizeof(g_bone.bone) - 1] = 0;
 }
 
 void camera_set_mode(const CameraMode mode) { g_mode = static_cast<int>(mode); }
