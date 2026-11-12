@@ -30,7 +30,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.11 (recorder, playback with rewind)";
+	constexpr char VERSION[] = "0.12 (recorder, playback with rewind)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -77,10 +77,12 @@ namespace
 	constexpr uintptr_t CL_SNAPSHOT_COUNT = 0x1417F3240, CL_SNAPSHOTS = 0x1417F3318;
 	constexpr size_t CL_SNAPSHOT_SIZE = 0x5160, CL_SNAPSHOT_VALID = 0x5118;
 	// the client game's: the newest snapshot's number and time it has seen, the snapshot it is at and the
-	// one it is going to (pointers; none makes it start from the next snapshot as from a match's first),
-	// and the number of the last one it has read
+	// one it is going to (pointers), and the number of the last one it has read
 	constexpr uintptr_t CG_LATEST_SNAPSHOT_NUM = 0x1414C66FC, CG_LATEST_SNAPSHOT_TIME = 0x1414C6700;
 	constexpr uintptr_t CG_SNAP = 0x1414C6708, CG_NEXT_SNAP = 0x1414C6710, CG_PROCESSED_SNAPSHOT_NUM = 0x141646C9C;
+	// a client game's snapshot: its flags, of which this one changes when the map starts again
+	constexpr size_t SNAPSHOT_FLAGS = 0x5B68;
+	constexpr std::int32_t SNAPFLAG_SERVERCOUNT = 4;
 	constexpr std::uint32_t BACK_MS = 10000;
 	// void SV_Frame(int msec): the local server's step, from the game's frame
 	constexpr uintptr_t SV_FRAME = 0x1404425B0;
@@ -638,8 +640,15 @@ namespace
 
 			*reinterpret_cast<std::int32_t*>(CG_LATEST_SNAPSHOT_NUM) = 0;
 			*reinterpret_cast<std::int32_t*>(CG_LATEST_SNAPSHOT_TIME) = 0;
-			*reinterpret_cast<void**>(CG_SNAP) = nullptr;
-			*reinterpret_cast<void**>(CG_NEXT_SNAP) = nullptr;
+			// The snapshots the client game is at stay its (code between frames reads them: 0.11 took
+			// them away and the game crashed at 0x1401AFEEA). The one it is going to is marked as of
+			// another start of the map (the flag a map restart changes), which is how the game itself
+			// takes a snapshot older than its own: it begins again from it.
+			if (auto* next = *reinterpret_cast<unsigned char**>(CG_NEXT_SNAP))
+			{
+				*reinterpret_cast<std::int32_t*>(next + SNAPSHOT_FLAGS) ^= SNAPFLAG_SERVERCOUNT;
+			}
+
 			*reinterpret_cast<std::int32_t*>(CG_PROCESSED_SNAPSHOT_NUM) = 0;
 			return true;
 		}
