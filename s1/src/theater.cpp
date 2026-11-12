@@ -30,7 +30,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.17 (recorder with the view, playback with rewind)";
+	constexpr char VERSION[] = "0.18 (recorder with the view, playback with rewind)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -129,7 +129,11 @@ namespace
 	// bytes), which has what the server adds to those angles.
 	constexpr size_t CL_BLOCK = 0x5200, CL_BLOCK_SIZE = 0xE0, CL_VIEWANGLES = 0x52D0;
 	constexpr std::uint32_t KIND_PLAYER_STATE = 0x41545350;
-	constexpr size_t PLAYER_STATE_SIZE = 0x120, PS_VIEWANGLES = 0x90;
+	// A player state's delta_angles (+0x90: what the server adds to the client's own angles, set where the
+	// player spawns) and viewangles (+0x1B4: the two added, what the view is drawn by when a demo is
+	// watched; 0 in a snapshot for the player it is sent to). Found in a recording's own data (0.17) and
+	// in the game's functions that set both (0x1404012F0, 0x1403508D6).
+	constexpr size_t PLAYER_STATE_SIZE = 0x120, PS_DELTA_ANGLES = 0x90, PS_VIEWANGLES = 0x1B4;
 	constexpr int HOOK_DELAY_S = 25;
 	// the match's map is surely the game's by this many messages (2 s)
 	constexpr std::uint64_t MATCH_INFO_AT = 40;
@@ -684,8 +688,8 @@ namespace
 		}
 	}
 
-	// The view angles of the snapshots the client game is at and is going to (a player state's are at
-	// +0x90, +0x94), for the log: whether the recording's player turns in them.
+	// The view angles of the snapshots the client game is at and is going to, for the log: whether the
+	// recording's player turns in them.
 	void log_view()
 	{
 		__try
@@ -695,8 +699,8 @@ namespace
 			if (at && next)
 			{
 				float a[2], n[2];
-				memcpy(a, at + 0x90, sizeof(a));
-				memcpy(n, next + 0x90, sizeof(n));
+				memcpy(a, at + PS_VIEWANGLES, sizeof(a));
+				memcpy(n, next + PS_VIEWANGLES, sizeof(n));
 				log_line("  view: at snapshot of time %d, pitch %.1f yaw %.1f; going to time %d, pitch %.1f yaw %.1f; demo type the game has %d",
 				         *reinterpret_cast<const std::int32_t*>(at + 0x5B70), a[0], a[1], *reinterpret_cast<const std::int32_t*>(next + 0x5B70),
 				         n[0], n[1], *reinterpret_cast<const std::int32_t*>(0x1414C66E8));
@@ -1196,7 +1200,14 @@ namespace
 		memcpy(ps + PS_MOVEMENT_DIR, &predicted.movementDir, sizeof(predicted.movementDir));
 		if (predicted.hasView)
 		{
-			memcpy(ps + PS_VIEWANGLES, predicted.viewangles, sizeof(predicted.viewangles));
+			float delta[3], view[3];
+			memcpy(delta, ps + PS_DELTA_ANGLES, sizeof(delta));
+			for (int i = 0; i < 3; ++i)
+			{
+				view[i] = predicted.viewangles[i] + delta[i];
+			}
+
+			memcpy(ps + PS_VIEWANGLES, view, sizeof(view));
 		}
 
 		++g_predicted_given;
