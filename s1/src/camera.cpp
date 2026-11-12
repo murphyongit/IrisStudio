@@ -21,14 +21,17 @@
 
 namespace
 {
-	constexpr uintptr_t CG_CALC_VIEW_VALUES = 0x1401B7BB0, CG_AFTER_VIEW = 0x1401B6B70;
+	constexpr uintptr_t CG_CALC_VIEW_VALUES = 0x1401B7BB0, CG_RENDER_SCENE = 0x1401DF410, REFDEF = 0x1415575C0;
 	constexpr uintptr_t REFDEF_TAN_X = 0x1415575D0, REFDEF_TAN_Y = 0x1415575D4, REFDEF_ORIGIN = 0x1415575D8,
 		REFDEF_AXIS = 0x1415575E4, VIEW_ORIGIN = 0x141557610;
 	constexpr uintptr_t DVAR_FIND_VAR = 0x1404BF8B0;
 	constexpr float PI = 3.14159265358979f, TO_RAD = PI / 180.0f, TO_DEG = 180.0f / PI;
 
 	using calc_view_t = void (*)(int);
-	calc_view_t g_original_calc_view = nullptr, g_original_after_view = nullptr;
+	calc_view_t g_original_calc_view = nullptr;
+	// the scene's drawing: (client, refdef, ...), its further arguments passed on as they came
+	using render_scene_t = void (*)(int, void*, void*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t);
+	render_scene_t g_original_render_scene = nullptr;
 
 	struct Pose
 	{
@@ -412,10 +415,14 @@ namespace
 		}
 	}
 
-	// The frame's next step after the game has set the field of view.
-	void hooked_after_view(const int client)
+	// The game works the eye's place out again from the player on its way to drawing the scene (in
+	// CG_DrawActive, 0x1401DC450: 0.23 to 0.26 wrote the camera only after CG_CalcViewValues, and the
+	// picture stayed the player's). So the camera goes in last, where the scene is handed over to be
+	// drawn (0x1401DF410, called with the refdef).
+	void hooked_render_scene(const int client, void* refdef, void* a3, const std::uint64_t a4, const std::uint64_t a5, const std::uint64_t a6,
+	                         const std::uint64_t a7, const std::uint64_t a8)
 	{
-		if (g_overriding && view_is_sane())
+		if (g_overriding && refdef == reinterpret_cast<void*>(REFDEF) && view_is_sane())
 		{
 			const float tan_x = at<float>(REFDEF_TAN_X), tan_y = at<float>(REFDEF_TAN_Y);
 			const float fov = g_applied.fov < 1.0f ? 1.0f : g_applied.fov > 170.0f ? 170.0f : g_applied.fov;
@@ -423,9 +430,15 @@ namespace
 			at<float>(REFDEF_TAN_X) = wanted;
 			at<float>(REFDEF_TAN_Y) = wanted * (tan_y / tan_x);
 			apply(g_applied);
+			static bool noted = false;
+			if (!noted)
+			{
+				noted = true;
+				log("camera: put into the scene's drawing");
+			}
 		}
 
-		g_original_after_view(client);
+		g_original_render_scene(client, refdef, a3, a4, a5, a6, a7, a8);
 	}
 }
 
@@ -462,13 +475,13 @@ void camera_start()
 	                                 reinterpret_cast<LPVOID*>(&g_original_calc_view));
 	if (status == MH_OK)
 	{
-		status = MH_CreateHook(reinterpret_cast<LPVOID>(CG_AFTER_VIEW), reinterpret_cast<LPVOID>(&hooked_after_view),
-		                       reinterpret_cast<LPVOID*>(&g_original_after_view));
+		status = MH_CreateHook(reinterpret_cast<LPVOID>(CG_RENDER_SCENE), reinterpret_cast<LPVOID>(&hooked_render_scene),
+		                       reinterpret_cast<LPVOID*>(&g_original_render_scene));
 	}
 
 	if (status == MH_OK)
 	{
-		status = MH_EnableHook(reinterpret_cast<LPVOID>(CG_AFTER_VIEW));
+		status = MH_EnableHook(reinterpret_cast<LPVOID>(CG_RENDER_SCENE));
 	}
 
 	if (status == MH_OK)
