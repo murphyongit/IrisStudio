@@ -30,7 +30,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.19 (recorder with the view, playback with rewind)";
+	constexpr char VERSION[] = "0.20 (recorder with the view, playback with rewind)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -1234,6 +1234,76 @@ namespace
 	using omnvar_update_t = void (*)(int, const char**, void*, void*);
 	omnvar_update_t g_original_omnvar_update = nullptr;
 
+	// The same value is also read by the menus themselves when they are built (the first time a
+	// recording plays), so it is cleared where they read it from as well: in each snapshot the client
+	// game takes, before the game compares it with the last one (0x1401C41B0), and in the game's own copy.
+	// Omnvars: 0x40 bytes each from 0x14B503900, the name first; the per-client ones come first (their
+	// count at 0x14B508B88) and are 8 bytes each from +0x5118 of a client game snapshot, the game's ones
+	// follow and are from +0x4C44.
+	constexpr uintptr_t CG_OMNVARS_CHANGED = 0x1401C41B0, OMNVAR_DEFS = 0x14B503900, OMNVAR_CLIENT_COUNT = 0x14B508B88,
+		OMNVAR_GAME_COUNT = 0x14B508B84, OMNVAR_STORED = 0x1404C7010;
+	constexpr size_t SNAP_CLIENT_OMNVARS = 0x5118, SNAP_GAME_OMNVARS = 0x4C44;
+	using omnvars_changed_t = void (*)(int, std::uint8_t*, std::uint8_t*);
+	omnvars_changed_t g_original_omnvars_changed = nullptr;
+	std::atomic<int> g_options_menu_index{-2};
+
+	int options_menu_index()
+	{
+		int index = g_options_menu_index;
+		if (index == -2)
+		{
+			index = -1;
+			const unsigned count = *reinterpret_cast<unsigned*>(OMNVAR_CLIENT_COUNT) + *reinterpret_cast<unsigned*>(OMNVAR_GAME_COUNT);
+			for (unsigned i = 0; i < count && i < 4096; ++i)
+			{
+				const char* name = *reinterpret_cast<const char**>(OMNVAR_DEFS + i * 0x40ull);
+				if (name && !IsBadReadPtr(name, 16) && strcmp(name, "ui_options_menu") == 0)
+				{
+					index = static_cast<int>(i);
+					break;
+				}
+			}
+
+			g_options_menu_index = index;
+			log_line("menus: ui_options_menu is omnvar %d of %u (%u per client)", index, count, *reinterpret_cast<unsigned*>(OMNVAR_CLIENT_COUNT));
+		}
+
+		return index;
+	}
+
+	void clear_options_menu(std::uint8_t* snapshot)
+	{
+		const int index = options_menu_index();
+		const int per_client = static_cast<int>(*reinterpret_cast<unsigned*>(OMNVAR_CLIENT_COUNT));
+		if (index < 0 || !snapshot)
+		{
+			return;
+		}
+
+		std::uint8_t* value = index < per_client ? snapshot + SNAP_CLIENT_OMNVARS + index * 8ull
+		                                         : snapshot + SNAP_GAME_OMNVARS + (index - per_client) * 8ull;
+		memset(value, 0, 8);
+	}
+
+	void hooked_omnvars_changed(const int client, std::uint8_t* before, std::uint8_t* now)
+	{
+		if (g_play != Play::Idle)
+		{
+			clear_options_menu(before);
+			clear_options_menu(now);
+			const int index = options_menu_index();
+			if (index >= 0)
+			{
+				if (void* stored = reinterpret_cast<void* (*)(int, int)>(OMNVAR_STORED)(client, index))
+				{
+					memset(stored, 0, 8);
+				}
+			}
+		}
+
+		g_original_omnvars_changed(client, before, now);
+	}
+
 	void hooked_omnvar_update(const int client, const char** def, void* value, void* state)
 	{
 		if (g_play != Play::Idle && def && *def && strcmp(*def, "ui_options_menu") == 0)
@@ -1612,7 +1682,9 @@ namespace
 				log_line("hook: the player's own view: recorded %s, played back %s, demo mode %s (F8 switches it while playing)",
 				         save ? "yes" : "NO", get ? "yes" : "NO", draw ? "yes" : "NO");
 				const bool menus = hook(LUI_OMNVAR_UPDATE, &hooked_omnvar_update, &g_original_omnvar_update, "the team and class menus");
-				log_line("hook: playback's team and class menus %s", menus ? "kept shut" : "NOT kept shut");
+				const bool values = hook(CG_OMNVARS_CHANGED, &hooked_omnvars_changed, &g_original_omnvars_changed, "the menus' values");
+				log_line("hook: playback's team and class menus %s, their value %s", menus ? "kept shut" : "NOT kept shut",
+				         values ? "cleared" : "NOT cleared");
 				if (HANDLE thread = CreateThread(nullptr, 0, &keys, nullptr, 0, nullptr))
 				{
 					CloseHandle(thread);
