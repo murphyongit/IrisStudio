@@ -30,7 +30,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.18 (recorder with the view, playback with rewind)";
+	constexpr char VERSION[] = "0.19 (recorder with the view, playback with rewind)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -225,6 +225,7 @@ namespace
 	std::atomic<bool> g_seen_loading{false};
 	CRITICAL_SECTION g_play_lock;
 	std::atomic<std::uint64_t> g_bots_refused{0}, g_server_frames_skipped{0};
+	std::atomic<unsigned> g_menus_kept_shut{0};
 	char g_play_name[MAX_PATH] = {};
 
 	int connection_state()
@@ -963,6 +964,7 @@ namespace
 			         connection_state(), g_dropped, g_bots_refused.load(),
 			         g_server_frames_skipped.load(), g_predicted_given.load(), g_predicted_missed.load(),
 			         g_demo_mode ? "on" : "off");
+			log_line("playback: team and class menu openings kept shut: %u", g_menus_kept_shut.load());
 		}
 
 		if (g_next_record >= g_records.size())
@@ -1223,6 +1225,24 @@ namespace
 		}
 
 		return g_original_draw_active_frame(client, server_time, demo_type, cubemap_shot, cubemap_size, render_screen, more);
+	}
+
+	// The menus are told when a value the server sets for them (an "omnvar") changes. The match's own
+	// "choose a team" and "choose a class" menus are opened that way (ui_options_menu), and a recording
+	// has it from the match's start; someone watching has nothing to choose.
+	constexpr uintptr_t LUI_OMNVAR_UPDATE = 0x1400D9680;
+	using omnvar_update_t = void (*)(int, const char**, void*, void*);
+	omnvar_update_t g_original_omnvar_update = nullptr;
+
+	void hooked_omnvar_update(const int client, const char** def, void* value, void* state)
+	{
+		if (g_play != Play::Idle && def && *def && strcmp(*def, "ui_options_menu") == 0)
+		{
+			++g_menus_kept_shut;
+			return;
+		}
+
+		g_original_omnvar_update(client, def, value, state);
 	}
 
 	bool hook(const uintptr_t address, void* detour, void* original, const char* name)
@@ -1591,6 +1611,8 @@ namespace
 				const bool draw = hook(CG_DRAW_ACTIVE_FRAME, &hooked_draw_active_frame, &g_original_draw_active_frame, "the frame");
 				log_line("hook: the player's own view: recorded %s, played back %s, demo mode %s (F8 switches it while playing)",
 				         save ? "yes" : "NO", get ? "yes" : "NO", draw ? "yes" : "NO");
+				const bool menus = hook(LUI_OMNVAR_UPDATE, &hooked_omnvar_update, &g_original_omnvar_update, "the team and class menus");
+				log_line("hook: playback's team and class menus %s", menus ? "kept shut" : "NOT kept shut");
 				if (HANDLE thread = CreateThread(nullptr, 0, &keys, nullptr, 0, nullptr))
 				{
 					CloseHandle(thread);
