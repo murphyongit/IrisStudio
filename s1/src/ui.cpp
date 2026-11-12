@@ -18,6 +18,8 @@
 
 #include <atomic>
 #include <cfloat>
+#include <cmath>
+#include <string>
 #include <cstdarg>
 #include <cstdio>
 #include <mutex>
@@ -35,6 +37,7 @@ namespace
 	set_cursor_pos_t g_original_set_cursor_pos = nullptr;
 	clip_cursor_t g_original_clip_cursor = nullptr;
 	std::atomic<bool> g_camera_mouse{false};
+	std::atomic<int> g_wheel{0};
 
 	using present_t = HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain*, UINT, UINT);
 	using resize_t = HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain*, UINT, UINT, UINT, DXGI_FORMAT, UINT);
@@ -93,6 +96,11 @@ namespace
 
 	LRESULT CALLBACK window_proc(const HWND window, const UINT message, const WPARAM wparam, const LPARAM lparam)
 	{
+		if (message == WM_MOUSEWHEEL)
+		{
+			g_wheel += GET_WHEEL_DELTA_WPARAM(wparam) / WHEEL_DELTA;
+		}
+
 		if (g_mouse)
 		{
 			std::lock_guard<std::mutex> lock(g_messages_lock);
@@ -213,19 +221,31 @@ namespace
 			theater_seek(state.position_ms + 10000);
 		}
 
+		// IrisStudio's timescale slider: it rests only on the steps
 		ImGui::SameLine(0.0f, 24.0f);
-		if (ImGui::Button("Slower"))
 		{
-			theater_slower();
-		}
+			const float* steps = nullptr;
+			const int count = theater_speed_steps(&steps);
+			int step = 0;
+			for (int i = 0; i < count; ++i)
+			{
+				if (fabsf(steps[i] - state.speed) < fabsf(steps[step] - state.speed))
+				{
+					step = i;
+				}
+			}
 
-		ImGui::SameLine();
-		ImGui::AlignTextToFramePadding();
-		ImGui::Text("%gx", state.speed);
-		ImGui::SameLine();
-		if (ImGui::Button("Faster"))
-		{
-			theater_faster();
+			char speed_label[32];
+			snprintf(speed_label, sizeof(speed_label), "%.3f", steps[step]);
+			ImGui::SetNextItemWidth(width * 0.22f);
+			if (ImGui::SliderInt("##timescale", &step, 0, count - 1, speed_label, ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_NoInput))
+			{
+				theater_set_speed(steps[step]);
+			}
+
+			ImGui::SameLine();
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextDisabled("Timescale");
 		}
 
 		ImGui::SameLine(0.0f, 24.0f);
@@ -241,10 +261,40 @@ namespace
 		// the path's points, marked on the position bar
 		const CameraState camera = camera_state();
 		ImGui::Separator();
-		bool free_camera = camera.free_camera;
-		if (ImGui::Checkbox("Free camera (F2)", &free_camera))
 		{
-			camera_set_free(free_camera);
+			// IrisStudio's camera modes; the two not built yet cannot be picked
+			static const struct { CameraMode mode; const char* label; bool built; } MODES[] = {
+				{CameraMode::FirstPerson, "First person", true}, {CameraMode::ThirdPerson, "Third person", true},
+				{CameraMode::Free, "Free", true},                {CameraMode::Orbit, "Orbit", false},
+				{CameraMode::Dolly, "Dolly", true},              {CameraMode::Bone, "Bone", false}};
+			const char* current = "";
+			for (const auto& m : MODES)
+			{
+				if (m.mode == camera.mode)
+				{
+					current = m.label;
+				}
+			}
+
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextUnformatted("Camera");
+			ImGui::SameLine();
+			ImGui::SetNextItemWidth(width * 0.16f);
+			if (ImGui::BeginCombo("##camera", current))
+			{
+				for (const auto& m : MODES)
+				{
+					ImGui::BeginDisabled(!m.built);
+					if (ImGui::Selectable(m.built ? m.label : (std::string(m.label) + " (not yet)").c_str(), m.mode == camera.mode))
+					{
+						camera_set_mode(m.mode);
+					}
+
+					ImGui::EndDisabled();
+				}
+
+				ImGui::EndCombo();
+			}
 		}
 
 		ImGui::SameLine(0.0f, 20.0f);
@@ -264,25 +314,16 @@ namespace
 		}
 
 		ImGui::SameLine(0.0f, 20.0f);
-		ImGui::BeginDisabled(!camera.free_camera);
-		if (ImGui::Button("Add path point (K)"))
+		ImGui::BeginDisabled(camera.mode != CameraMode::Free);
+		if (ImGui::Button("Add node (K)"))
 		{
 			camera_add_point();
 		}
 
 		ImGui::EndDisabled();
 		ImGui::SameLine();
-		ImGui::BeginDisabled(camera.points < 2);
-		bool follow = camera.follow;
-		if (ImGui::Checkbox("Follow path (L)", &follow))
-		{
-			camera_set_follow(follow);
-		}
-
-		ImGui::EndDisabled();
-		ImGui::SameLine();
 		ImGui::BeginDisabled(camera.points == 0);
-		if (ImGui::Button("Clear path"))
+		if (ImGui::Button("Clear nodes"))
 		{
 			camera_clear_points();
 		}
@@ -290,10 +331,14 @@ namespace
 		ImGui::EndDisabled();
 		ImGui::SameLine();
 		ImGui::AlignTextToFramePadding();
-		ImGui::TextDisabled("%d point%s", camera.points, camera.points == 1 ? "" : "s");
-		if (camera.free_camera)
+		ImGui::TextDisabled("%d node%s", camera.points, camera.points == 1 ? "" : "s");
+		if (camera.mode == CameraMode::Free)
 		{
-			ImGui::TextDisabled("Fly: W A S D, Space up, C down, Shift fast, Ctrl slow, Q E roll, mouse looks");
+			ImGui::TextDisabled("Fly: W A S D, E up, Q down, Shift fast, Ctrl slow, mouse wheel rolls, mouse looks. K adds a dolly node here.");
+		}
+		else if (camera.mode == CameraMode::Dolly && camera.points < 2)
+		{
+			ImGui::TextDisabled("The dolly camera needs two nodes: pick Free, fly, and press K at two times of the recording.");
 		}
 
 		for (int i = 0; i < camera.points && i < 64; ++i)
@@ -509,6 +554,13 @@ void ui_take_mouse_motion(int* dx, int* dy)
 	{
 		g_original_set_cursor_pos(middle.x, middle.y);
 	}
+}
+
+int ui_take_mouse_wheel()
+{
+	// the panel's own scrolling is not the camera's
+	const int wheel = g_wheel.exchange(0);
+	return g_mouse ? 0 : wheel;
 }
 
 void ui_start()

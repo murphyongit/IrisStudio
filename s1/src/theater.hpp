@@ -18,6 +18,9 @@ void theater_pause_toggle();
 void theater_slower();
 void theater_faster();
 void theater_seek(std::uint32_t ms);
+// The speed nearest to one of the steps (IrisStudio's timescale steps); the steps themselves.
+void theater_set_speed(float speed);
+int theater_speed_steps(const float** steps);
 void theater_stop();
 void theater_log(const char* text);
 
@@ -31,19 +34,22 @@ bool ui_mouse_is_panels();
 void ui_camera_has_mouse(bool on);
 // How far the pointer moved since the last call (it is put back in the middle of the game's window).
 void ui_take_mouse_motion(int* dx, int* dy);
+// The mouse wheel's notches since the last call (up is positive).
+int ui_take_mouse_wheel();
 
 // The cameras (camera.cpp).
+enum class CameraMode { FirstPerson, ThirdPerson, Free, Orbit, Dolly, Bone, Count };
+
 struct CameraState
 {
-	bool free_camera = false, follow = false;
+	CameraMode mode = CameraMode::FirstPerson;
 	float fov = 80.0f, speed = 400.0f;
 	int points = 0;
 	std::uint32_t point_ms[64] = {};
 };
 
 CameraState camera_state();
-void camera_set_free(bool on);
-void camera_set_follow(bool on);
+void camera_set_mode(CameraMode mode);
 void camera_set_speed(float speed);
 void camera_set_fov(float fov);
 void camera_add_point();

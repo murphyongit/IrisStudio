@@ -46,7 +46,9 @@ namespace
 	std::mutex g_lock;  // the pose and the points: the game's thread flies, the panel's reads and edits
 	Pose g_pose;
 	std::vector<Point> g_points;
-	std::atomic<bool> g_free{false}, g_follow{false}, g_want_free{false}, g_want_follow{false};
+	std::atomic<bool> g_free{false}, g_follow{false};
+	std::atomic<int> g_mode{static_cast<int>(CameraMode::FirstPerson)};
+	int g_view_state = -1;  // what the game's third person and gun settings were last set for
 	std::atomic<float> g_speed{400.0f};
 	std::atomic<bool> g_add_request{false}, g_clear_request{false};
 	bool g_have_pose = false, g_overriding = false, g_logged_view = false;
@@ -132,10 +134,10 @@ namespace
 
 	// With the camera away from the player's eyes: the player's body is drawn and the gun in the hands
 	// of the camera is not.
-	void set_outside_view(const bool outside)
+	void set_outside_view(const bool third_person, const bool gun)
 	{
-		set_dvar_bool("camera_thirdPerson", outside);
-		set_dvar_bool("cg_drawGun", !outside);
+		set_dvar_bool("camera_thirdPerson", third_person);
+		set_dvar_bool("cg_drawGun", gun);
 	}
 
 	float catmull(const float a, const float b, const float c, const float d, const float t)
@@ -218,8 +220,8 @@ namespace
 		}
 	}
 
-	// Flies the free camera: W A S D, Space up, C down, Shift fast, Ctrl slow, Q and E roll, the mouse
-	// looks while the game has it (not the panel).
+	// Flies the free camera: W A S D, E up, Q down, Shift fast, Ctrl slow, the mouse wheel rolls (up to
+	// the right), the mouse looks while the game has it (not the panel).
 	void fly(const float dt)
 	{
 		if (GetForegroundWindow() != ui_window())
@@ -251,14 +253,14 @@ namespace
 		const float speed = g_speed * (down(VK_SHIFT) ? 3.0f : 1.0f) * (down(VK_CONTROL) ? 0.25f : 1.0f) * dt;
 		const float forward = (down('W') ? 1.0f : 0.0f) - (down('S') ? 1.0f : 0.0f);
 		const float left = (down('A') ? 1.0f : 0.0f) - (down('D') ? 1.0f : 0.0f);
-		const float up = (down(VK_SPACE) ? 1.0f : 0.0f) - (down('C') ? 1.0f : 0.0f);
+		const float up = (down('E') ? 1.0f : 0.0f) - (down('Q') ? 1.0f : 0.0f);
 		for (int k = 0; k < 3; ++k)
 		{
 			g_pose.origin[k] += (axis[0][k] * forward + axis[1][k] * left) * speed;
 		}
 
 		g_pose.origin[2] += up * speed;
-		g_pose.angles[2] += ((down('E') ? 1.0f : 0.0f) - (down('Q') ? 1.0f : 0.0f)) * 45.0f * dt;
+		g_pose.angles[2] += ui_take_mouse_wheel() * 3.0f;
 	}
 
 	void apply(const Pose& pose)
@@ -277,27 +279,35 @@ namespace
 		g_original_calc_view(client);
 
 		const TheaterState state = theater_state();
-		const bool f2 = state.playing && GetForegroundWindow() == ui_window() && down(VK_F2);
+		const bool focus = state.playing && GetForegroundWindow() == ui_window();
+		const CameraMode mode_now = static_cast<CameraMode>(g_mode.load());
+		const bool f2 = focus && down(VK_F2);
 		if (f2 && !g_f2_was)
 		{
-			g_want_free = !g_want_free;
+			g_mode = static_cast<int>(mode_now == CameraMode::Free ? CameraMode::FirstPerson : CameraMode::Free);
 		}
 
 		g_f2_was = f2;
-		const bool k = state.playing && g_free && GetForegroundWindow() == ui_window() && down('K');
+		const bool k = focus && g_free && down('K');
 		if (k && !g_k_was)
 		{
 			g_add_request = true;
 		}
 
 		g_k_was = k;
-		const bool l = state.playing && GetForegroundWindow() == ui_window() && down('L');
+		const bool l = focus && down('L');
 		if (l && !g_l_was)
 		{
-			g_want_follow = !g_want_follow;
+			g_mode = static_cast<int>(mode_now == CameraMode::Dolly ? CameraMode::Free : CameraMode::Dolly);
 		}
 
 		g_l_was = l;
+		if (!state.playing)
+		{
+			g_mode = static_cast<int>(CameraMode::FirstPerson);
+		}
+
+		const CameraMode mode = static_cast<CameraMode>(g_mode.load());
 
 		LARGE_INTEGER now{}, frequency{};
 		QueryPerformanceCounter(&now);
@@ -310,16 +320,18 @@ namespace
 		if (g_clear_request.exchange(false))
 		{
 			g_points.clear();
-			g_want_follow = false;
 		}
 
-		const bool follow = state.playing && g_want_follow && g_points.size() >= 2;
-		const bool free_camera = state.playing && g_want_free && !follow;
-		const bool overriding = follow || free_camera;
-		if (!state.playing)
+		// the path needs two points; with fewer the dolly camera stays where the camera was left
+		const bool follow = state.playing && mode == CameraMode::Dolly && g_points.size() >= 2;
+		const bool parked = state.playing && mode == CameraMode::Dolly && !follow && g_have_pose;
+		const bool free_camera = state.playing && mode == CameraMode::Free;
+		const bool overriding = follow || free_camera || parked;
+		const int view_state = !state.playing ? 0 : overriding ? 2 : mode == CameraMode::ThirdPerson ? 1 : 0;
+		if (view_state != g_view_state)
 		{
-			g_want_free = false;
-			g_want_follow = false;
+			g_view_state = view_state;
+			set_outside_view(view_state != 0, view_state != 2);
 		}
 
 		if (overriding && !view_is_sane())
@@ -335,10 +347,10 @@ namespace
 			return;
 		}
 
+		const bool was_overriding = g_overriding;
 		if (overriding != g_overriding)
 		{
 			g_overriding = overriding;
-			set_outside_view(overriding);
 			ui_camera_has_mouse(free_camera);
 			if (!g_logged_view)
 			{
@@ -358,8 +370,8 @@ namespace
 
 		if (free_camera && (!g_free || !g_have_pose))
 		{
-			// start where the view is now (the path's, if it was following; the player's otherwise)
-			if (!g_follow || !g_have_pose)
+			// start where the camera already is, or at the player's eyes
+			if (!was_overriding || !g_have_pose)
 			{
 				g_pose = pose_of_game_view();
 			}
@@ -418,8 +430,7 @@ namespace
 CameraState camera_state()
 {
 	CameraState state;
-	state.free_camera = g_want_free;
-	state.follow = g_want_follow;
+	state.mode = static_cast<CameraMode>(g_mode.load());
 	state.speed = g_speed;
 	std::lock_guard<std::mutex> lock(g_lock);
 	state.fov = g_pose.fov;
@@ -432,8 +443,7 @@ CameraState camera_state()
 	return state;
 }
 
-void camera_set_free(const bool on) { g_want_free = on; }
-void camera_set_follow(const bool on) { g_want_follow = on; }
+void camera_set_mode(const CameraMode mode) { g_mode = static_cast<int>(mode); }
 void camera_set_speed(const float speed) { g_speed = speed; }
 void camera_add_point() { g_add_request = true; }
 void camera_clear_points() { g_clear_request = true; }
@@ -464,7 +474,7 @@ void camera_start()
 		status = MH_EnableHook(reinterpret_cast<LPVOID>(CG_CALC_VIEW_VALUES));
 	}
 
-	log(status == MH_OK ? "camera: the game's view hooked. While a recording plays: F2 free camera, K a point of the path, L follow the path"
+	log(status == MH_OK ? "camera: the game's view hooked. While a recording plays: F2 free camera, K a point of the path, L the dolly camera"
 	                    : "camera: the game's view NOT hooked (%s)",
 	    MH_StatusToString(status));
 }

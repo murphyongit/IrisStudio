@@ -21,6 +21,7 @@
 #include <MinHook.h>
 
 #include <atomic>
+#include <cmath>
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
@@ -30,7 +31,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.23 (recorder, playback with rewind, panel, cameras)";
+	constexpr char VERSION[] = "0.24 (recorder, playback with rewind, panel, cameras)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -61,8 +62,10 @@ namespace
 	// void CG_GameMessage(int localClientNum, const char* message) (s1-mod): a line in the game's message feed
 	constexpr uintptr_t CG_GAME_MESSAGE = 0x1401A3050;
 	constexpr int CA_ACTIVE = 10;
-	constexpr float SPEEDS[] = {0.1f, 0.25f, 0.5f, 1.0f, 2.0f, 4.0f};
-	constexpr int NORMAL_SPEED = 3;
+	// IrisStudio's steps of the timescale (core/src/Components/Playback.hpp)
+	constexpr float SPEEDS[] = {0.001f, 0.005f, 0.01f, 0.025f, 0.05f, 0.1f, 0.125f, 0.2f, 0.25f, 0.333f,
+	                            0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f, 5.0f, 10.0f, 20.0f, 50.0f};
+	constexpr int NORMAL_SPEED = 12;
 	constexpr std::uint32_t SKIP_MS = 10000;
 	// What going back in a recording has to undo, for the game to take the recording's first messages
 	// again: the client's and the client game's places in the stream of snapshots. (CL_SetCGameTime
@@ -1443,10 +1446,10 @@ namespace
 
 			static bool down = false, left = false, right = false, up = false, page_down = false, home = false;
 			const bool playing = focus && g_play == Play::Playing;
-			const bool down_now = playing && (GetAsyncKeyState(VK_DOWN) & 0x8000) != 0;
-			const bool left_now = playing && (GetAsyncKeyState(VK_LEFT) & 0x8000) != 0;
-			const bool right_now = playing && (GetAsyncKeyState(VK_RIGHT) & 0x8000) != 0;
-			const bool up_now = playing && (GetAsyncKeyState(VK_UP) & 0x8000) != 0;
+			const bool down_now = playing && (GetAsyncKeyState(VK_SPACE) & 0x8000) != 0;      // play and pause
+			const bool left_now = playing && (GetAsyncKeyState(VK_DOWN) & 0x8000) != 0;       // slower
+			const bool right_now = playing && (GetAsyncKeyState(VK_UP) & 0x8000) != 0;        // faster
+			const bool up_now = playing && (GetAsyncKeyState(VK_RIGHT) & 0x8000) != 0;        // 10 s on
 			if (down_now && !down)
 			{
 				g_pause_request = true;
@@ -1467,7 +1470,7 @@ namespace
 				g_skip_request = true;
 			}
 
-			const bool page_down_now = playing && (GetAsyncKeyState(VK_NEXT) & 0x8000) != 0;
+			const bool page_down_now = playing && (GetAsyncKeyState(VK_LEFT) & 0x8000) != 0;  // 10 s back
 			const bool home_now = playing && (GetAsyncKeyState(VK_HOME) & 0x8000) != 0;
 			if (page_down_now && !page_down)
 			{
@@ -1715,7 +1718,7 @@ namespace
 				log_line("hook: playback's local match: server step %s, bots %s", server ? "held" : "NOT held",
 				         bots ? "kept out" : "NOT kept out");
 				const bool time = hook(COM_TIME_SCALE_MSEC, &hooked_time_scale_msec, &g_original_time_scale_msec, "the game's time");
-				log_line("hook: playback's pause and speed %s (down arrow pauses, left and right change speed, up skips 10 s, Page Down goes back 10 s, Home to the start)",
+				log_line("hook: playback's pause and speed %s (Space pauses, up and down arrows change speed, right skips 10 s, left goes back 10 s, Home to the start)",
 				         time ? "yes" : "NO");
 				const bool save = hook(CL_SAVE_PREDICTED, &hooked_save_predicted, &g_original_save_predicted, "the player's position, kept");
 				const bool get = hook(CL_GET_PREDICTED, &hooked_get_predicted, &g_original_get_predicted, "the player's position, asked for");
@@ -1769,6 +1772,26 @@ void theater_pause_toggle() { g_pause_request = true; }
 void theater_slower() { g_slower_request = true; }
 void theater_faster() { g_faster_request = true; }
 void theater_seek(const std::uint32_t ms) { g_seek_request = ms; }
+
+void theater_set_speed(const float speed)
+{
+	int best = 0;
+	for (int i = 0; i < static_cast<int>(sizeof(SPEEDS) / sizeof(SPEEDS[0])); ++i)
+	{
+		if (fabsf(SPEEDS[i] - speed) < fabsf(SPEEDS[best] - speed))
+		{
+			best = i;
+		}
+	}
+
+	g_speed = best;
+}
+
+int theater_speed_steps(const float** steps)
+{
+	*steps = SPEEDS;
+	return static_cast<int>(sizeof(SPEEDS) / sizeof(SPEEDS[0]));
+}
 void theater_stop() { g_stop_request = true; }
 void theater_log(const char* text) { log_line("%s", text); }
 
