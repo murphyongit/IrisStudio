@@ -1169,6 +1169,65 @@ bool ui_typing()
 	return g_typing;
 }
 
+namespace
+{
+	bool in_windows_dxgi(const void* address)
+	{
+		HMODULE module = nullptr;
+		char path[MAX_PATH] = {}, system[MAX_PATH] = {};
+		if (!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+		                        static_cast<LPCSTR>(address), &module) ||
+		    !module || !GetModuleFileNameA(module, path, MAX_PATH) || !GetSystemDirectoryA(system, MAX_PATH))
+		{
+			return false;
+		}
+
+		strcat_s(system, "\\dxgi.dll");
+		return _stricmp(path, system) == 0;
+	}
+
+	// The table of a swap chain's functions that are Windows' own. ReShade (and tools like it) hand the
+	// game, and us, a swap chain of their own that does its effects and then calls the real one it keeps
+	// inside. Hooked on ReShade's, the editor was drawn before the effects and they ran over it (the
+	// depth of field blurring the panels, the depth at the picture's full size beside the smaller
+	// picture). The real one is looked for inside it: a pointer to something whose table is in Windows'
+	// dxgi.dll. Hooked there, the editor is drawn over the finished picture.
+	void** real_swap_chain_table(IDXGISwapChain* swap_chain)
+	{
+		void** table = *reinterpret_cast<void***>(swap_chain);
+		if (in_windows_dxgi(table))
+		{
+			log("editor: the swap chain is Windows' own");
+			return table;
+		}
+
+		auto** members = reinterpret_cast<void**>(swap_chain);
+		for (int i = 1; i < 48; ++i)
+		{
+			if (IsBadReadPtr(members + i, sizeof(void*)))
+			{
+				break;
+			}
+
+			void* inner = members[i];
+			if (!inner || IsBadReadPtr(inner, sizeof(void*)))
+			{
+				continue;
+			}
+
+			void** inner_table = *reinterpret_cast<void***>(inner);
+			if (inner_table && !IsBadReadPtr(inner_table, sizeof(void*) * 14) && in_windows_dxgi(inner_table) && in_windows_dxgi(inner_table[8]))
+			{
+				log("editor: the swap chain is another tool's (ReShade or the like); Windows' own was found inside it at +0x%X", i * 8);
+				return inner_table;
+			}
+		}
+
+		log("editor: the swap chain is another tool's and Windows' own was not found inside it; its effects will run over the editor");
+		return table;
+	}
+}
+
 HWND ui_window()
 {
 	return g_window;
@@ -1253,7 +1312,7 @@ void ui_start()
 	}
 	else
 	{
-		void** table = *reinterpret_cast<void***>(swap_chain);
+		void** table = real_swap_chain_table(swap_chain);
 		void* present = table[8];
 		void* resize = table[13];
 		MH_STATUS status = MH_CreateHook(present, reinterpret_cast<LPVOID>(&hooked_present), reinterpret_cast<LPVOID*>(&g_original_present));
