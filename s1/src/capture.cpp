@@ -36,11 +36,11 @@ namespace
 
 	// IrisStudio's (ProRes by profile), and H.264 for a small file
 	const Codec CODECS[] = {
-		{"ProRes 4444 XQ", "-c:v prores_ks -profile:v 5 -q:v 1 -pix_fmt yuv444p10le", "mov"},
-		{"ProRes 4444", "-c:v prores_ks -profile:v 4 -q:v 1 -pix_fmt yuv444p10le", "mov"},
-		{"ProRes 422 HQ", "-c:v prores_ks -profile:v 3 -q:v 1 -pix_fmt yuv422p10le", "mov"},
-		{"ProRes 422", "-c:v prores_ks -profile:v 2 -q:v 1 -pix_fmt yuv422p10le", "mov"},
-		{"ProRes 422 LT", "-c:v prores_ks -profile:v 1 -q:v 1 -pix_fmt yuv422p10le", "mov"},
+		{"ProRes 4444 XQ", "-c:v prores -profile:v 5 -q:v 1 -pix_fmt yuv444p10le", "mov"},
+		{"ProRes 4444", "-c:v prores -profile:v 4 -q:v 1 -pix_fmt yuv444p10le", "mov"},
+		{"ProRes 422 HQ", "-c:v prores -profile:v 3 -q:v 1 -pix_fmt yuv422p10le", "mov"},
+		{"ProRes 422", "-c:v prores -profile:v 2 -q:v 1 -pix_fmt yuv422p10le", "mov"},
+		{"ProRes 422 LT", "-c:v prores -profile:v 1 -q:v 1 -pix_fmt yuv422p10le", "mov"},
 		{"H.264 (small file)", "-c:v libx264 -preset medium -crf 14 -pix_fmt yuv420p", "mp4"},
 	};
 
@@ -63,7 +63,7 @@ namespace
 	// the recording under way
 	std::atomic<Step> g_step{Step::Idle};
 	std::atomic<bool> g_stop{false};
-	int g_waited = 0, g_skip = 0;
+	int g_waited = 0, g_skip = 0, g_settled_frames = 0;
 	std::atomic<int> g_frames{0};
 	std::string g_output, g_message;
 	ID3D11Texture2D* g_staging = nullptr;
@@ -508,6 +508,13 @@ void capture_frame(const TheaterState& state, ID3D11Device* device, ID3D11Device
 		}
 
 		if (g_waited < 12 || !state.settled || !state.paused || !picture)
+		{
+			g_settled_frames = 0;
+			return;
+		}
+
+		// a little longer once every message is in: the client game takes a few frames to get there
+		if (++g_settled_frames < 20)
 		{
 			return;
 		}
