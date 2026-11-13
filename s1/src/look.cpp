@@ -1436,7 +1436,7 @@ namespace
 					ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
 				}
 
-				ImGui::Checkbox(group.c_str(), &bring[group]);
+				ImGui::Checkbox((group + "##bring").c_str(), &bring[group]);
 				if (!there)
 				{
 					ImGui::PopStyleColor();
@@ -1449,7 +1449,7 @@ namespace
 			}
 
 			place(ImGui::CalcTextSize("All").x + style.FramePadding.x * 2.0f);
-			if (ImGui::SmallButton("All"))
+			if (ImGui::SmallButton("All##bring"))
 			{
 				for (auto& one : bring)
 				{
@@ -1458,7 +1458,7 @@ namespace
 			}
 
 			place(ImGui::CalcTextSize("None").x + style.FramePadding.x * 2.0f);
-			if (ImGui::SmallButton("None"))
+			if (ImGui::SmallButton("None##bring"))
 			{
 				for (auto& one : bring)
 				{
