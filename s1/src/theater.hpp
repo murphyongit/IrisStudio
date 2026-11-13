@@ -148,9 +148,13 @@ struct PlacedEffect
 	float angles[3] = {-90.0f, 0.0f, 0.0f};  // (an effect goes along its forward: up, to begin with)
 	std::uint32_t at_ms = 0, every_ms = 0;  // when in the recording, and again every so often (0: once)
 	std::uint32_t length_ms = 2000;         // its clip on the timeline: played again and again only this long
+	bool follow = false;                    // played where the camera is each time (rain, mist), this far above it
+	float above = 0.0f;
 };
 
 int effects_find(const char* text, char names[][96], int max);
+int effects_extra_state();
+void effects_load_extra();
 int effects_placed(PlacedEffect* out, int max);
 int effects_add(const char* name, const float origin[3], std::uint32_t ms);
 void effects_set(int index, const PlacedEffect& placed);

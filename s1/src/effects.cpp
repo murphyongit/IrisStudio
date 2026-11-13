@@ -24,6 +24,40 @@ namespace
 	constexpr int ASSET_FX = 42, MAX_LOADED = 16384, MAX_PLACED = 32;
 	constexpr float TO_RAD = 3.14159265358979f / 180.0f;
 
+	// Effects of another map's. A map's effects are only in that map's own files; a small file of the
+	// game's kind built from them (zone\s1iris_rain.ff: Ascend's rain, mist and lightning, made with x64
+	// ZoneTool) is loaded on top of whatever map is being played (DB_LoadXAssets 0x140270F30: a name, the
+	// kind of file it is kept as, 1 being the game's common ones, which stay for the session).
+	constexpr std::uintptr_t DB_LOAD_XASSETS = 0x140270F30;
+	bool g_extra_wanted = false, g_extra_loaded = false;
+	ULONGLONG g_extra_at = 0;
+
+	std::string extra_path()
+	{
+		// (the theater folder is in the game's)
+		std::string folder = theater_folder();
+		const size_t slash = folder.find_last_of("\\/");
+		return (slash == std::string::npos ? std::string(".") : folder.substr(0, slash)) + "\\zone\\s1iris_rain.ff";
+	}
+
+	bool load_extra()
+	{
+		__try
+		{
+			static struct
+			{
+				const char* name;
+				int alloc_flags, free_flags;
+			} zone = {"s1iris_rain", 1, 0};
+			reinterpret_cast<void (*)(void*, unsigned, int)>(DB_LOAD_XASSETS)(&zone, 1, 0);
+			return true;
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			return false;
+		}
+	}
+
 	std::mutex g_lock;
 	std::unordered_map<std::string, void*> g_loaded;
 	std::vector<std::string> g_names;
@@ -157,6 +191,24 @@ namespace
 	}
 }
 
+// The extra effects' file: 0 it is not there, 1 it is and is not loaded, 2 it is loaded (or being loaded).
+int effects_extra_state()
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	if (g_extra_loaded || g_extra_wanted)
+	{
+		return 2;
+	}
+
+	return GetFileAttributesA(extra_path().c_str()) != INVALID_FILE_ATTRIBUTES ? 1 : 0;
+}
+
+void effects_load_extra()
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	g_extra_wanted = true;
+}
+
 // The loaded effects whose names have the text in them.
 int effects_find(const char* text, char names[][96], const int max)
 {
@@ -257,6 +309,21 @@ void effects_game_frame(const TheaterState& state)
 		return;
 	}
 
+	// the extra effects, asked for: loaded once the match is under way, and listed a moment later
+	if (g_extra_wanted && !g_extra_loaded && state.settled)
+	{
+		g_extra_loaded = true;
+		g_extra_at = GetTickCount64();
+		theater_log(load_extra() ? "effects: s1iris_rain asked for from the game's files" : "effects: a fault loading s1iris_rain");
+	}
+
+	if (g_extra_at && GetTickCount64() - g_extra_at > 3000)
+	{
+		g_extra_at = 0;
+		g_listed = false;
+		list_loaded();
+	}
+
 	if (g_count && !g_listed)
 	{
 		list_loaded();
@@ -285,7 +352,18 @@ void effects_game_frame(const TheaterState& state)
 
 		if (due)
 		{
-			fire(placed);
+			if (placed.follow)
+			{
+				// where the camera is now, and above it
+				PlacedEffect here = placed;
+				camera_view_origin(here.origin);
+				here.origin[2] += placed.above;
+				fire(here);
+			}
+			else
+			{
+				fire(placed);
+			}
 		}
 	}
 }

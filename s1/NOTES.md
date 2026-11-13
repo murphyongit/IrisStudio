@@ -37,3 +37,11 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
   kinds 0..9 are costume kinds; per-kind stored copy at 0x140BB1C10 + kind*16. Model name of (kind, number): 0x14000C100(0x1403CC830(kind), number).
   models.cpp adds a set's (kind, number)s to the lists as they arrive (g_extra), then rebuilds; DObj swap applies once loaded.
 - CG_PlayExoFx etc. as above. Still open: camos, trace function, shellshock fields.
+
+## Rain (0.47)
+- x64 ZoneTool (github.com/Joelrau/x64-zt, zonetool.exe in D:\GAMES\AW, user installed it) + D:\GAMES\AW\s1iris_rain_build.bat (pipes "dumpmap mp_refraction"
+  after 40 s, moves dump\mp_refraction to zonetool\s1iris_rain, -buildzone s1iris_rain; csv zone_source\s1iris_rain.csv = 3 require lines + 37 fx).
+  Built OK: D:\GAMES\AW\zone\s1iris_rain.ff (43 KB, all 37 fx). The bat renames XInput1_3.dll while the tool runs.
+- effects.cpp loads it with DB_LoadXAssets(0x140270F30) {name, allocFlags 1 (common), 0}, async, when asked from the Effects panel. Untested when written.
+- Gear transient files are zone\mp_<kind>_..._tr.ff (e.g. mp_hat_vl_583_tr.ff). .bat files cannot be sent in chat; device_commit_files of exe was denied,
+  csv/bat updates were allowed afterwards. The shell rewrites ">nul" in commands: build such text in python.

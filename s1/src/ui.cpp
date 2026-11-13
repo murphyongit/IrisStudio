@@ -1026,6 +1026,21 @@ namespace
 			{
 				// any effect the game has loaded, played where the camera is, at a time of the recording
 				static char fx_search[64] = "", fx_found[400][96];
+				const int extra = effects_extra_state();
+				if (extra == 1)
+				{
+					if (ImGui::Button("Load Ascend's rain, mist and lightning"))
+					{
+						effects_load_extra();
+					}
+
+					ImGui::SetItemTooltip("The effects built into zone\\s1iris_rain.ff, for use on any map. Loaded once; they stay until the game is closed.");
+				}
+				else if (extra == 2)
+				{
+					ImGui::TextDisabled("Ascend's rain, mist and lightning are loaded: search rain, mist or lightning.");
+				}
+
 				ImGui::SetNextItemWidth(-1.0f);
 				ImGui::InputTextWithHint("##fxSearch", ICON_SEARCH "  search the effects by name (explosion, spark, smoke...)", fx_search, sizeof(fx_search));
 				const int fx_count = effects_find(fx_search, fx_found, 400);
@@ -1112,8 +1127,20 @@ namespace
 						changed = true;
 					}
 
-					row_label("Position");
-					changed = ImGui::DragFloat3("##origin", effect.origin, 1.0f, 0.0f, 0.0f, "%.0f") || changed;
+					row_label("Follow the camera");
+					changed = ImGui::Checkbox("##follow", &effect.follow) || changed;
+					ImGui::SetItemTooltip("Each time it plays, it plays where the camera is then (rain or mist around the view). Use it with \"Again every\".");
+					if (effect.follow)
+					{
+						row_label("Above the camera");
+						changed = ImGui::DragFloat("##above", &effect.above, 1.0f, -2000.0f, 2000.0f, "%.0f") || changed;
+					}
+					else
+					{
+						row_label("Position");
+						changed = ImGui::DragFloat3("##origin", effect.origin, 1.0f, 0.0f, 0.0f, "%.0f") || changed;
+					}
+
 					row_label("Direction");
 					changed = ImGui::DragFloat3("##angles", effect.angles, 1.0f, -360.0f, 360.0f, "%.0f") || changed;
 					ImGui::SetItemTooltip("Up and down, around, roll: which way the effect goes (it starts going up)");
