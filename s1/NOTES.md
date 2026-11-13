@@ -106,3 +106,7 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
 - 0.54: read_numbers reads the table directly; the last lists the game was given are kept (deep copy) and the game's handler is called again with the
   set's missing parts added (replay_sync), falling back to rewinding if no lists were seen. Untested when written.
 - Weapons: npc_/vm_ "_loot" models are whole guns (composite: word +0x204 & 0x400, parts byte +0x202); "_base" ones are bare receivers. Picker group 4.
+- 0.54 crashed on Apply (FAULT 0x140025470 reading 0, from 0x1400256E0(name=NULL) <- stream update 0x140023B4A): for kinds 0..9 the lists hold the number
+  WITHIN the kind (0x1400237F0: name = 0x14000C100(0x1403CC830(kind), number & 0xFFFF)), not the place in the whole table (that is list 11 only).
+  Seen layout (first+count per t): 0+0 1+76 129+38 193+146 449+24 481+21 513+25 545+84 673+619 1697+204 1953+34 (shirt, head, pants, gloves, shoes,
+  kneepads, gear, hat, eyewear, exo). 0.55 uses i+1 and checks each number with the game's own naming before adding it. The handler replay itself returned fine.

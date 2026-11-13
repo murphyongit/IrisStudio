@@ -409,6 +409,22 @@ namespace
 		}
 	}
 
+	// The name the game itself gives a number of a kind (as its loading of the lists reads it, 0x1400237F0:
+	// 0x14000C100 with the kind from 0x1403CC830).
+	const char* number_name(const int kind, const unsigned number)
+	{
+		__try
+		{
+			const int of_kind = reinterpret_cast<int (*)(int)>(BG_CUSTOMIZATION_KIND)(kind);
+			const char* name = reinterpret_cast<const char* (*)(int, unsigned)>(BG_CUSTOMIZATION_MODEL_NAME)(of_kind, number);
+			return name && !IsBadStringPtrA(name, 96) ? name : nullptr;
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			return nullptr;
+		}
+	}
+
 	// (with the lock held)
 	void read_numbers()
 	{
@@ -420,9 +436,11 @@ namespace
 		// The game's own table of gear models, as its code reads it (0x14000C100, 0x14000C3D0): entries of
 		// 0x58 bytes from 0x140B33B90 (the model's name, its lobby model's name, the name it is loaded by),
 		// and for each kind of gear where its entries begin and how many there are (two words each, from
-		// 0x140B33B48). The lists the game loads gear by hold an entry's place in the whole table, from 1.
+		// 0x140B33B48). The lists the game loads gear by hold, for each kind, an entry's place among that
+		// kind's, from 1 (0x1400237F0 names a list's number with 0x14000C100(kind, number)).
 		// (0.46 to 0.53 asked the game for the name of number 0 of each kind, which is none: nothing was
-		// ever found, and nothing was ever asked for.)
+		// ever found, and nothing was ever asked for. 0.54 put the place in the whole table in the lists:
+		// the game found no name for it and crashed at 0x140025470.)
 		const int in_use = IsBadReadPtr(reinterpret_cast<const void*>(CUSTOM_IN_USE), 4) ? -1 : *reinterpret_cast<const int*>(CUSTOM_IN_USE);
 		std::string layout;
 		for (int t = 0; t < 12 && !IsBadReadPtr(reinterpret_cast<const void*>(CUSTOM_KINDS), 48); ++t)
@@ -448,7 +466,10 @@ namespace
 					const char* name = *reinterpret_cast<const char* const*>(entry + offset);
 					if (name && !IsBadStringPtrA(name, 96) && name[0] >= 33 && strnlen(name, 96) < 90)
 					{
-						g_numbers.emplace(name, std::make_pair(t >= 1 && t <= SYNC_KINDS ? t - 1 : 0, first + i + 1));
+						if (t >= 1 && t <= SYNC_KINDS)
+						{
+							g_numbers.emplace(name, std::make_pair(t - 1, i + 1));
+						}
 					}
 				}
 			}
@@ -1840,8 +1861,19 @@ void models_game_frame(const TheaterState& state)
 				const auto number = g_numbers.find(part.model);
 				if (!g_loaded.count(part.model) && number != g_numbers.end())
 				{
-					g_extra.push_back(number->second);
-					++asked;
+					// (only what the game itself names the same way: a number it has no name for stops it)
+					const char* named = number_name(number->second.first, number->second.second);
+					const std::string base = ends_with(part.model, "_lob") ? part.model.substr(0, part.model.size() - 4) : part.model;
+					if (named && (part.model == named || base == named || base + "_lob" == named))
+					{
+						g_extra.push_back(number->second);
+						++asked;
+					}
+					else
+					{
+						note("models: %s is number %u of kind %d, which the game names %s: not asked for", part.model.c_str(), number->second.second,
+						     number->second.first, named ? named : "nothing");
+					}
 				}
 			}
 
