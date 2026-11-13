@@ -122,6 +122,7 @@ namespace
 	// as far as the match has them loaded.
 	bool g_allow_loading = true;
 	ULONGLONG g_extra_dirty = 0;  // when the editor's choices last changed
+	ULONGLONG g_relist_at = 0;    // when what the game has in memory is to be read afresh (after gear is let go of)
 	// the gear ever asked for on top of a match's own. The game does not let go of it when it is taken off
 	// its lists (0.56 took 7 off; the count of loaded models never fell, and the next few asked for ran
 	// the game out of memory): what counts against the room there is, is what of this is in memory now.
@@ -637,6 +638,128 @@ namespace
 		const bool done = call_sync(buffer, flag);
 		note(done ? "models: the game's lists handled again with %zu more gear models in them" : "models: a fault handling the game's lists again (%zu more)", added);
 		return done;
+	}
+
+	// ---- letting go of gear. In a match the game's handling of its lists only ever loads (0.56 took 7
+	// models off the lists and nothing left memory). What it does for a model dropped from a list
+	// elsewhere (0x140023510) is: mark the client's lists changed (the word at +0x5DB4 of the client's
+	// block at 0x140BB1C10) and call 0x1400259A0 with the model's name, which lets go of the model's
+	// on-demand files. The editor does the same for gear it asked for that no player wears any more,
+	// after the players have been made again without it.
+	constexpr std::uintptr_t CL_TRANSIENT_RELEASE = 0x1400259A0, CL_STREAM_CHANGED = 0x140BB1C10 + 0x5DB4;
+	void list_loaded();
+	struct Release
+	{
+		std::vector<std::string> names;
+		ULONGLONG due = 0;
+	};
+	Release g_release;
+
+	bool release_model(const char* name)
+	{
+		__try
+		{
+			*reinterpret_cast<int*>(CL_STREAM_CHANGED) = 1;
+			reinterpret_cast<void (*)(const char*)>(CL_TRANSIENT_RELEASE)(name);
+			return true;
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			return false;
+		}
+	}
+
+	bool has_dobj(const int handle)
+	{
+		__try
+		{
+			return reinterpret_cast<void* (*)(int, int)>(COM_GET_CLIENT_DOBJ)(handle, 0) != nullptr;
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			return false;
+		}
+	}
+
+	// (on the game's thread, the lock not held) Two steps, a little apart: the gear no longer worn is taken
+	// off the lists (so the game does not load it again), then let go of.
+	void release_unworn(const TheaterState& state)
+	{
+		if (!state.playing)
+		{
+			return;
+		}
+
+		const ULONGLONG now = GetTickCount64();
+		std::vector<std::string> names;
+		{
+			std::lock_guard<std::mutex> lock(g_lock);
+			if (g_release.due && now >= g_release.due)
+			{
+				names.swap(g_release.names);
+				g_release.due = 0;
+			}
+			else if (!g_release.due && g_extra_dirty && now - g_extra_dirty > 2000 && g_pending.empty())
+			{
+				// (not while a player whose choices changed still has the model made before them)
+				for (const auto& changed : g_changed)
+				{
+					const auto built = g_built.find(changed.first);
+					if (changed.first < 2048 && (built == g_built.end() || built->second != changed.second) && has_dobj(changed.first))
+					{
+						return;
+					}
+				}
+
+				g_extra_dirty = 0;
+				std::set<std::string> worn;
+				for (const auto& entity : g_swaps)
+				{
+					for (const auto& swap : entity.second)
+					{
+						worn.insert(swap.second);
+					}
+				}
+
+				for (const auto& entity : g_adds)
+				{
+					worn.insert(entity.second.begin(), entity.second.end());
+				}
+
+				list_loaded();
+				for (const std::string& model : g_asked_models)
+				{
+					const auto number = g_numbers.find(model);
+					if (!worn.count(model) && g_loaded.count(model) && number != g_numbers.end())
+					{
+						g_release.names.push_back(model);
+						g_extra.erase(std::remove(g_extra.begin(), g_extra.end(), number->second), g_extra.end());
+					}
+				}
+
+				if (!g_release.names.empty())
+				{
+					g_release.due = now + 500;
+					g_replay_wanted = true;
+				}
+			}
+		}
+
+		if (names.empty())
+		{
+			return;
+		}
+
+		size_t done = 0;
+		for (const std::string& name : names)
+		{
+			done += release_model(name.c_str()) ? 1 : 0;
+		}
+
+		std::lock_guard<std::mutex> lock(g_lock);
+		g_listed = false;
+		g_relist_at = now + 2500;
+		note("models: %zu of %zu gear models no longer worn let go of (the first: %s)", done, names.size(), names[0].c_str());
 	}
 
 	bool ask_for(const char* model)
@@ -2005,7 +2128,21 @@ void models_game_frame(const TheaterState& state)
 	}
 
 	remake_changed(state);
+	release_unworn(state);
 	std::lock_guard<std::mutex> lock(g_lock);
+	if (g_relist_at && GetTickCount64() > g_relist_at)
+	{
+		g_relist_at = 0;
+		list_loaded();
+		size_t held = 0;
+		for (const std::string& model : g_asked_models)
+		{
+			held += g_loaded.count(model);
+		}
+
+		note("models: after letting go, %zu of the gear asked for is still in memory", held);
+	}
+
 	if (!state.playing && !state.starting)
 	{
 		g_pending.clear();

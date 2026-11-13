@@ -676,7 +676,7 @@ namespace
 		{
 			const float spacing = ImGui::GetStyle().ItemSpacing.x;
 			const float button = std::floor((ImGui::GetContentRegionAvail().x - spacing * 2.0f) / 3.0f);
-			for (int i = 0; i < 6; ++i)
+			for (int i = 0; i < static_cast<int>(sizeof(MODES) / sizeof(MODES[0])); ++i)
 			{
 				const auto& m = MODES[i];
 				if (i % 3)
@@ -712,11 +712,12 @@ namespace
 			// (a keyframe: with the bone camera the view can zoom as the recording plays)
 			look_key_button("camera_fov", "Field of view", 1, &fov);
 			ImGui::EndDisabled();
-			if (camera.mode == CameraMode::Free)
+			if (camera.mode == CameraMode::Free || camera.mode == CameraMode::Bone)
 			{
+				// (the bone camera has a fly speed of its own: it is flown close to a player)
 				float speed = camera.speed;
 				row_label("Fly speed");
-				if (ImGui::SliderFloat("##speed", &speed, 50.0f, 3000.0f, "%.0f", ImGuiSliderFlags_Logarithmic))
+				if (ImGui::SliderFloat("##speed", &speed, camera.mode == CameraMode::Bone ? 2.0f : 50.0f, 3000.0f, "%.0f", ImGuiSliderFlags_Logarithmic))
 				{
 					camera_set_speed(speed);
 				}
@@ -1565,7 +1566,7 @@ namespace
 						models_randomize(players.entities);
 					}
 
-					ImGui::SetItemTooltip("A random set for every player in the match. The game has room for about 17 parts nobody was wearing, and keeps them until the recording is loaded again:\nonce that is used, players get sets made of parts that are already loaded. Click again for another mix of those.");
+					ImGui::SetItemTooltip("A random set for every player in the match. The game has room for about 17 parts nobody was wearing:\nonce that is used, players get sets made of parts that are already loaded. Click again for another mix.");
 					ImGui::BeginDisabled(entity == FIRST_PERSON);
 					bool loading = models_loading_allowed();
 					if (ImGui::Checkbox("Load a set's missing parts from the game's files", &loading))

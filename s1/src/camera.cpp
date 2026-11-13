@@ -96,7 +96,8 @@ namespace
 	std::atomic<bool> g_free{false}, g_follow{false};
 	std::atomic<int> g_mode{static_cast<int>(CameraMode::FirstPerson)};
 	int g_view_state = -1;  // what the game's third person and gun settings were last set for
-	std::atomic<float> g_speed{400.0f};
+	std::atomic<float> g_speed{400.0f}, g_bone_speed{40.0f};
+	std::atomic<bool> g_bone_found{false}, g_bone_wanted{false};
 	std::atomic<bool> g_add_request{false}, g_clear_request{false};
 	bool g_have_pose = false, g_overriding = false, g_logged_view = false;
 	bool g_f2_was = false, g_k_was = false, g_l_was = false;
@@ -315,7 +316,7 @@ namespace
 		panel_had_mouse = panel_has_mouse;
 		float axis[3][3];
 		angles_to_axis(g_pose.angles, axis);
-		const float speed = g_speed * (down(VK_SHIFT) ? 3.0f : 1.0f) * (down(VK_CONTROL) ? 0.25f : 1.0f) * dt;
+		const float speed = (g_bone_wanted ? g_bone_speed.load() : g_speed.load()) * (down(VK_SHIFT) ? 3.0f : 1.0f) * (down(VK_CONTROL) ? 0.25f : 1.0f) * dt;
 		const float forward = (down('W') ? 1.0f : 0.0f) - (down('S') ? 1.0f : 0.0f);
 		const float left = (down('A') ? 1.0f : 0.0f) - (down('D') ? 1.0f : 0.0f);
 		const float up = (down('E') ? 1.0f : 0.0f) - (down('Q') ? 1.0f : 0.0f);
@@ -342,7 +343,6 @@ namespace
 	BoneCamera g_bone;
 	std::atomic<std::uint64_t> g_bone_entities{0};
 	std::atomic<int> g_bone_nearest{-1};
-	std::atomic<bool> g_bone_found{false}, g_bone_wanted{false};
 	unsigned g_bone_scan = 0;
 	float g_dt = 0.0f;  // the frame's, for flying the bone camera where the scene is drawn
 
@@ -1075,7 +1075,7 @@ CameraState camera_state()
 {
 	CameraState state;
 	state.mode = static_cast<CameraMode>(g_mode.load());
-	state.speed = g_speed;
+	state.speed = g_bone_wanted ? g_bone_speed.load() : g_speed.load();
 	state.body = g_body;
 	state.clean = g_clean;
 	state.player_aim = g_player_aim;
@@ -1214,7 +1214,17 @@ void scene_remove_light(const int index)
 }
 
 void camera_set_mode(const CameraMode mode) { g_mode = static_cast<int>(mode); }
-void camera_set_speed(const float speed) { g_speed = speed; }
+void camera_set_speed(const float speed)
+{
+	if (g_bone_wanted)
+	{
+		g_bone_speed = speed;
+	}
+	else
+	{
+		g_speed = speed;
+	}
+}
 void camera_add_point() { g_add_request = true; }
 void camera_set_body(const bool on) { g_body = on; }
 

@@ -140,3 +140,15 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
 - Fog: only r_fog, r_fog_ev_adjust, r_sky_fog_* are settable; the g_*Fog*ReadOnly dvars are outputs. Real fog colour/density = the cg fog state set by
   script (setExpFog / atmos fog): not found yet. Subdivision/tessellation dvars do nothing on MP models (rows removed).
 - Still open, asked for: unload gear (option 1), render passes (depth, green screen, world, weapon), gun vs ReShade depth, fog colour/density.
+
+## 0.59: gear let go of with the game's own call (option 1, first half)
+- Handler 0x140022290: lists 10/11/12 (weapons, gear by whole-table place, viewmodels) are diffed and loaded/unloaded at once; per-kind lists 0..9 go through
+  0x140023460(client, kind, ...): 0x1400233D0 marks stored entries still present (bits 0xC0000000), 0x1400236D0 loads new ones, 0x140023510 unloads the rest:
+  names via 0x1400237F0, sets [0x140BB1C10 + client*0x5DC0 + 0x5DB4] = 1, calls 0x1400259A0(name) (-> 0x140025470 finds the files, 0x1400257D0 releases).
+  Part of that is gated by [0x140BB79C0]; in a match the replayed handler loaded nothing itself (the periodic update 0x140023B4A did) and unloaded nothing.
+- 0.59 release_unworn(): 2 s after a change, once changed players are remade: asked-for models no swap/add uses are taken off g_extra (handler replayed),
+  0.5 s later 0x1400259A0(name) is called for each; 2.5 s later the log says how many asked-for models are still in memory. Untested when written.
+  If it works: next, drop a re-dressed player's ORIGINAL gear too (so every player can differ).
+- Also 0.59: camera mode loop used a fixed 6 (garbage button after Orbit was removed); bone fly speed of its own (g_bone_speed, 40); effect clips fire when
+  the settled time is inside the clip (g_inside), not only on crossing its start.
+- Not done, asked for: HUD timers follow real time (kill feed stays after a rewind, fades too fast in slow motion) -> needs the LUI frame clock.

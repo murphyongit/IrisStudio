@@ -115,6 +115,7 @@ namespace
 	bool g_listed = false;
 	PlacedEffect g_placed[MAX_PLACED];
 	bool g_fire[MAX_PLACED] = {};
+	bool g_inside[MAX_PLACED] = {};  // the recording's time is in the effect's clip, and it has been played for that
 	int g_count = 0;
 	double g_last_ms = -1.0;
 
@@ -335,6 +336,7 @@ int effects_add(const char* name, const float origin[3], const std::uint32_t ms)
 	placed.at_ms = ms;
 	g_placed[g_count] = placed;
 	g_fire[g_count] = true;
+	g_inside[g_count] = true;  // (played now, as it is put down)
 	return g_count++;
 }
 
@@ -365,6 +367,7 @@ void effects_remove(const int index)
 		{
 			g_placed[i] = g_placed[i + 1];
 			g_fire[i] = g_fire[i + 1];
+			g_inside[i] = g_inside[i + 1];
 		}
 
 		--g_count;
@@ -425,14 +428,24 @@ void effects_game_frame(const TheaterState& state)
 		const PlacedEffect& placed = g_placed[i];
 		bool due = g_fire[i];
 		g_fire[i] = false;
+		// its clip on the timeline: played once the time is in it, however the time came to be there (played
+		// up to, jumped to, or the clip dragged over it); not while the recording is being run up to a place
+		const double clip_end = static_cast<double>(placed.at_ms) + (placed.length_ms > 100 ? placed.length_ms : 100);
+		const bool in_clip = now >= placed.at_ms && now <= clip_end;
+		if (!in_clip)
+		{
+			g_inside[i] = false;
+		}
+		else if (placed.on && state.settled && !g_inside[i])
+		{
+			g_inside[i] = true;
+			due = true;
+		}
+
 		// the recording's time passing the effect's (not a jump: only time that ran on)
 		if (placed.on && last >= 0.0 && now > last && now - last < 1000.0)
 		{
-			if (last < placed.at_ms && now >= placed.at_ms)
-			{
-				due = true;
-			}
-			else if (placed.every_ms >= 50 && now > placed.at_ms && now <= static_cast<double>(placed.at_ms) + placed.length_ms)
+			if (placed.every_ms >= 50 && state.settled && now > placed.at_ms && now <= static_cast<double>(placed.at_ms) + placed.length_ms)
 			{
 				const double since_last = (last - placed.at_ms) / placed.every_ms, since_now = (now - placed.at_ms) / placed.every_ms;
 				due = due || (last >= placed.at_ms && std::floor(since_now) > std::floor(since_last));
