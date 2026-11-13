@@ -121,7 +121,11 @@ namespace
 	// that was no longer there). So it is only done when asked for; without it a set's parts are put on
 	// as far as the match has them loaded.
 	bool g_allow_loading = true;
-	ULONGLONG g_extra_dirty = 0;  // when the editor's choices last changed: what is no longer worn is let go of a little later
+	ULONGLONG g_extra_dirty = 0;  // when the editor's choices last changed
+	// the gear ever asked for on top of a match's own. The game does not let go of it when it is taken off
+	// its lists (0.56 took 7 off; the count of loaded models never fell, and the next few asked for ran
+	// the game out of memory): what counts against the room there is, is what of this is in memory now.
+	std::set<std::string> g_asked_models;
 
 	// The proper way to have gear loaded: the match's server tells the client which gear models to keep
 	// loaded, a list for each kind of gear (0x140022290 takes them: lists of 16 bytes each, a count and
@@ -633,90 +637,6 @@ namespace
 		const bool done = call_sync(buffer, flag);
 		note(done ? "models: the game's lists handled again with %zu more gear models in them" : "models: a fault handling the game's lists again (%zu more)", added);
 		return done;
-	}
-
-	bool has_dobj(const int handle)
-	{
-		__try
-		{
-			return reinterpret_cast<void* (*)(int, int)>(COM_GET_CLIENT_DOBJ)(handle, 0) != nullptr;
-		}
-		__except (EXCEPTION_EXECUTE_HANDLER)
-		{
-			return false;
-		}
-	}
-
-	// (with the lock held) The gear asked for on top of the match's own that no choice of the editor's
-	// uses any more is taken off the game's lists, and the game lets go of it: only once every player's
-	// model has been made again without it.
-	void release_unused()
-	{
-		const ULONGLONG now = GetTickCount64();
-		static ULONGLONG look_again = 0;
-		if (look_again && now > look_again)
-		{
-			// (what the game has in memory is read afresh once it has let go of what was dropped)
-			look_again = 0;
-			g_listed = false;
-		}
-
-		if (!g_extra_dirty || now - g_extra_dirty < 1500 || !g_pending.empty())
-		{
-			return;
-		}
-
-		for (const auto& changed : g_changed)
-		{
-			const auto built = g_built.find(changed.first);
-			if (changed.first < 2048 && (built == g_built.end() || built->second != changed.second) && has_dobj(changed.first))
-			{
-				return;
-			}
-		}
-
-		g_extra_dirty = 0;
-		std::set<std::pair<int, unsigned>> used;
-		auto use = [&used](const std::string& model) {
-			const auto number = g_numbers.find(model);
-			if (number != g_numbers.end())
-			{
-				used.insert(number->second);
-			}
-		};
-		for (const auto& entity : g_swaps)
-		{
-			for (const auto& swap : entity.second)
-			{
-				use(swap.second);
-			}
-		}
-
-		for (const auto& entity : g_adds)
-		{
-			for (const std::string& model : entity.second)
-			{
-				use(model);
-			}
-		}
-
-		std::vector<std::pair<int, unsigned>> kept;
-		for (const auto& extra : g_extra)
-		{
-			if (used.count(extra))
-			{
-				kept.push_back(extra);
-			}
-		}
-
-		if (kept.size() != g_extra.size())
-		{
-			note("models: %zu gear models no longer worn are let go of (%zu still held)", g_extra.size() - kept.size(), kept.size());
-			g_extra = kept;
-			g_replay_wanted = true;
-			g_listed = false;
-			look_again = now + 3000;
-		}
 	}
 
 	bool ask_for(const char* model)
@@ -1908,6 +1828,18 @@ size_t set_cost(const PendingSet& pending, const std::set<std::string>& planned,
 	return cost;
 }
 
+// (with the lock held) How much of the room is taken: the gear asked for before that is in memory now.
+size_t extra_held()
+{
+	size_t held = 0;
+	for (const std::string& model : g_asked_models)
+	{
+		held += g_loaded.count(model);
+	}
+
+	return held;
+}
+
 // (with the lock held) The parts the sets being waited for will have loaded.
 std::set<std::string> planned_parts()
 {
@@ -1946,10 +1878,13 @@ int models_apply_set(const int entity, const char* name)
 	const std::set<std::string> planned = planned_parts();
 	bool loadable = true;
 	const size_t cost = set_cost(pending, planned, &loadable);
-	if (g_allow_loading && g_extra.size() + planned.size() + cost > EXTRA_MOST)
+	list_loaded();
+	const size_t held = extra_held();
+	if (cost && held + planned.size() + cost > EXTRA_MOST)
 	{
-		snprintf(g_status, sizeof(g_status), "No room in the game's memory for %s (%zu more parts, %zu held already). Reset a player's outfit first.", name,
-		         cost, g_extra.size());
+		snprintf(g_status, sizeof(g_status),
+		         "No room left in the game's memory for %s: it needs %zu parts loaded and %zu of %zu are used. Sets made of parts already loaded still work.", name,
+		         cost, held + planned.size(), EXTRA_MOST);
 		return 0;
 	}
 
@@ -1972,8 +1907,9 @@ int models_randomize(const std::uint64_t entities)
 
 	read_numbers();
 	static std::mt19937 random(static_cast<unsigned>(GetTickCount64()));
+	list_loaded();
 	std::set<std::string> planned = planned_parts();
-	size_t used = g_extra.size() + planned.size();
+	size_t used = extra_held() + planned.size();
 	std::vector<int> order;
 	for (int entity = 0; entity < 64; ++entity)
 	{
@@ -2027,7 +1963,8 @@ int models_randomize(const std::uint64_t entities)
 		++queued;
 	}
 
-	snprintf(g_status, sizeof(g_status), queued ? "%d random outfits on their way..." : "No set fits in the game's memory right now: reset a player's outfit first.", queued);
+	snprintf(g_status, sizeof(g_status), queued ? "%d random outfits on their way (%zu of %zu extra parts used)..." : "No set fits these players from what is loaded.", queued, used,
+	         EXTRA_MOST);
 	return queued;
 }
 
@@ -2076,7 +2013,6 @@ void models_game_frame(const TheaterState& state)
 		return;
 	}
 
-	release_unused();
 	if (g_pending.empty())
 	{
 		return;
@@ -2098,7 +2034,16 @@ void models_game_frame(const TheaterState& state)
 			for (const Wanted& part : pending.parts)
 			{
 				const auto number = g_numbers.find(part.model);
-				if (!g_loaded.count(part.model) && number != g_numbers.end())
+				if (number != g_numbers.end() && g_loaded.count(part.model) && g_asked_models.count(part.model))
+				{
+					// (asked for before and still in memory: it stays on the lists while it is worn)
+					if (std::find(g_extra.begin(), g_extra.end(), number->second) == g_extra.end())
+					{
+						g_extra.push_back(number->second);
+						++asked;
+					}
+				}
+				else if (!g_loaded.count(part.model) && number != g_numbers.end())
 				{
 					// (only what the game itself names the same way: a number it has no name for stops it)
 					const char* named = number_name(number->second.first, number->second.second);
@@ -2110,6 +2055,7 @@ void models_game_frame(const TheaterState& state)
 							g_extra.push_back(number->second);
 						}
 
+						g_asked_models.insert(part.model);
 						++asked;
 					}
 					else

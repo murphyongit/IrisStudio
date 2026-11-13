@@ -118,3 +118,14 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
   taken off the lists and the handler replayed (the game unloads them); g_loaded is re-read then and 3 s later.
 - models_randomize(mask): per entity a random set among those whose not-yet-loaded parts fit the remaining budget (build_set + set_cost); sets queue in
   g_pending and are applied one after another. Loading is on by default now.
+
+## 0.57: what the gear memory limit really is
+- 0.56's release did nothing: after 7 numbers were taken off the lists the loaded-model count never fell (3979 -> 3982 -> 3984), and the next loads
+  killed the game with no minidump and nothing in the log: the WIN_OUT_OF_MEM box (0x1404D6C20, code 0x1A) from the transient allocator 0x1400247E0.
+  That allocator places a transient file in ITS SLOT: pools are 0x78-byte descriptors at 0x140BB79D0 (slot size +0x40, base +0x58, per-slot sizes +0x70),
+  slot cursors 16 bytes each at 0x140BB7FF0; a file's registry entry (0x140BB8F10, 0x30 each, MAX_TRANSIENT_FILES 2700) has pool byte +8 and slot word +6.
+  When cursor + size passes the slot's size -> out of memory. So the limit is slots, not a total; pools are sized at map load (function 0x140272C53..,
+  "Exceeded transient resident memory budget when allocating pools"). Counts seen fine: 17 and 19 extra gear models; died asking past that.
+- 0.57: no release; room = models ever asked for that are loaded now (g_asked_models) + planned, at most 17.
+- To really raise it: (a) make the game unload gear taken off its lists (find what its handler needs: flags 0xC0000000 on list numbers? 0x1400259A0?),
+  and take a re-dressed player's own gear off the lists too; or (b) more/larger slots at map load. Neither done.

@@ -1438,7 +1438,7 @@ namespace
 						models_randomize(players.entities);
 					}
 
-					ImGui::SetItemTooltip("A random set for every player in the match. The game's memory has room for about 17 parts nobody was wearing:\nonce that is used, the rest get sets made of parts that are already loaded. Click again for another mix.");
+					ImGui::SetItemTooltip("A random set for every player in the match. The game has room for about 17 parts nobody was wearing, and keeps them until the recording is loaded again:\nonce that is used, players get sets made of parts that are already loaded. Click again for another mix of those.");
 					ImGui::BeginDisabled(entity == FIRST_PERSON);
 					bool loading = models_loading_allowed();
 					if (ImGui::Checkbox("Load a set's missing parts from the game's files", &loading))
