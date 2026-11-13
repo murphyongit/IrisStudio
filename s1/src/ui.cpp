@@ -1425,8 +1425,23 @@ namespace
 
 					ImGui::EndDisabled();
 					ImGui::SetItemTooltip("The game's own sets of gear, loot included: every part at once (the face stays)");
+					if (ImGui::Button("Random outfit"))
+					{
+						models_randomize(entity >= 0 && entity < 64 ? 1ull << entity : 0);
+					}
+
+					ImGui::SetItemTooltip("One of the game's sets, picked at random, for this player");
+					ImGui::EndDisabled();
+					ImGui::SameLine();
+					if (ImGui::Button("Random outfits for everyone"))
+					{
+						models_randomize(players.entities);
+					}
+
+					ImGui::SetItemTooltip("A random set for every player in the match. The game's memory has room for about 17 parts nobody was wearing:\nonce that is used, the rest get sets made of parts that are already loaded. Click again for another mix.");
+					ImGui::BeginDisabled(entity == FIRST_PERSON);
 					bool loading = models_loading_allowed();
-					if (ImGui::Checkbox("Load a set's missing parts from the game's files (experimental)", &loading))
+					if (ImGui::Checkbox("Load a set's missing parts from the game's files", &loading))
 					{
 						models_allow_loading(loading);
 					}

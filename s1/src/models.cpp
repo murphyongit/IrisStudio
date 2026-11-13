@@ -21,6 +21,7 @@
 #include <cstring>
 #include <map>
 #include <mutex>
+#include <random>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -119,7 +120,8 @@ namespace
 	// can be one a player in the match is drawn with: 0.44 crashed that way (a bone looked up in a model
 	// that was no longer there). So it is only done when asked for; without it a set's parts are put on
 	// as far as the match has them loaded.
-	bool g_allow_loading = false;
+	bool g_allow_loading = true;
+	ULONGLONG g_extra_dirty = 0;  // when the editor's choices last changed: what is no longer worn is let go of a little later
 
 	// The proper way to have gear loaded: the match's server tells the client which gear models to keep
 	// loaded, a list for each kind of gear (0x140022290 takes them: lists of 16 bytes each, a count and
@@ -592,7 +594,7 @@ namespace
 		size_t added = 0;
 		{
 			std::lock_guard<std::mutex> lock(g_lock);
-			if (!g_saved_sync.have || g_extra.empty())
+			if (!g_saved_sync.have)
 			{
 				return false;
 			}
@@ -630,6 +632,90 @@ namespace
 		const bool done = call_sync(buffer, flag);
 		note(done ? "models: the game's lists handled again with %zu more gear models in them" : "models: a fault handling the game's lists again (%zu more)", added);
 		return done;
+	}
+
+	bool has_dobj(const int handle)
+	{
+		__try
+		{
+			return reinterpret_cast<void* (*)(int, int)>(COM_GET_CLIENT_DOBJ)(handle, 0) != nullptr;
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			return false;
+		}
+	}
+
+	// (with the lock held) The gear asked for on top of the match's own that no choice of the editor's
+	// uses any more is taken off the game's lists, and the game lets go of it: only once every player's
+	// model has been made again without it.
+	void release_unused()
+	{
+		const ULONGLONG now = GetTickCount64();
+		static ULONGLONG look_again = 0;
+		if (look_again && now > look_again)
+		{
+			// (what the game has in memory is read afresh once it has let go of what was dropped)
+			look_again = 0;
+			g_listed = false;
+		}
+
+		if (!g_extra_dirty || now - g_extra_dirty < 1500 || !g_pending.empty())
+		{
+			return;
+		}
+
+		for (const auto& changed : g_changed)
+		{
+			const auto built = g_built.find(changed.first);
+			if (changed.first < 2048 && (built == g_built.end() || built->second != changed.second) && has_dobj(changed.first))
+			{
+				return;
+			}
+		}
+
+		g_extra_dirty = 0;
+		std::set<std::pair<int, unsigned>> used;
+		auto use = [&used](const std::string& model) {
+			const auto number = g_numbers.find(model);
+			if (number != g_numbers.end())
+			{
+				used.insert(number->second);
+			}
+		};
+		for (const auto& entity : g_swaps)
+		{
+			for (const auto& swap : entity.second)
+			{
+				use(swap.second);
+			}
+		}
+
+		for (const auto& entity : g_adds)
+		{
+			for (const std::string& model : entity.second)
+			{
+				use(model);
+			}
+		}
+
+		std::vector<std::pair<int, unsigned>> kept;
+		for (const auto& extra : g_extra)
+		{
+			if (used.count(extra))
+			{
+				kept.push_back(extra);
+			}
+		}
+
+		if (kept.size() != g_extra.size())
+		{
+			note("models: %zu gear models no longer worn are let go of (%zu still held)", g_extra.size() - kept.size(), kept.size());
+			g_extra = kept;
+			g_replay_wanted = true;
+			g_listed = false;
+			look_again = now + 3000;
+		}
 	}
 
 	bool ask_for(const char* model)
@@ -1306,6 +1392,7 @@ void models_swap(const int entity, const char* from, const char* to)
 {
 	std::lock_guard<std::mutex> lock(g_lock);
 	++g_changed[entity];
+	g_extra_dirty = GetTickCount64();
 	if (to)
 	{
 		g_swaps[entity][from] = to;
@@ -1421,6 +1508,7 @@ void models_add(const int entity, const char* name, const bool on)
 {
 	std::lock_guard<std::mutex> lock(g_lock);
 	++g_changed[entity];
+	g_extra_dirty = GetTickCount64();
 	std::vector<std::string>& adds = g_adds[entity];
 	adds.erase(std::remove(adds.begin(), adds.end(), std::string(name)), adds.end());
 	if (on)
@@ -1452,6 +1540,7 @@ void models_clear(const int entity)
 {
 	std::lock_guard<std::mutex> lock(g_lock);
 	++g_changed[entity];
+	g_extra_dirty = GetTickCount64();
 	g_swaps.erase(entity);
 	g_adds.erase(entity);
 	g_skins.erase(entity);
@@ -1542,14 +1631,16 @@ void models_status(char out[200])
 
 // A whole set on the entity: its models are asked for from the game's files, and put on once they are
 // there (models_game_frame). How many parts the set has for this player.
-int models_apply_set(const int entity, const char* name)
+namespace
 {
-	std::lock_guard<std::mutex> lock(g_lock);
+// (with the lock held) The parts a set is for an entity, by the game's own matching: false if none.
+bool build_set(const int entity, const char* name, PendingSet& pending, const bool quiet)
+{
 	read_gear_tables();
 	const auto seen = g_seen.find(entity);
 	if (seen == g_seen.end())
 	{
-		return 0;
+		return false;
 	}
 
 	if (!g_listed)
@@ -1573,7 +1664,7 @@ int models_apply_set(const int entity, const char* name)
 
 	if (!set)
 	{
-		return 0;
+		return false;
 	}
 
 	auto item_of = [](const std::string& category, const int primary) -> const IdRow* {
@@ -1666,7 +1757,6 @@ int models_apply_set(const int entity, const char* name)
 		}
 	}
 
-	PendingSet pending;
 	pending.entity = entity;
 	pending.name = name;
 	pending.since = GetTickCount64();
@@ -1780,10 +1870,86 @@ int models_apply_set(const int entity, const char* name)
 		}
 	}
 
-	note("models: set %s for entity %d (tags:%s):%s", name, entity, all_tags.c_str(), chosen_models.c_str());
-	if (pending.parts.empty())
+	if (!quiet)
+	{
+		note("models: set %s for entity %d (tags:%s):%s", name, entity, all_tags.c_str(), chosen_models.c_str());
+	}
+
+	return !pending.parts.empty();
+}
+
+// The most gear the game is asked to hold on top of what the match's players wear: with 17 more than a
+// match's own it went on; asked for 21, it ran out of memory.
+constexpr size_t EXTRA_MOST = 17;
+
+// (with the lock held) How many of a set's parts would have to be loaded (what is in memory, or is about
+// to be, costs nothing); not loadable if a part has no place in the game's table.
+size_t set_cost(const PendingSet& pending, const std::set<std::string>& planned, bool* loadable)
+{
+	size_t cost = 0;
+	*loadable = true;
+	for (const Wanted& part : pending.parts)
+	{
+		if (part.model.empty() || g_loaded.count(part.model) || planned.count(part.model))
+		{
+			continue;
+		}
+
+		if (g_numbers.count(part.model))
+		{
+			++cost;
+		}
+		else
+		{
+			*loadable = false;
+		}
+	}
+
+	return cost;
+}
+
+// (with the lock held) The parts the sets being waited for will have loaded.
+std::set<std::string> planned_parts()
+{
+	std::set<std::string> planned;
+	for (const PendingSet& pending : g_pending)
+	{
+		for (const Wanted& part : pending.parts)
+		{
+			if (!part.model.empty() && !g_loaded.count(part.model))
+			{
+				planned.insert(part.model);
+			}
+		}
+	}
+
+	return planned;
+}
+}
+
+int models_apply_set(const int entity, const char* name)
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	PendingSet pending;
+	if (!build_set(entity, name, pending, false))
 	{
 		snprintf(g_status, sizeof(g_status), "The set %s has no parts the game's tables give a model for.", name);
+		return 0;
+	}
+
+	if (!g_listed)
+	{
+		list_loaded();
+	}
+
+	read_numbers();
+	const std::set<std::string> planned = planned_parts();
+	bool loadable = true;
+	const size_t cost = set_cost(pending, planned, &loadable);
+	if (g_allow_loading && g_extra.size() + planned.size() + cost > EXTRA_MOST)
+	{
+		snprintf(g_status, sizeof(g_status), "No room in the game's memory for %s (%zu more parts, %zu held already). Reset a player's outfit first.", name,
+		         cost, g_extra.size());
 		return 0;
 	}
 
@@ -1791,6 +1957,78 @@ int models_apply_set(const int entity, const char* name)
 	const int count = static_cast<int>(pending.parts.size());
 	g_pending.push_back(std::move(pending));
 	return count;
+}
+
+// A set chosen at random for each of the entities (a bit each), within what the game's memory has room
+// for: once that is used up, the rest get sets made of parts that are already there.
+int models_randomize(const std::uint64_t entities)
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	read_gear_tables();
+	if (!g_listed)
+	{
+		list_loaded();
+	}
+
+	read_numbers();
+	static std::mt19937 random(static_cast<unsigned>(GetTickCount64()));
+	std::set<std::string> planned = planned_parts();
+	size_t used = g_extra.size() + planned.size();
+	std::vector<int> order;
+	for (int entity = 0; entity < 64; ++entity)
+	{
+		if ((entities & (1ull << entity)) && g_seen.count(entity))
+		{
+			order.push_back(entity);
+		}
+	}
+
+	std::shuffle(order.begin(), order.end(), random);
+	int queued = 0;
+	for (const int entity : order)
+	{
+		std::vector<PendingSet> can;
+		std::vector<size_t> costs;
+		for (const SetRow& set : g_set_rows)
+		{
+			PendingSet pending;
+			if (!build_set(entity, set.name.c_str(), pending, true) || pending.parts.size() < 4)
+			{
+				continue;
+			}
+
+			bool loadable = true;
+			const size_t cost = set_cost(pending, planned, &loadable);
+			if (loadable && (cost == 0 || g_allow_loading) && used + cost <= EXTRA_MOST)
+			{
+				can.push_back(std::move(pending));
+				costs.push_back(cost);
+			}
+		}
+
+		if (can.empty())
+		{
+			continue;
+		}
+
+		const size_t pick = random() % can.size();
+		used += costs[pick];
+		for (const Wanted& part : can[pick].parts)
+		{
+			if (!part.model.empty() && !g_loaded.count(part.model))
+			{
+				planned.insert(part.model);
+			}
+		}
+
+		note("models: at random, %s for entity %d (%zu parts to load; %zu of %zu in all)", can[pick].name.c_str(), entity, costs[pick], used, EXTRA_MOST);
+		can[pick].since = GetTickCount64();
+		g_pending.push_back(std::move(can[pick]));
+		++queued;
+	}
+
+	snprintf(g_status, sizeof(g_status), queued ? "%d random outfits on their way..." : "No set fits in the game's memory right now: reset a player's outfit first.", queued);
+	return queued;
 }
 
 namespace
@@ -1838,6 +2076,7 @@ void models_game_frame(const TheaterState& state)
 		return;
 	}
 
+	release_unused();
 	if (g_pending.empty())
 	{
 		return;
@@ -1866,7 +2105,11 @@ void models_game_frame(const TheaterState& state)
 					const std::string base = ends_with(part.model, "_lob") ? part.model.substr(0, part.model.size() - 4) : part.model;
 					if (named && (part.model == named || base == named || base + "_lob" == named))
 					{
-						g_extra.push_back(number->second);
+						if (std::find(g_extra.begin(), g_extra.end(), number->second) == g_extra.end())
+						{
+							g_extra.push_back(number->second);
+						}
+
 						++asked;
 					}
 					else
@@ -1981,6 +2224,7 @@ void models_game_frame(const TheaterState& state)
 	note("models: set %s on entity %d: %zu of %zu parts%s%s", pending.name.c_str(), entity, there, pending.parts.size(), missing.empty() ? "" : "; not loaded: ",
 	     missing.c_str());
 	// (the player's model is made again from here on its own: see remake_changed)
+	g_extra_dirty = GetTickCount64();
 	g_pending.erase(g_pending.begin());
 }
 

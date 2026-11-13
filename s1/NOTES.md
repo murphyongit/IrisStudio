@@ -110,3 +110,11 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
   WITHIN the kind (0x1400237F0: name = 0x14000C100(0x1403CC830(kind), number & 0xFFFF)), not the place in the whole table (that is list 11 only).
   Seen layout (first+count per t): 0+0 1+76 129+38 193+146 449+24 481+21 513+25 545+84 673+619 1697+204 1953+34 (shirt, head, pants, gloves, shoes,
   kneepads, gear, hat, eyewear, exo). 0.55 uses i+1 and checks each number with the game's own naming before adding it. The handler replay itself returned fine.
+
+## 0.56: loading works; memory budget; random outfits
+- 0.55 loading confirmed by the user ("it worked"): parts arrive within about a second of the handler replay. With 17 extra gear models on top of the
+  match's own 103 list numbers it was fine; asked for 21 the game ran out of memory (no error reached the log). EXTRA_MOST = 17.
+- g_extra used to only grow. Now release_unused(): 1.5 s after a change, once every changed player's DObj has been remade, extras no swap/add refers to are
+  taken off the lists and the handler replayed (the game unloads them); g_loaded is re-read then and 3 s later.
+- models_randomize(mask): per entity a random set among those whose not-yet-loaded parts fit the remaining budget (build_set + set_cost); sets queue in
+  g_pending and are applied one after another. Loading is on by default now.

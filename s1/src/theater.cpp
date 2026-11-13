@@ -37,7 +37,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.55 (recorder, playback, IrisStudio's editor)";
+	constexpr char VERSION[] = "0.56 (recorder, playback, IrisStudio's editor)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
