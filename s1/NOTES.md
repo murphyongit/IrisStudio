@@ -18,8 +18,9 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
 - DB_EnumXAssets_Internal(type, cb, data, false) 0x14026EC80; types: xmodel 7, material 8, image 16, gfxworld 31, fx 42, stringtable 51
 - GfxWorld: skyCount +0x20, skies +0x28 (56 each, image +0x10); GfxImage: views at +8, +0x10
 - Cmd_AddCommandInternal(name, fn, storage) 0x1403AF2C0; cmd_args 0x1479ECB00 (nesting, argc at +0x44, argv at +0x68)
-- CL_LoadTransientByXModel(name) 0x140026A20 (FindTransientAssetIndices 0x140025470, LoadTransientByIndex 0x1400268D0). Calling it directly
-  evicts models in use -> crash (0.44). Proper fix = change the player's customization so the game streams it itself.
+- (WRONG until 0.61, see "0.61" below) 0x140026A20(name) is the transient UNLOAD (count -1), not the load; 0x1400268D0(index) takes one count off;
+  0x140025470 finds a name's indices. Calling 0x140026A20 as a "load" took models from under the players -> crash (0.44).
+  Proper fix = change the player's customization so the game streams it itself.
 - refdef 0x1415575C0 (tanX +0x10, origin +0x18, axis +0x24), view origin copy 0x141557610; CG_CalcViewValues hook 0x1401B7BB0; scene handover 0x1401DF410;
   CalcViewValues body 0x1401DC450; FOV getter 0x1401D59D0; R_UpdateFrameSun 0x1405D3AF0; sun override block 0x14D859530
 - Tables dumped to theater\tables: mp_charactergearsettable (set -> item ids 0x6CVVPPP: C category digit, VV skin variant, PPP primary id),
@@ -162,3 +163,30 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
   on PC). So fades still ignore the playback speed.
 - User's roadmap after this: death animations like T5 Iris, then actors (spawned fake players with animation chains). Spot lights exist since 0.46
   (Scene > Lights > Kind), never confirmed by the user.
+
+## 0.61: the transient system read right; real unloading; exact room; presets by section
+- 0.59's release crashed after ~4 sets (out of memory, nothing in the log): 0x1400259A0(name) is the LOAD (count +1; 0x1400257D0 per index: state 0 -> 1 and
+  queued) and 0x140026A20(name) is the UNLOAD (0x1400268D0 per index: count -1; file at 0 -> state 6, unloaded >= 2 frames later by 0x1400263A0 with
+  DB_LoadXAssets flag 0x40, then 0x140272960 and the slot handed back by 0x140024970). I had them swapped since 0.44.
+- Asset index table 0x140BDA050, 12 bytes: +0 hash, +4 next, +6 file number, +8 count. File registry 0x140BB8F10, 0x30 bytes: +6 slot (0xFFFF none),
+  +8 pool, +9 name, +0x2C state (0 unloaded, 1 queued, 2 loading, 3 loading but unwanted, 4 loaded, 6 unload queued, 5 unloading), +0x2D count.
+  Work queue 0x140BEE210 (count 0x140BEBA28); frame counter 0x14D858A04; pump 0x1400259E0.
+- Handler 0x140022290(client, lists, flag): flag 0 = lists BEGIN: 0x140022000 forgets the stored lists (0x1403CC7E0 zeroes 13 counts, nothing unloaded)
+  and everything on the lists is loaded (+1) again; lists 10 (weapons) and 12 are skipped. flag != 0 = lists CHANGED: stored vs new diffed for kinds 0..9,
+  11, and 10/12: gone -> 0x140026A20 + 0x1401EECE0(name, kind==10) (frees every DObj that uses the model: the 42 character entries at 0x141620568,
+  0xCC0 each, and with the flag the snapshot's entities), new -> 0x1400259A0. All gated by "active" [0x140BB1C10 + 0x5DB0] (= 0x140BB79C0).
+  The editor replayed with the server's flag (0): +1 on all 103 + extras each time, nothing ever unloaded. The demo's own syncs on every rewind are flag 0
+  too, so counts grow by one per rewind (bytes).
+- Lists: {u16 count, u16 capacity, ptr +8}; stored capacity 18 for kinds 0..9, 52 for list 10; the handler's temporary list holds 63 (no bounds check).
+- Pools (0x140024464): one per gear kind, "mp_char_shirt/head/pants/gloves/shoes/kneepads/gear/hat/eyewear/exo", each min(18, models of the kind) slots
+  (18 = default, or [0x1403D25E0()+0x74]); then mp_worldweap, mp_viewarm (6), mp_viewweap (4). Pool 0x78 bytes: +0 name, +0x40 slot size, +0x48 slots,
+  +0x50 tag, +0x58 memory, +0x60 first slot entry, +0x68 free-list head, +0x70 per-slot sizes (then no free list). Slot entries 16 bytes at 0x140BB7FF0
+  (+0 cursor, +8 pool, +0xA next free), 242 at most (count 0x140BB7FEC): no room to enlarge the pools. Taking a slot (0x1400248E0) does not check for
+  0xFFFF: a 19th file of a kind = WIN_OUT_OF_MEM. So the limit is 18 PER KIND, not ~17 overall.
+- 0.61: replay_sync replays as a change (flag 1, lists 10/12 = the game's stored ones); release_unworn takes unworn asked-for gear off the lists (handler
+  unloads), then 0.5 s later tr_let_go() takes off whatever counts are left (from rewinds) and calls 0x1401EECE0; room is counted per pool from the free
+  lists minus files in states 1..3 (read_room, add_need/set_need); EXTRA_MOST is gone. Lists capped at 18 per kind. Untested when written.
+- Not done (second half of "option 1"): dropping a re-dressed player's ORIGINAL gear. The game's clientinfo (and corpses' copies) keep XModel pointers to
+  the originals, so unloading them leaves stale pointers that the game hands to DObj creation. The clean way is to change what the player wears at the
+  costume level (hook the costume reader 0x14000C0D0(kind, customization) / the clientinfo models) so the game resolves, streams and drops by itself.
+- Presets: sections (HUD, Sun, Sky, each Look section, Other settings); a "hud_hide" line holds the HUD's hidden parts; load_preset(name, only).

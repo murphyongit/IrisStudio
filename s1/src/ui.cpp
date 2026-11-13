@@ -1566,7 +1566,7 @@ namespace
 						models_randomize(players.entities);
 					}
 
-					ImGui::SetItemTooltip("A random set for every player in the match. The game has room for about 17 parts nobody was wearing:\nonce that is used, players get sets made of parts that are already loaded. Click again for another mix.");
+					ImGui::SetItemTooltip("A random set for every player in the match. The game keeps 18 of each kind of gear (shirts, hats, ...) in memory at most:\nonce a kind is full, players get sets made of parts that are already loaded. Gear nobody wears any more is let go of\na few seconds after a change. Click again for another mix.");
 					ImGui::BeginDisabled(entity == FIRST_PERSON);
 					bool loading = models_loading_allowed();
 					if (ImGui::Checkbox("Load a set's missing parts from the game's files", &loading))
@@ -1574,7 +1574,7 @@ namespace
 						models_allow_loading(loading);
 					}
 
-					ImGui::SetItemTooltip("Off: a set's parts are put on as far as this match has them in memory.\nOn: the rest are added to the list of gear the game itself keeps loaded for the match; the recording goes back twice while it loads.");
+					ImGui::SetItemTooltip("Off: a set's parts are put on as far as this match has them in memory.\nOn: the rest are added to the list of gear the game itself keeps loaded for the match, and taken off it again when nobody wears them.");
 					char gear_status[200];
 					models_status(gear_status);
 					if (gear_status[0])

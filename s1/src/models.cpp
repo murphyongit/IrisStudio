@@ -19,6 +19,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iterator>
 #include <map>
 #include <mutex>
 #include <random>
@@ -48,9 +49,8 @@ namespace
 
 	// ---- the game's own gear: its tables say which model and which skin (a material in place of the
 	// model's own) each item of gear is, and which items make a set; a model nobody in the match wears
-	// is not loaded, and is asked for from the game's on-demand files (CL_LoadTransientByXModel,
-	// 0x140026A20: the model's name).
-	constexpr std::uintptr_t CL_LOAD_TRANSIENT_BY_XMODEL = 0x140026A20;
+	// is not loaded, and is asked for from the game's on-demand files by way of the game's own lists (see
+	// "the game's on-demand files" below).
 	constexpr int ASSET_MATERIAL = 8, MAX_MATERIALS = 65536;
 	struct ModelRow
 	{
@@ -116,16 +116,14 @@ namespace
 	ULONGLONG g_materials_at = 0;
 	std::vector<PendingSet> g_pending;
 	char g_status[200] = "";
-	// Asking the game for a model it has not loaded makes room for it by letting go of another, and that
-	// can be one a player in the match is drawn with: 0.44 crashed that way (a bone looked up in a model
-	// that was no longer there). So it is only done when asked for; without it a set's parts are put on
-	// as far as the match has them loaded.
+	// Whether a set's parts that are not in memory are asked for from the game's files; without it a set's
+	// parts are put on as far as the match has them loaded. (0.44's crash, a bone looked up in a model that
+	// was no longer there, came of calling what unloads a model in the belief that it loaded one.)
 	bool g_allow_loading = true;
 	ULONGLONG g_extra_dirty = 0;  // when the editor's choices last changed
 	ULONGLONG g_relist_at = 0;    // when what the game has in memory is to be read afresh (after gear is let go of)
-	// the gear ever asked for on top of a match's own. The game does not let go of it when it is taken off
-	// its lists (0.56 took 7 off; the count of loaded models never fell, and the next few asked for ran
-	// the game out of memory): what counts against the room there is, is what of this is in memory now.
+	// the gear asked for on top of a match's own and still held: what no player wears any more is taken off
+	// the lists and let go of (release_unworn)
 	std::set<std::string> g_asked_models;
 
 	// The proper way to have gear loaded: the match's server tells the client which gear models to keep
@@ -136,7 +134,7 @@ namespace
 	// needs. A model's number within its kind is found by asking the game for each number's name
 	// (0x14000C100, with the kind from 0x1403CC830).
 	constexpr std::uintptr_t CL_STREAM_SYNC = 0x140022290, BG_CUSTOMIZATION_KIND = 0x1403CC830, BG_CUSTOMIZATION_MODEL_NAME = 0x14000C100;
-	constexpr int SYNC_KINDS = 10;
+	constexpr int SYNC_KINDS = 10, KIND_MOST = 18;  // (a list of a kind holds 18 numbers, as the kind's pool has 18 places)
 	constexpr size_t SYNC_SIZE = 0x4A0;
 	constexpr int SYNC_LISTS = static_cast<int>(SYNC_SIZE / 16);
 	constexpr std::uintptr_t COM_GET_CLIENT_DOBJ = 0x1403D2BA0, COM_SAFE_CLIENT_DOBJ_FREE = 0x1403D2DF0;
@@ -551,7 +549,7 @@ namespace
 							there = there || (value & 0xFFFFFF) == extra.second;
 						}
 
-						if (!there)
+						if (!there && numbers[kind].size() < static_cast<size_t>(KIND_MOST))
 						{
 							numbers[kind].push_back(extra.second);
 							added = true;
@@ -590,14 +588,225 @@ namespace
 		}
 	}
 
+	// ---- the game's on-demand files (0.61: read right at last).
+	// A gear model's file is held by a count: 0x1400259A0 (the model's name) adds one and has the file
+	// loaded; 0x140026A20 takes one off, and at none the file is unloaded a couple of frames later and its
+	// place handed back. (To 0.60 the two were taken for each other: 0.59's "letting go" added to the
+	// counts, and 0.44's "loading" took models away from under the players.) A name's files: 0x140025470
+	// (name, 7, places out) gives places in the table at 0x140BDA050 (12 bytes each: the file's number at
+	// +6, the count at +8; 0x1400268D0 takes one off a place); a file is 0x30 bytes at 0x140BB8F10 (its
+	// pool at +8, its state at +0x2C: 0 not loaded, 1 to 3 on its way in, 4 loaded, 6 and 5 on its way out).
+	// The game's handling of the lists (0x140022290) does all of this itself when it is told the lists
+	// are CHANGED (its last argument not 0): what is no longer on a list is counted off and the models made
+	// with it are let go of (0x1401EECE0), what is new is loaded. Told the lists BEGIN (0, as the server's
+	// first ones come), it forgets what it held without counting any of it off and counts everything on:
+	// that is what the editor's own handling of the lists did to 0.60, so nothing ever left memory.
+	// The room: each kind of gear has a pool of its own (0x78 bytes each at 0x140BB79D0, 13 of them, the
+	// name first: mp_char_shirt and so on) with as many places as a match has players at most (18, and the
+	// game's own lists hold 18 of a kind): a file takes a free place when it is loaded (the free ones are a
+	// chain from the word at +0x68 of the pool through the word at +0xA of each 16-byte place at
+	// 0x140BB7FF0) and nothing checks that one is left: that was the "out of memory". So what fits is
+	// counted here, kind by kind, from the game's own books.
+	constexpr std::uintptr_t TR_FIND = 0x140025470, TR_UNLOAD_ONE = 0x1400268D0, TR_ASSETS = 0x140BDA050, TR_FILES = 0x140BB8F10;
+	constexpr std::uintptr_t TR_POOLS = 0x140BB79D0, TR_PLACES = 0x140BB7FF0, TR_PLACE_COUNT = 0x140BB7FEC, CG_MODEL_UNLOADED = 0x1401EECE0;
+	constexpr std::uintptr_t STREAM_STORED = 0x140BB1C10, STREAM_ACTIVE = STREAM_STORED + 0x5DB0;
+	constexpr int TR_POOL_COUNT = 13, TR_FILE_COUNT = 2700;
+	void list_loaded();
+	struct TrFile
+	{
+		std::uintptr_t at;
+		int pool, state, count;
+	};
+
+	// A name's files, as the game's books have them now.
+	int tr_files(const char* name, TrFile* out, const int most)
+	{
+		__try
+		{
+			std::uint16_t places[256] = {};
+			const int count = reinterpret_cast<int (*)(const char*, int, std::uint16_t*)>(TR_FIND)(name, 7, places);
+			int found = 0;
+			for (int i = 0; i < count && i < 256 && found < most; ++i)
+			{
+				const auto* asset = reinterpret_cast<const unsigned char*>(TR_ASSETS + static_cast<std::uintptr_t>(places[i]) * 12);
+				const unsigned number = *reinterpret_cast<const std::uint16_t*>(asset + 6);
+				if (number >= static_cast<unsigned>(TR_FILE_COUNT))
+				{
+					continue;
+				}
+
+				const auto* file = reinterpret_cast<const unsigned char*>(TR_FILES + static_cast<std::uintptr_t>(number) * 0x30);
+				out[found].at = reinterpret_cast<std::uintptr_t>(file);
+				out[found].pool = file[8];
+				out[found].state = file[0x2C];
+				out[found].count = file[0x2D];
+				++found;
+			}
+
+			return found;
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			return 0;
+		}
+	}
+
+	// (on the game's thread) Everything the game counts on a name taken off, and the models made with it
+	// let go of the way the game does: how many counts were taken off (-1: a fault).
+	int tr_let_go(const char* name)
+	{
+		__try
+		{
+			std::uint16_t places[256] = {};
+			const int count = reinterpret_cast<int (*)(const char*, int, std::uint16_t*)>(TR_FIND)(name, 7, places);
+			int taken = 0;
+			for (int i = 0; i < count && i < 256; ++i)
+			{
+				const auto* asset = reinterpret_cast<const unsigned char*>(TR_ASSETS + static_cast<std::uintptr_t>(places[i]) * 12);
+				for (int guard = 0; asset[8] != 0 && guard < 255; ++guard)
+				{
+					reinterpret_cast<int (*)(std::uint16_t)>(TR_UNLOAD_ONE)(places[i]);
+					++taken;
+				}
+			}
+
+			// (as the game does when a count comes to none: the model is still in memory for a couple of frames)
+			if (taken > 0)
+			{
+				reinterpret_cast<void (*)(const char*, int)>(CG_MODEL_UNLOADED)(name, 0);
+			}
+
+			return taken;
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			return -1;
+		}
+	}
+
+	struct Room
+	{
+		int left[TR_POOL_COUNT];  // the free places of each pool, less the files on their way into it
+		char names[TR_POOL_COUNT][24];
+	};
+
+	bool read_room_raw(Room* room)
+	{
+		__try
+		{
+			int coming[TR_POOL_COUNT] = {};
+			for (int i = 0; i < TR_FILE_COUNT; ++i)
+			{
+				const auto* file = reinterpret_cast<const unsigned char*>(TR_FILES + static_cast<std::uintptr_t>(i) * 0x30);
+				if (file[0x2C] >= 1 && file[0x2C] <= 3 && file[8] < TR_POOL_COUNT)
+				{
+					++coming[file[8]];
+				}
+			}
+
+			const unsigned places = *reinterpret_cast<const std::uint32_t*>(TR_PLACE_COUNT);
+			for (int pool = 0; pool < TR_POOL_COUNT; ++pool)
+			{
+				const auto* at = reinterpret_cast<const unsigned char*>(TR_POOLS + static_cast<std::uintptr_t>(pool) * 0x78);
+				const char* name = reinterpret_cast<const char*>(at);
+				const char* shown = strncmp(name, "mp_char_", 8) == 0 ? name + 8 : name;
+				size_t length = 0;
+				for (; length < 23 && shown[length]; ++length)
+				{
+					room->names[pool][length] = shown[length];
+				}
+
+				room->names[pool][length] = 0;
+				if (!name[0] || *reinterpret_cast<const std::uint64_t*>(at + 0x70))
+				{
+					// (no pool here, or one whose files each have a place of their own)
+					room->left[pool] = 1000000;
+					continue;
+				}
+
+				int free_places = 0;
+				for (unsigned next = *reinterpret_cast<const std::uint16_t*>(at + 0x68); next != 0xFFFF && next < places && free_places < 512;
+				     next = *reinterpret_cast<const std::uint16_t*>(TR_PLACES + static_cast<std::uintptr_t>(next) * 16 + 0xA))
+				{
+					++free_places;
+				}
+
+				room->left[pool] = free_places - coming[pool];
+			}
+
+			return true;
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			return false;
+		}
+	}
+
+	Room read_room()
+	{
+		Room room = {};
+		if (!read_room_raw(&room))
+		{
+			// (the books could not be read: nothing more is asked for)
+			for (int& left : room.left)
+			{
+				left = 0;
+			}
+		}
+
+		return room;
+	}
+
+	std::string room_text(const Room& room)
+	{
+		std::string text;
+		for (int pool = 0; pool < TR_POOL_COUNT; ++pool)
+		{
+			if (room.names[pool][0] && room.left[pool] < 1000000)
+			{
+				text += " " + std::string(room.names[pool]) + " " + std::to_string(room.left[pool]);
+			}
+		}
+
+		return text;
+	}
+
+	bool stream_active()
+	{
+		__try
+		{
+			return *reinterpret_cast<const int*>(STREAM_ACTIVE) != 0;
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			return false;
+		}
+	}
+
+	// (the game's own kept lists of weapons and of first-person models, put into the lists handed to it:
+	// the same before and after, so nothing of theirs is loaded or let go of)
+	bool copy_stored(unsigned char* lists, const int list)
+	{
+		__try
+		{
+			memcpy(lists + list * 16, reinterpret_cast<const void*>(STREAM_STORED + static_cast<std::uintptr_t>(list) * 16), 16);
+			return true;
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			return false;
+		}
+	}
+
 	// (on the game's thread) The game's handling of its lists run again, with the editor's asked-for gear
-	// in them: false if the game has not been given any lists in this session.
+	// in them and what the editor lets go of out of them, as a CHANGE of the lists: false if the game has
+	// not been given any lists in this session.
 	bool replay_sync()
 	{
 		static unsigned char buffer[SYNC_SIZE];
 		static std::vector<std::uint32_t> merged[SYNC_LISTS];
 		int flag = 0;
-		size_t added = 0;
+		size_t added = 0, refused = 0;
 		{
 			std::lock_guard<std::mutex> lock(g_lock);
 			if (!g_saved_sync.have)
@@ -606,7 +815,6 @@ namespace
 			}
 
 			memcpy(buffer, g_saved_sync.bytes, SYNC_SIZE);
-			flag = g_saved_sync.flag;
 			for (int i = 0; i < SYNC_LISTS; ++i)
 			{
 				if (!g_saved_sync.owned[i])
@@ -623,7 +831,12 @@ namespace
 						there = there || (value & 0xFFFFFF) == extra.second;
 					}
 
-					if (!there)
+					if (!there && i < SYNC_KINDS && merged[i].size() >= static_cast<size_t>(KIND_MOST))
+					{
+						// (the game's own list of a kind holds 18, as its pool does)
+						++refused;
+					}
+					else if (!there)
 					{
 						merged[i].push_back(extra.second);
 						++added;
@@ -635,38 +848,52 @@ namespace
 			}
 		}
 
+		// (a change if the game holds lists now; if it holds none it is given them as the server gives them)
+		if (stream_active() && copy_stored(buffer, 10) && copy_stored(buffer, 12))
+		{
+			flag = 1;
+		}
+		else
+		{
+			std::lock_guard<std::mutex> lock(g_lock);
+			flag = g_saved_sync.flag;
+		}
+
 		const bool done = call_sync(buffer, flag);
-		note(done ? "models: the game's lists handled again with %zu more gear models in them" : "models: a fault handling the game's lists again (%zu more)", added);
+		note(done ? "models: the game's lists handled again with %zu more gear models in them (as %s; %zu had no place on a list)"
+		          : "models: a fault handling the game's lists again (%zu more; as %s; %zu refused)",
+		     added, flag ? "a change" : "new lists", refused);
 		return done;
 	}
 
-	// ---- letting go of gear. In a match the game's handling of its lists only ever loads (0.56 took 7
-	// models off the lists and nothing left memory). What it does for a model dropped from a list
-	// elsewhere (0x140023510) is: mark the client's lists changed (the word at +0x5DB4 of the client's
-	// block at 0x140BB1C10) and call 0x1400259A0 with the model's name, which lets go of the model's
-	// on-demand files. The editor does the same for gear it asked for that no player wears any more,
-	// after the players have been made again without it.
-	constexpr std::uintptr_t CL_TRANSIENT_RELEASE = 0x1400259A0, CL_STREAM_CHANGED = 0x140BB1C10 + 0x5DB4;
-	void list_loaded();
+	// ---- letting go of gear: what the editor asked for and no player wears any more is taken off the
+	// lists (the game counts it off and unloads it), and then whatever the game still counts on it (it is
+	// counted on again each time the recording is gone back in) is taken off as well.
 	struct Release
 	{
-		std::vector<std::string> names;
+		std::vector<std::pair<std::string, std::string>> names;  // the model, and the name the game loads it by
 		ULONGLONG due = 0;
 	};
 	Release g_release;
+	std::map<std::string, ULONGLONG> g_let_go;  // models let go of, and when: not listed as loaded while they go
 
-	bool release_model(const char* name)
+	// (with the lock held) Whether the lists the match's server gave hold a gear model (its kind and number).
+	bool server_lists(const std::pair<int, unsigned>& number)
 	{
-		__try
-		{
-			*reinterpret_cast<int*>(CL_STREAM_CHANGED) = 1;
-			reinterpret_cast<void (*)(const char*)>(CL_TRANSIENT_RELEASE)(name);
-			return true;
-		}
-		__except (EXCEPTION_EXECUTE_HANDLER)
+		if (number.first < 0 || number.first >= SYNC_KINDS)
 		{
 			return false;
 		}
+
+		for (const std::uint32_t value : g_saved_sync.numbers[number.first])
+		{
+			if ((value & 0xFFFFFF) == number.second)
+			{
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	bool has_dobj(const int handle)
@@ -682,7 +909,7 @@ namespace
 	}
 
 	// (on the game's thread, the lock not held) Two steps, a little apart: the gear no longer worn is taken
-	// off the lists (so the game does not load it again), then let go of.
+	// off the lists, then everything still counted on it is taken off.
 	void release_unworn(const TheaterState& state)
 	{
 		if (!state.playing)
@@ -691,7 +918,7 @@ namespace
 		}
 
 		const ULONGLONG now = GetTickCount64();
-		std::vector<std::string> names;
+		std::vector<std::pair<std::string, std::string>> names;
 		{
 			std::lock_guard<std::mutex> lock(g_lock);
 			if (g_release.due && now >= g_release.due)
@@ -726,15 +953,24 @@ namespace
 					worn.insert(entity.second.begin(), entity.second.end());
 				}
 
-				list_loaded();
-				for (const std::string& model : g_asked_models)
+				for (auto asked = g_asked_models.begin(); asked != g_asked_models.end();)
 				{
-					const auto number = g_numbers.find(model);
-					if (!worn.count(model) && g_loaded.count(model) && number != g_numbers.end())
+					const auto number = g_numbers.find(*asked);
+					const char* named = number != g_numbers.end() ? number_name(number->second.first, number->second.second) : nullptr;
+					if (worn.count(*asked) || !named)
 					{
-						g_release.names.push_back(model);
-						g_extra.erase(std::remove(g_extra.begin(), g_extra.end(), number->second), g_extra.end());
+						++asked;
+						continue;
 					}
+
+					// (what the match's own lists have come to hold as well is the game's to keep)
+					if (!server_lists(number->second))
+					{
+						g_release.names.emplace_back(*asked, named);
+					}
+
+					g_extra.erase(std::remove(g_extra.begin(), g_extra.end(), number->second), g_extra.end());
+					asked = g_asked_models.erase(asked);
 				}
 
 				if (!g_release.names.empty())
@@ -750,29 +986,42 @@ namespace
 			return;
 		}
 
+		// (anything asked for again in the meantime stays)
+		std::string told;
+		int counts = 0, faults = 0;
 		size_t done = 0;
-		for (const std::string& name : names)
+		for (const auto& name : names)
 		{
-			done += release_model(name.c_str()) ? 1 : 0;
+			{
+				std::lock_guard<std::mutex> lock(g_lock);
+				const auto number = g_numbers.find(name.first);
+				if (g_asked_models.count(name.first) || number == g_numbers.end() || server_lists(number->second) ||
+				    std::find(g_extra.begin(), g_extra.end(), number->second) != g_extra.end())
+				{
+					continue;
+				}
+			}
+
+			const int taken = tr_let_go(name.second.c_str());
+			faults += taken < 0 ? 1 : 0;
+			counts += taken > 0 ? taken : 0;
+			++done;
+			if (told.size() < 300)
+			{
+				told += " " + name.first;
+			}
+
+			std::lock_guard<std::mutex> lock(g_lock);
+			g_let_go[name.first] = now;
+			g_loaded.erase(name.first);
 		}
 
+		const Room room = read_room();
 		std::lock_guard<std::mutex> lock(g_lock);
 		g_listed = false;
 		g_relist_at = now + 2500;
-		note("models: %zu of %zu gear models no longer worn let go of (the first: %s)", done, names.size(), names[0].c_str());
-	}
-
-	bool ask_for(const char* model)
-	{
-		__try
-		{
-			reinterpret_cast<int (*)(const char*)>(CL_LOAD_TRANSIENT_BY_XMODEL)(model);
-			return true;
-		}
-		__except (EXCEPTION_EXECUTE_HANDLER)
-		{
-			return false;
-		}
+		note("models: %zu gear models no longer worn let go of (%d counts the game still had on them taken off, %d faults):%s", done, counts, faults, told.c_str());
+		note("models: free places by kind now:%s", room_text(room).c_str());
 	}
 
 	// (with the lock held)
@@ -973,12 +1222,25 @@ namespace
 		g_loaded.clear();
 		g_names.clear();
 		const int count = enumerate(found);
+		const ULONGLONG now = GetTickCount64();
 		for (int i = 0; i < count; ++i)
 		{
 			if (const char* name = name_of(found[i]))
 			{
+				// (a model let go of is in memory a little longer: it is not one to draw with)
+				const auto gone = g_let_go.find(name);
+				if (gone != g_let_go.end() && now - gone->second < 3000)
+				{
+					continue;
+				}
+
 				g_loaded[name] = found[i];
 			}
+		}
+
+		for (auto gone = g_let_go.begin(); gone != g_let_go.end();)
+		{
+			gone = now - gone->second >= 3000 ? g_let_go.erase(gone) : std::next(gone);
 		}
 
 		int outfit = 0, weapons = 0;
@@ -1921,64 +2183,65 @@ bool build_set(const int entity, const char* name, PendingSet& pending, const bo
 	return !pending.parts.empty();
 }
 
-// The most gear the game is asked to hold on top of what the match's players wear: with 17 more than a
-// match's own it went on; asked for 21, it ran out of memory.
-constexpr size_t EXTRA_MOST = 17;
-
-// (with the lock held) How many of a set's parts would have to be loaded (what is in memory, or is about
-// to be, costs nothing); not loadable if a part has no place in the game's table.
-size_t set_cost(const PendingSet& pending, const std::set<std::string>& planned, bool* loadable)
+// (with the lock held) What loading a model would take, added to `need` (a place in a pool for each of its
+// files that is not in memory or on its way; `files` are those counted already): false if the game has
+// no file to load it from.
+bool add_need(const std::string& model, std::set<std::uintptr_t>& files, int* need)
 {
-	size_t cost = 0;
-	*loadable = true;
+	const auto number = g_numbers.find(model);
+	const char* named = number != g_numbers.end() ? number_name(number->second.first, number->second.second) : nullptr;
+	TrFile found[16];
+	const int count = named ? tr_files(named, found, 16) : 0;
+	for (int i = 0; i < count; ++i)
+	{
+		// (on its way in, or loaded: it has, or is counted as having, its place)
+		const bool placed = found[i].state >= 1 && found[i].state <= 4;
+		if (!placed && found[i].pool < TR_POOL_COUNT && files.insert(found[i].at).second)
+		{
+			++need[found[i].pool];
+		}
+	}
+
+	return count > 0;
+}
+
+// (with the lock held) The same for a set's parts that are not in memory: false if a part cannot be loaded.
+bool set_need(const PendingSet& pending, std::set<std::uintptr_t>& files, int* need)
+{
+	bool loadable = true;
 	for (const Wanted& part : pending.parts)
 	{
-		if (part.model.empty() || g_loaded.count(part.model) || planned.count(part.model))
+		if (!part.model.empty() && !g_loaded.count(part.model))
 		{
-			continue;
-		}
-
-		if (g_numbers.count(part.model))
-		{
-			++cost;
-		}
-		else
-		{
-			*loadable = false;
+			loadable = add_need(part.model, files, need) && loadable;
 		}
 	}
 
-	return cost;
+	return loadable;
 }
 
-// (with the lock held) How much of the room is taken: the gear asked for before that is in memory now.
-size_t extra_held()
+// (with the lock held) What the sets being waited for will take.
+void planned_need(std::set<std::uintptr_t>& files, int* need)
 {
-	size_t held = 0;
-	for (const std::string& model : g_asked_models)
-	{
-		held += g_loaded.count(model);
-	}
-
-	return held;
-}
-
-// (with the lock held) The parts the sets being waited for will have loaded.
-std::set<std::string> planned_parts()
-{
-	std::set<std::string> planned;
 	for (const PendingSet& pending : g_pending)
 	{
-		for (const Wanted& part : pending.parts)
+		set_need(pending, files, need);
+	}
+}
+
+// The kinds of gear there is no free place left for ("": it fits).
+std::string kinds_full(const Room& room, const int* need, const int* before)
+{
+	std::string full;
+	for (int pool = 0; pool < TR_POOL_COUNT; ++pool)
+	{
+		if (need[pool] > before[pool] && need[pool] > room.left[pool])
 		{
-			if (!part.model.empty() && !g_loaded.count(part.model))
-			{
-				planned.insert(part.model);
-			}
+			full += (full.empty() ? "" : ", ") + std::string(room.names[pool]);
 		}
 	}
 
-	return planned;
+	return full;
 }
 }
 
@@ -1998,16 +2261,20 @@ int models_apply_set(const int entity, const char* name)
 	}
 
 	read_numbers();
-	const std::set<std::string> planned = planned_parts();
-	bool loadable = true;
-	const size_t cost = set_cost(pending, planned, &loadable);
 	list_loaded();
-	const size_t held = extra_held();
-	if (cost && held + planned.size() + cost > EXTRA_MOST)
+	std::set<std::uintptr_t> files;
+	int need[TR_POOL_COUNT] = {}, before[TR_POOL_COUNT] = {};
+	planned_need(files, need);
+	memcpy(before, need, sizeof(before));
+	set_need(pending, files, need);
+	const Room room = read_room();
+	const std::string full = kinds_full(room, need, before);
+	if (!full.empty() && g_allow_loading)
 	{
+		note("models: no room for set %s (%s); free places by kind:%s", name, full.c_str(), room_text(room).c_str());
 		snprintf(g_status, sizeof(g_status),
-		         "No room left in the game's memory for %s: it needs %zu parts loaded and %zu of %zu are used. Sets made of parts already loaded still work.", name,
-		         cost, held + planned.size(), EXTRA_MOST);
+		         "No room for %s yet: the game holds %d of each kind of gear at most, and no place is free for its %s. Unworn gear is let go of a few seconds after a change: try again then.", name,
+		         KIND_MOST, full.c_str());
 		return 0;
 	}
 
@@ -2031,8 +2298,10 @@ int models_randomize(const std::uint64_t entities)
 	read_numbers();
 	static std::mt19937 random(static_cast<unsigned>(GetTickCount64()));
 	list_loaded();
-	std::set<std::string> planned = planned_parts();
-	size_t used = extra_held() + planned.size();
+	std::set<std::uintptr_t> files;
+	int need[TR_POOL_COUNT] = {};
+	planned_need(files, need);
+	const Room room = read_room();
 	std::vector<int> order;
 	for (int entity = 0; entity < 64; ++entity)
 	{
@@ -2043,11 +2312,11 @@ int models_randomize(const std::uint64_t entities)
 	}
 
 	std::shuffle(order.begin(), order.end(), random);
-	int queued = 0;
+	int queued = 0, fresh = 0;
 	for (const int entity : order)
 	{
 		std::vector<PendingSet> can;
-		std::vector<size_t> costs;
+		std::vector<int> costs;
 		for (const SetRow& set : g_set_rows)
 		{
 			PendingSet pending;
@@ -2056,9 +2325,18 @@ int models_randomize(const std::uint64_t entities)
 				continue;
 			}
 
-			bool loadable = true;
-			const size_t cost = set_cost(pending, planned, &loadable);
-			if (loadable && (cost == 0 || g_allow_loading) && used + cost <= EXTRA_MOST)
+			// (what this set would take on top of those chosen so far)
+			std::set<std::uintptr_t> with = files;
+			int then[TR_POOL_COUNT];
+			memcpy(then, need, sizeof(then));
+			const bool loadable = set_need(pending, with, then);
+			int cost = 0;
+			for (int pool = 0; pool < TR_POOL_COUNT; ++pool)
+			{
+				cost += then[pool] - need[pool];
+			}
+
+			if (loadable && (cost == 0 || g_allow_loading) && kinds_full(room, then, need).empty())
 			{
 				can.push_back(std::move(pending));
 				costs.push_back(cost);
@@ -2071,23 +2349,16 @@ int models_randomize(const std::uint64_t entities)
 		}
 
 		const size_t pick = random() % can.size();
-		used += costs[pick];
-		for (const Wanted& part : can[pick].parts)
-		{
-			if (!part.model.empty() && !g_loaded.count(part.model))
-			{
-				planned.insert(part.model);
-			}
-		}
-
-		note("models: at random, %s for entity %d (%zu parts to load; %zu of %zu in all)", can[pick].name.c_str(), entity, costs[pick], used, EXTRA_MOST);
+		set_need(can[pick], files, need);
+		fresh += costs[pick];
+		note("models: at random, %s for entity %d (%d parts to load)", can[pick].name.c_str(), entity, costs[pick]);
 		can[pick].since = GetTickCount64();
 		g_pending.push_back(std::move(can[pick]));
 		++queued;
 	}
 
-	snprintf(g_status, sizeof(g_status), queued ? "%d random outfits on their way (%zu of %zu extra parts used)..." : "No set fits these players from what is loaded.", queued, used,
-	         EXTRA_MOST);
+	note("models: %d random outfits, %d parts to load; free places by kind before:%s", queued, fresh, room_text(room).c_str());
+	snprintf(g_status, sizeof(g_status), queued ? "%d random outfits on their way (%d parts to load)..." : "No set fits these players from what is loaded.", queued, fresh);
 	return queued;
 }
 
@@ -2134,19 +2405,17 @@ void models_game_frame(const TheaterState& state)
 	{
 		g_relist_at = 0;
 		list_loaded();
-		size_t held = 0;
-		for (const std::string& model : g_asked_models)
-		{
-			held += g_loaded.count(model);
-		}
-
-		note("models: after letting go, %zu of the gear asked for is still in memory", held);
+		note("models: after letting go, free places by kind:%s", room_text(read_room()).c_str());
 	}
 
 	if (!state.playing && !state.starting)
 	{
+		// (the match is left: what was asked for goes with its map)
 		g_pending.clear();
 		g_extra.clear();
+		g_asked_models.clear();
+		g_release.names.clear();
+		g_release.due = 0;
 		return;
 	}
 

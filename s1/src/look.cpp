@@ -1029,7 +1029,8 @@ namespace
 	}
 
 	// ---- presets: what the Look tab was set to, kept by name in theater\presets and put back on at a click.
-	// A preset holds every setting the editor has changed and the sun's light where that was set.
+	// A preset holds every setting the editor has changed, the HUD's hidden parts, and the sun's light and
+	// the sky where those were set.
 	std::string presets_folder()
 	{
 		const std::string folder = std::string(theater_folder()) + "\\presets";
@@ -1080,6 +1081,14 @@ namespace
 			}
 		}
 
+		// (the HUD's parts that are hidden: the line is there with none, so that bringing the HUD in shows them all)
+		std::string hidden;
+		for (const std::string& part : g_hud_hidden)
+		{
+			hidden += " " + part;
+		}
+
+		fprintf(file, "hud_hide%s\n", hidden.c_str());
 		const SunState sun = sun_state();
 		if (sun.color_set)
 		{
@@ -1110,7 +1119,110 @@ namespace
 		return true;
 	}
 
-	bool load_preset(const std::string& name)
+	// ---- what a preset holds, by the Look tab's sections: a preset can be brought in whole or a section
+	// at a time (the HUD's without the sun's, and so on). A section brought in is made as the preset has
+	// it, what the preset leaves alone going back to the game's own; a section not brought in is not
+	// touched.
+	const char* const GROUP_HUD = "HUD";
+	const char* const GROUP_SUN = "Sun";
+	const char* const GROUP_SKY = "Sky";
+	const char* const GROUP_OTHER = "Other settings";
+
+	std::vector<std::string> all_groups()
+	{
+		std::vector<std::string> groups = {GROUP_HUD};
+		for (const Section& section : SECTIONS)
+		{
+			groups.push_back(section.label);
+			if (strcmp(section.label, GROUP_SUN) == 0)
+			{
+				groups.push_back(GROUP_SKY);
+			}
+		}
+
+		groups.push_back(GROUP_OTHER);
+		return groups;
+	}
+
+	std::string group_of_setting(const std::string& name)
+	{
+		for (const Entry& entry : HUD_SETTINGS)
+		{
+			if (name == entry.name)
+			{
+				return GROUP_HUD;
+			}
+		}
+
+		for (const Section& section : SECTIONS)
+		{
+			for (const Entry& entry : section.entries)
+			{
+				if (name == entry.name)
+				{
+					return section.label;
+				}
+			}
+		}
+
+		return GROUP_OTHER;
+	}
+
+	// (a preset's line: the section it belongs to, "" for a line that is not known)
+	std::string group_of_line(const char* line)
+	{
+		if (strncmp(line, "dvar ", 5) == 0)
+		{
+			const char* end = strchr(line + 5, ' ');
+			return end ? group_of_setting(std::string(line + 5, end)) : std::string();
+		}
+
+		if (strncmp(line, "hud_hide", 8) == 0)
+		{
+			return GROUP_HUD;
+		}
+
+		if (strncmp(line, "sun_", 4) == 0)
+		{
+			return GROUP_SUN;
+		}
+
+		return strncmp(line, "sky", 3) == 0 ? GROUP_SKY : std::string();
+	}
+
+	// The sections a preset has something for.
+	std::set<std::string> preset_groups(const std::string& name)
+	{
+		std::set<std::string> groups;
+		FILE* file = nullptr;
+		if (fopen_s(&file, (presets_folder() + "\\" + name + ".txt").c_str(), "r") != 0 || !file)
+		{
+			return groups;
+		}
+
+		char line[2048];
+		while (fgets(line, sizeof(line), file))
+		{
+			line[strcspn(line, "\r\n")] = 0;
+			// (a HUD line with no parts named changes nothing by itself)
+			if (strcmp(line, "hud_hide") == 0)
+			{
+				continue;
+			}
+
+			const std::string group = group_of_line(line);
+			if (!group.empty())
+			{
+				groups.insert(group);
+			}
+		}
+
+		fclose(file);
+		return groups;
+	}
+
+	// only: the sections to bring in (null: all of them).
+	bool load_preset(const std::string& name, const std::set<std::string>* only)
 	{
 		FILE* file = nullptr;
 		if (fopen_s(&file, (presets_folder() + "\\" + name + ".txt").c_str(), "r") != 0 || !file)
@@ -1118,13 +1230,28 @@ namespace
 			return false;
 		}
 
+		const auto wanted = [only](const std::string& group) { return !only || only->count(group) != 0; };
 		std::set<std::string> in_preset;
-		sun_reset();
-		sky_reset();
-		char line[512];
+		if (wanted(GROUP_SUN))
+		{
+			sun_reset();
+		}
+
+		if (wanted(GROUP_SKY))
+		{
+			sky_reset();
+		}
+
+		char line[2048];
 		while (fgets(line, sizeof(line), file))
 		{
 			line[strcspn(line, "\r\n")] = 0;
+			const std::string group = group_of_line(line);
+			if (group.empty() || !wanted(group))
+			{
+				continue;
+			}
+
 			float a = 0.0f, b = 0.0f, c = 0.0f;
 			if (strncmp(line, "dvar ", 5) == 0)
 			{
@@ -1138,6 +1265,18 @@ namespace
 						set(dvar, std::string(value));
 					}
 				}
+			}
+			else if (strncmp(line, "hud_hide", 8) == 0)
+			{
+				// (presets from before 0.61 have no such line: the HUD's parts are left as they are)
+				g_hud_hidden.clear();
+				char* rest = nullptr;
+				for (char* part = strtok_s(line + 8, " ", &rest); part; part = strtok_s(nullptr, " ", &rest))
+				{
+					g_hud_hidden.insert(part);
+				}
+
+				send_hud_hidden();
 			}
 			else if (sscanf_s(line, "sun_color %f %f %f", &a, &b, &c) == 3)
 			{
@@ -1163,11 +1302,11 @@ namespace
 		}
 
 		fclose(file);
-		// what was changed before and is not in the preset goes back to the game's own
+		// what was changed before in a section brought in, and is not in the preset, goes back to the game's own
 		const auto originals = g_originals;
 		for (const auto& original : originals)
 		{
-			if (!in_preset.count(original.first))
+			if (!in_preset.count(original.first) && wanted(group_of_setting(original.first)))
 			{
 				restore(original.first);
 			}
@@ -1201,12 +1340,63 @@ namespace
 			ImGui::EndCombo();
 		}
 
+		// which of the preset's sections to bring in (all of them unless unticked)
+		static std::map<std::string, bool> bring;
+		static std::string listed_for;
+		static std::set<std::string> has;
+		static ULONGLONG listed_at = 0;
+		const std::vector<std::string> groups = all_groups();
+		if (!selected.empty() && (listed_for != selected || GetTickCount64() - listed_at > 2000))
+		{
+			listed_for = selected;
+			listed_at = GetTickCount64();
+			has = preset_groups(selected);
+		}
+
+		std::set<std::string> chosen;
+		for (const std::string& group : groups)
+		{
+			if (!bring.count(group))
+			{
+				bring[group] = true;
+			}
+
+			if (bring[group])
+			{
+				chosen.insert(group);
+			}
+		}
+
 		ImGui::SameLine();
-		ImGui::BeginDisabled(selected.empty());
+		ImGui::BeginDisabled(selected.empty() || chosen.empty());
 		if (ImGui::Button("Load"))
 		{
-			message = load_preset(selected) ? "Loaded " + selected + "." : "That preset could not be read.";
+			const bool whole = chosen.size() == groups.size();
+			std::string parts;
+			for (const std::string& group : groups)
+			{
+				if (chosen.count(group) && has.count(group))
+				{
+					parts += (parts.empty() ? "" : ", ") + group;
+				}
+			}
+
+			if (!load_preset(selected, whole ? nullptr : &chosen))
+			{
+				message = "That preset could not be read.";
+			}
+			else if (whole)
+			{
+				message = "Loaded " + selected + ".";
+			}
+			else
+			{
+				message = parts.empty() ? "Nothing in " + selected + " for what is ticked: those went back to the game's own." : "Loaded " + parts + " from " + selected + ".";
+			}
 		}
+
+		ImGui::EndDisabled();
+		ImGui::BeginDisabled(selected.empty());
 
 		ImGui::SameLine();
 		if (ImGui::Button("Delete"))
@@ -1217,6 +1407,66 @@ namespace
 		}
 
 		ImGui::EndDisabled();
+		if (!selected.empty())
+		{
+			ui_row_label("Bring in");
+			const float start = ImGui::GetCursorPosX();
+			const float right = start + ImGui::GetContentRegionAvail().x;
+			float x = start;
+			const auto place = [&](const float width) {
+				if (x > start && x + width <= right)
+				{
+					ImGui::SameLine(0.0f, style.ItemSpacing.x);
+				}
+				else if (x > start)
+				{
+					ImGui::SetCursorPosX(start);
+					x = start;
+				}
+
+				x += width + style.ItemSpacing.x;
+			};
+			for (const std::string& group : groups)
+			{
+				// (what the preset has nothing for is shown faint: ticked, it goes back to the game's own)
+				const bool there = has.count(group) != 0;
+				place(ImGui::GetFrameHeight() + style.ItemInnerSpacing.x + ImGui::CalcTextSize(group.c_str()).x);
+				if (!there)
+				{
+					ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+				}
+
+				ImGui::Checkbox(group.c_str(), &bring[group]);
+				if (!there)
+				{
+					ImGui::PopStyleColor();
+					if (ImGui::IsItemHovered())
+					{
+						ImGui::SetTooltip("This preset has nothing saved for %s. Ticked, %s goes back to how the game has it; unticked, it is left as it is now.", group.c_str(),
+						                  group.c_str());
+					}
+				}
+			}
+
+			place(ImGui::CalcTextSize("All").x + style.FramePadding.x * 2.0f);
+			if (ImGui::SmallButton("All"))
+			{
+				for (auto& one : bring)
+				{
+					one.second = true;
+				}
+			}
+
+			place(ImGui::CalcTextSize("None").x + style.FramePadding.x * 2.0f);
+			if (ImGui::SmallButton("None"))
+			{
+				for (auto& one : bring)
+				{
+					one.second = false;
+				}
+			}
+		}
+
 		ui_row_label("Save as");
 		ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - save_width - style.ItemSpacing.x);
 		ImGui::InputTextWithHint("##presetName", "a name", name, sizeof(name));
