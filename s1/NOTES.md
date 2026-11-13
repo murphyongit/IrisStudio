@@ -51,3 +51,4 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
 - 0.48 loadzone got as far as "MISSING FILE eng_s1iris_rain.ff": for an ordinary zone the game also queues patch_<name>, <lang>_patch_<name> and
   <lang>_<name> (0x140271B09..); only the patch_ ones are optional (0x1402701F0), as are names with _load/_path or starting techsets_.
   A zone whose own name starts with patch_ gets no extras. Fix used: zone\eng_s1iris_rain.ff = a copy of s1iris_rain.ff (written to the PC).
+  Correction: language zones are read from zone\english\ (eng_*.ff), not zone\; the copy goes there (a stray copy is also in zone\, harmless).
