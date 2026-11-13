@@ -134,6 +134,7 @@ namespace
 	constexpr int SYNC_KINDS = 10;
 	constexpr size_t SYNC_SIZE = 0x4A0;
 	constexpr int SYNC_LISTS = static_cast<int>(SYNC_SIZE / 16);
+	constexpr std::uintptr_t COM_GET_CLIENT_DOBJ = 0x1403D2BA0, COM_SAFE_CLIENT_DOBJ_FREE = 0x1403D2DF0;
 	constexpr std::uintptr_t CUSTOM_IN_USE = 0x140B5F0E8, CUSTOM_KINDS = 0x140B33B48, CUSTOM_ENTRIES = 0x140B33B90;
 
 	// the lists as the game last had them from the server, kept whole (their numbers copied): the game's
@@ -958,7 +959,6 @@ namespace
 	// editor's was ever drawn. The game's code calls the two together (0x1401A2BF0: the list, its length,
 	// the animation tree, the entity, the client, the entity again).
 	constexpr std::uintptr_t DOBJ_SET_OVERRIDES = 0x1404DE730, CG_MAKE_DOBJ = 0x1401A2BF0;
-	constexpr std::uintptr_t COM_GET_CLIENT_DOBJ = 0x1403D2BA0, COM_SAFE_CLIENT_DOBJ_FREE = 0x1403D2DF0;
 	constexpr std::uintptr_t XMODEL_MATERIAL_COUNT = 0x1404F8070, XMODEL_MATERIALS = 0x1404F8050;
 	void (*g_original_overrides)(void*, unsigned char*, int) = nullptr;
 	thread_local void* t_made = nullptr;
