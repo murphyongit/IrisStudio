@@ -52,3 +52,7 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
   <lang>_<name> (0x140271B09..); only the patch_ ones are optional (0x1402701F0), as are names with _load/_path or starting techsets_.
   A zone whose own name starts with patch_ gets no extras. Fix used: zone\eng_s1iris_rain.ff = a copy of s1iris_rain.ff (written to the PC).
   Correction: language zones are read from zone\english\ (eng_*.ff), not zone\; the copy goes there (a stray copy is also in zone\, harmless).
+- Next error: "Mixed compression types are not supported" (ZoneTool writes zlib, type 1 at header byte 13; stock is LZ4, type 4). Check at 0x140242DF0
+  (first kind kept in 0x141F9AF74, flag 0x141F9AF71; g_compressor 0x141E0B080). 0.49 does what s1-mod's fastfiles.cpp does: nop 0x140242DF7 (2 bytes),
+  hook DB_ReadStreamFile 0x14027AA70 to set g_compressor 4, nop 0x1402427A5 (unsigned files). LZ4 body framing, if ever needed: u64 total size,
+  u32 (block size 0x10000 : 24, type 4 : 8), then per block u32 packed size, u32 unpacked size, raw LZ4, padded to 4 (stock eng_ui.ff is one such block).

@@ -139,6 +139,7 @@ bool models_loading_allowed();
 void models_game_frame(const TheaterState& state);
 void models_frame(const TheaterState& state);
 void models_start();
+void effects_start();
 // effects.cpp: effects of the game's played in the scene.
 struct PlacedEffect
 {

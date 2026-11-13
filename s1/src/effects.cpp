@@ -6,6 +6,8 @@
 // for a landing's dust. Only what the map and the match have loaded can be played.
 #include "theater.hpp"
 
+#include <MinHook.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdarg>
@@ -35,6 +37,57 @@ namespace
 	constexpr std::uintptr_t SYS_IS_DATABASE_READY = 0x1403E1850;
 	bool g_extra_wanted = false, g_extra_loaded = false;
 	ULONGLONG g_extra_at = 0, g_extra_asked = 0;
+
+	// A file built by ZoneTool is packed with zlib, the game's own with LZ4, and the game takes one kind
+	// only in a session ("Mixed compression types are not supported", 0x140242DF0: the first file's kind is
+	// kept and every later one compared with it). s1-mod's fastfiles.cpp lifts that the same three ways:
+	// the comparison's jump taken out (0x140242DF7), the kind set back to LZ4 (4, at 0x141E0B080) whenever
+	// the game reads its streamed files (DB_ReadStreamFile 0x14027AA70), and unsigned files let through
+	// (0x1402427A5).
+	constexpr std::uintptr_t MIXED_JUMP = 0x140242DF7, UNSIGNED_JUMP = 0x1402427A5;
+	constexpr std::uintptr_t DB_READ_STREAM_FILE = 0x14027AA70, G_COMPRESSOR = 0x141E0B080;
+	int (*g_original_read_stream_file)(int, int) = nullptr;
+	bool g_mixed_allowed = false;
+
+	int hooked_read_stream_file(const int allow_abort, const int finish)
+	{
+		*reinterpret_cast<int*>(G_COMPRESSOR) = 4;
+		return g_original_read_stream_file(allow_abort, finish);
+	}
+
+	// A two-byte jump-if-not-equal (0x75) made into nothing; 1 done, 2 already so, 0 not what was expected.
+	int remove_jump(const std::uintptr_t address)
+	{
+		__try
+		{
+			auto* code = reinterpret_cast<std::uint8_t*>(address);
+			if (code[0] == 0x90 && code[1] == 0x90)
+			{
+				return 2;
+			}
+
+			if (code[0] != 0x75)
+			{
+				return 0;
+			}
+
+			DWORD old = 0;
+			if (!VirtualProtect(code, 2, PAGE_EXECUTE_READWRITE, &old))
+			{
+				return 0;
+			}
+
+			code[0] = 0x90;
+			code[1] = 0x90;
+			VirtualProtect(code, 2, old, &old);
+			FlushInstructionCache(GetCurrentProcess(), code, 2);
+			return 1;
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			return 0;
+		}
+	}
 
 	bool loader_idle()
 	{
@@ -189,6 +242,28 @@ namespace
 	}
 }
 
+// At the start: the game made to take files packed the other way (see above).
+void effects_start()
+{
+	const bool hooked = MH_CreateHook(reinterpret_cast<LPVOID>(DB_READ_STREAM_FILE), reinterpret_cast<LPVOID>(&hooked_read_stream_file),
+	                        reinterpret_cast<LPVOID*>(&g_original_read_stream_file)) == MH_OK &&
+	                    MH_EnableHook(reinterpret_cast<LPVOID>(DB_READ_STREAM_FILE)) == MH_OK;
+
+	// (without the hook the game's own streamed files would be read as the wrong kind: the rest is left)
+	int mixed = -1, unsigned_files = -1;
+	if (hooked)
+	{
+		mixed = remove_jump(MIXED_JUMP);
+		unsigned_files = remove_jump(UNSIGNED_JUMP);
+		g_mixed_allowed = mixed != 0;
+	}
+
+	char text[200];
+	snprintf(text, sizeof(text), "effects: files packed with zlib %s (streamed files hook %d, mixed kinds %d, unsigned %d)",
+	         g_mixed_allowed ? "can be loaded" : "can NOT be loaded", hooked ? 1 : 0, mixed, unsigned_files);
+	theater_log(text);
+}
+
 // The extra effects' file: 0 it is not there, 1 it is and is not loaded, 2 it is loaded (or being loaded).
 int effects_extra_state()
 {
@@ -198,7 +273,7 @@ int effects_extra_state()
 		return 2;
 	}
 
-	return GetFileAttributesA(extra_path().c_str()) != INVALID_FILE_ATTRIBUTES ? 1 : 0;
+	return g_mixed_allowed && GetFileAttributesA(extra_path().c_str()) != INVALID_FILE_ATTRIBUTES ? 1 : 0;
 }
 
 void effects_load_extra()
