@@ -10,6 +10,7 @@
 // 6 one of a list, 7 text, 8 colour in bytes, 9 colour in three floats), the current value at +0x10, the one it resets to at +0x30, its
 // limits at +0x40 (floats: min, max; ints: min, max; a list: how many, and their names).
 #include "ui_parts.hpp"
+#include "passes.hpp"
 
 #include <cfloat>
 #include <cstdarg>
@@ -592,8 +593,7 @@ namespace
 		  {"Ambient occlusion", "r_ssao"},
 		  {"Use the occlusion strength below", "r_ssaoUseTweaks"},
 		  {"Occlusion strength", "r_ssaoStrength"}}},
-		// (the fog's own colour and thickness are the map's script's, not settings: these are what the game
-		// lets be changed over them)
+		// (the fog's own colour and thickness are the map's script's, not settings: see passes.cpp for those)
 		{ICON_CLOUD, "Fog", false,
 		 {{"Fog", "r_fog"},
 		  {"Fog brightness", "r_fog_ev_adjust"},
@@ -1683,6 +1683,12 @@ void look_draw_tab(const TheaterState& state)
 			{
 				ImGui::SetTooltip("%s", entry.name);
 			}
+		}
+
+		// (the fog's own colour and thickness are not settings: they are the game's fog values, changed in place)
+		if (strcmp(section.label, "Fog") == 0)
+		{
+			passes_draw_fog();
 		}
 	}
 

@@ -7,6 +7,7 @@
 //
 // F1 gives the mouse to the panel (and back).
 #include "ui_parts.hpp"
+#include "passes.hpp"
 
 #include <MinHook.h>
 #include <d3d11.h>
@@ -1830,6 +1831,7 @@ namespace
 			not_built("Actors and animations");
 			break;
 		case Tab::Record:
+			passes_draw_ui(capture_wants_picture());
 			capture_draw_tab(state);
 			break;
 		}
@@ -2599,6 +2601,12 @@ namespace
 		}
 
 		g_over_menu_ui = false;
+		if (shown || recording)
+		{
+			// (a pass that shows the depth draws it over the game's picture, before the picture is copied)
+			passes_before_copy(swap_chain, g_device, g_context, state.playing);
+		}
+
 		if ((!shown && !recording) || !targets(swap_chain, true))
 		{
 			g_typing = false;
@@ -2653,6 +2661,7 @@ namespace
 	HRESULT STDMETHODCALLTYPE hooked_resize(IDXGISwapChain* swap_chain, const UINT count, const UINT width, const UINT height,
 	                                        const DXGI_FORMAT format, const UINT flags)
 	{
+		passes_release();
 		if (g_target)
 		{
 			g_target->Release();

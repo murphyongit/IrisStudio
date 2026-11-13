@@ -9,6 +9,7 @@
 // the same places are looked in for ffmpeg.exe, the same ProRes settings). Without FFmpeg the frames are
 // written as numbered TGA pictures.
 #include "ui_parts.hpp"
+#include "passes.hpp"
 
 #include <shellapi.h>
 
@@ -337,6 +338,13 @@ namespace
 			*dot = 0;
 		}
 
+		// (a pass has its word in the file's name)
+		if (passes_tag()[0])
+		{
+			const size_t length = strlen(name);
+			snprintf(name + length, sizeof(name) - length, "_%s", passes_tag());
+		}
+
 		g_pipe = nullptr;
 		g_process = nullptr;
 		g_frames = 0;
@@ -411,6 +419,10 @@ namespace
 		}
 	}
 
+	// the passes still to be recorded after the one under way (each is the same stretch again)
+	std::vector<int> g_passes_left;
+	bool g_passes_run = false;
+
 	void finish(const char* why)
 	{
 		theater_capture(0.0f);
@@ -421,6 +433,28 @@ namespace
 		         g_writer_failed ? " (the writing failed part way: see ffmpeg_log.txt in the captures folder)" : "");
 		g_message = text;
 		ui_log("record: %s", text);
+		const bool go_on = g_passes_run && !g_passes_left.empty() && !g_stop && !g_writer_failed && strcmp(why, "Done.") == 0;
+		if (go_on)
+		{
+			const int next = g_passes_left.front();
+			g_passes_left.erase(g_passes_left.begin());
+			passes_use(next);
+			ui_log("record: next pass: %s", passes_label(next));
+			g_waited = 0;
+			g_settled_frames = 0;
+			theater_seek(static_cast<std::uint32_t>(g_start * 1000.0f));
+			g_step = Step::Seeking;
+			return;
+		}
+
+		if (g_passes_run)
+		{
+			// (the whole picture again once the passes are done)
+			g_passes_run = false;
+			g_passes_left.clear();
+			passes_use(-1);
+		}
+
 		g_step = Step::Idle;
 	}
 
@@ -701,6 +735,23 @@ void capture_draw_tab(const TheaterState& state)
 				{
 					// a path there is: it is what is recorded, from wherever the camera was left
 					camera_set_mode(CameraMode::Dolly);
+				}
+
+				// the passes ticked are recorded one after another (none ticked: what is shown now, once)
+				g_passes_left.clear();
+				for (int i = 0; i < passes_count(); ++i)
+				{
+					if (passes_ticked(i))
+					{
+						g_passes_left.push_back(i);
+					}
+				}
+
+				g_passes_run = !g_passes_left.empty();
+				if (g_passes_run)
+				{
+					passes_use(g_passes_left.front());
+					g_passes_left.erase(g_passes_left.begin());
 				}
 
 				theater_set_paused(true);

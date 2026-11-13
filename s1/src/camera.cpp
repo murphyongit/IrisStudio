@@ -8,6 +8,7 @@
 // origin is copied there after the calculation from 0x141557610, so the camera's is written to both.
 // The field of view is set later in the frame, so it is put in at the frame's next step.
 #include "theater.hpp"
+#include "passes.hpp"
 
 #include <MinHook.h>
 
@@ -809,6 +810,7 @@ namespace
 		// (the editor's effects are played here, early in the client game's frame, as the game's own are)
 		effects_game_frame(state);
 		models_game_frame(state);
+		passes_game_frame(state);
 		const bool focus = state.playing && GetForegroundWindow() == ui_window() && !theater_keys_blocked();
 		const CameraMode mode_now = static_cast<CameraMode>(g_mode.load());
 		const bool f2 = focus && down(VK_F2);
