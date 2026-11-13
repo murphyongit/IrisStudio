@@ -48,3 +48,6 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
 - 0.47 called DB_LoadXAssets from the calc-view hook: the main thread never came back (user force-closed). The function first waits for the database
   thread (Sys_SyncDatabase 0x1403E2170, event at 0x147DCEC28; Sys_IsDatabaseReady 0x1403E1850) and later takes a write lock (0x143B749C8/CC).
   0.48 sends S1x's own console command "loadzone s1iris_rain" through Cbuf instead (S1x has loadzone: console_commands.txt), once the loader is idle.
+- 0.48 loadzone got as far as "MISSING FILE eng_s1iris_rain.ff": for an ordinary zone the game also queues patch_<name>, <lang>_patch_<name> and
+  <lang>_<name> (0x140271B09..); only the patch_ ones are optional (0x1402701F0), as are names with _load/_path or starting techsets_.
+  A zone whose own name starts with patch_ gets no extras. Fix used: zone\eng_s1iris_rain.ff = a copy of s1iris_rain.ff (written to the PC).
