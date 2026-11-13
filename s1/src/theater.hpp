@@ -131,6 +131,8 @@ int models_find(const char* text, int group, int slot, char names[][64], int max
 int models_sets(char names[][32], int max);
 int models_apply_set(int entity, const char* name);
 void models_status(char out[200]);
+void models_allow_loading(bool on);
+bool models_loading_allowed();
 void models_game_frame(const TheaterState& state);
 void models_frame(const TheaterState& state);
 void models_start();

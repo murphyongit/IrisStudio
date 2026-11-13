@@ -1192,6 +1192,13 @@ namespace
 
 					ImGui::EndDisabled();
 					ImGui::SetItemTooltip("The game's own sets of gear, loot included: every part at once (the face stays)");
+					bool loading = models_loading_allowed();
+					if (ImGui::Checkbox("Load gear nobody in the match wears (can crash)", &loading))
+					{
+						models_allow_loading(loading);
+					}
+
+					ImGui::SetItemTooltip("Off: a set's parts are put on as far as this match has them in memory.\nOn: the game is asked to load the rest, which can push out a model a player is using and crash (it did in 0.44).");
 					char gear_status[200];
 					models_status(gear_status);
 					if (gear_status[0])

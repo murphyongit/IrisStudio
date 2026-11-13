@@ -97,6 +97,11 @@ namespace
 	std::map<int, std::map<std::string, Skin>> g_skins;  // per entity: a model put on, and its skin
 	std::vector<PendingSet> g_pending;
 	char g_status[200] = "";
+	// Asking the game for a model it has not loaded makes room for it by letting go of another, and that
+	// can be one a player in the match is drawn with: 0.44 crashed that way (a bone looked up in a model
+	// that was no longer there). So it is only done when asked for; without it a set's parts are put on
+	// as far as the match has them loaded.
+	bool g_allow_loading = false;
 
 	// The parts of a multiplayer outfit, by how their models' names begin (headgear before head).
 	const char* const SLOTS[] = {"mp_top", "mp_headgear", "mp_head", "mp_pants", "mp_glove", "mp_boot", "mp_kneepad", "mp_loadouts", "mp_eyewear", "mp_exo"};
@@ -967,6 +972,32 @@ int models_apply_set(const int entity, const char* name)
 	return count;
 }
 
+namespace
+{
+	ULONGLONG& looked_at()
+	{
+		static ULONGLONG at = 0;
+		return at;
+	}
+
+	void looked_reset()
+	{
+		looked_at() = 0;
+	}
+}
+
+void models_allow_loading(const bool on)
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	g_allow_loading = on;
+}
+
+bool models_loading_allowed()
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	return g_allow_loading;
+}
+
 // Each frame on the game's own thread: the sets being waited for.
 void models_game_frame(const TheaterState& state)
 {
@@ -983,15 +1014,22 @@ void models_game_frame(const TheaterState& state)
 	{
 		pending.asked = true;
 		pending.since = now;
-		for (const Wanted& part : pending.parts)
+		if (g_allow_loading)
 		{
-			ask_for(part.model.c_str());
+			for (const Wanted& part : pending.parts)
+			{
+				ask_for(part.model.c_str());
+			}
+
+			return;
 		}
 
-		return;
+		// (nothing is asked for: what is there now is what there is)
+		pending.since = now > 10000 ? now - 10000 : 0;
+		looked_reset();
 	}
 
-	static ULONGLONG looked = 0;
+	static ULONGLONG& looked = looked_at();
 	if (now - looked < 400)
 	{
 		return;
@@ -1052,8 +1090,10 @@ void models_game_frame(const TheaterState& state)
 		g_skins[entity][part.model] = part.skin;
 	}
 
-	snprintf(g_status, sizeof(g_status), missing.empty() ? "%s is on: %zu parts." : "%s: %zu parts are on; the game did not load %s", pending.name.c_str(), there,
-	         missing.c_str());
+	snprintf(g_status, sizeof(g_status),
+	         missing.empty() ? "%s is on: %zu parts." : g_allow_loading ? "%s: %zu parts are on; the game did not load %s"
+	                                                                    : "%s: %zu parts are on; not in this match's memory: %s",
+	         pending.name.c_str(), there, missing.c_str());
 	note("models: set %s on entity %d: %zu of %zu parts%s%s", pending.name.c_str(), entity, there, pending.parts.size(), missing.empty() ? "" : "; not loaded: ",
 	     missing.c_str());
 	g_pending.erase(g_pending.begin());
