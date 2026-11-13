@@ -20,6 +20,7 @@
 #include <cstring>
 #include <map>
 #include <mutex>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -52,13 +53,15 @@ namespace
 	struct ModelRow
 	{
 		std::string model, category, lob, material;
-		int primary = 0, female = -1;  // -1: either
+		int primary = 0;
+		std::vector<std::string> groups;  // what must be worn with it ("female", a face's name), or not ("!kneepads")
 	};
 	struct IdRow
 	{
 		std::string category;
 		int primary = 0;
 		unsigned id = 0;
+		std::vector<std::string> tags;    // what wearing it counts as ("fullmask", "kneepads", a face's name and skin)
 	};
 	struct OverrideRow
 	{
@@ -149,6 +152,12 @@ namespace
 		if (name.compare(0, 8, "mp_view_") == 0)
 		{
 			return -1;
+		}
+
+		// (shinguards are worn where kneepads are)
+		if (name.compare(0, 13, "mp_shinguard_") == 0)
+		{
+			return 6;
 		}
 
 		for (int i = 0; i < SLOT_COUNT; ++i)
@@ -594,7 +603,14 @@ namespace
 				model.primary = atoi(row[3].c_str());
 				model.lob = row[6];
 				model.material = row[8];
-				model.female = row[10] == "female" ? 1 : row[10] == "!female" ? 0 : -1;
+				for (size_t c = 10; c < row.size() && c < 18; ++c)
+				{
+					if (!row[c].empty())
+					{
+						model.groups.push_back(row[c]);
+					}
+				}
+
 				g_model_rows.push_back(model);
 			}
 		}
@@ -603,7 +619,20 @@ namespace
 		{
 			if (row.size() >= 8)
 			{
-				g_id_rows.push_back({row[0], atoi(row[4].c_str()), static_cast<unsigned>(strtoul(row[7].c_str(), nullptr, 16))});
+				IdRow item;
+				item.category = row[0];
+				item.primary = atoi(row[4].c_str());
+				item.id = static_cast<unsigned>(strtoul(row[7].c_str(), nullptr, 16));
+				for (size_t c = 9; c < row.size() && c < 13; ++c)
+				{
+					// (words: the column before them is a number)
+					if (!row[c].empty() && !isdigit(static_cast<unsigned char>(row[c][0])))
+					{
+						item.tags.push_back(row[c]);
+					}
+				}
+
+				g_id_rows.push_back(item);
 			}
 		}
 
@@ -1387,88 +1416,235 @@ int models_apply_set(const int entity, const char* name)
 		return 0;
 	}
 
+	if (!g_listed)
+	{
+		list_loaded();
+	}
+
+	// The game's tables give an item of gear several models, and say which goes with what else is worn: a
+	// hat has one for each face, trousers one for kneepads, one for shinguards and one for neither, most
+	// one for men and one for women. Each item has tags (a face's name and skin, "female", "kneepads",
+	// "fullmask"...), and each model the tags it needs or must not have ("!female"). So: the tags of
+	// what the player will be wearing, then for each item the model whose needs they meet.
+	const SetRow* set = nullptr;
+	for (const SetRow& each : g_set_rows)
+	{
+		if (each.name == name)
+		{
+			set = &each;
+		}
+	}
+
+	if (!set)
+	{
+		return 0;
+	}
+
+	auto item_of = [](const std::string& category, const int primary) -> const IdRow* {
+		for (const IdRow& item : g_id_rows)
+		{
+			if (item.category == category && item.primary == primary)
+			{
+				return &item;
+			}
+		}
+
+		return nullptr;
+	};
+	auto row_of = [](const std::string& model) -> const ModelRow* {
+		for (const ModelRow& row : g_model_rows)
+		{
+			if (row.model == model || (!row.lob.empty() && row.lob == model))
+			{
+				return &row;
+			}
+		}
+
+		return nullptr;
+	};
+
+	// the set's items (a skin's number taken off: bits 12 to 19)
+	struct Item
+	{
+		unsigned id;
+		const IdRow* row;
+	};
+	std::vector<Item> items;
+	std::set<std::string> in_set;
+	for (const unsigned id : set->ids)
+	{
+		for (const IdRow& item : g_id_rows)
+		{
+			if (item.id == (id & 0xFFF00FFFu))
+			{
+				items.push_back({id, &item});
+				in_set.insert(item.category);
+			}
+		}
+	}
+
+	// what the player wears now: its tags stay for the kinds of gear the set has nothing of
+	std::set<std::string> tags;
 	bool female = false, lob = false;
+	const ModelRow* head_now = nullptr;
+	std::string head_name;
 	for (const std::string& own : seen->second)
 	{
 		female = female || own.find("_f_") != std::string::npos;
 		lob = lob || ends_with(own, "_lob");
+		const ModelRow* row = row_of(own);
+		if (!row)
+		{
+			continue;
+		}
+
+		if (row->category == "head")
+		{
+			head_now = row;
+			head_name = own;
+		}
+
+		if (row->category == "head" || !in_set.count(row->category))
+		{
+			if (const IdRow* item = item_of(row->category, row->primary))
+			{
+				tags.insert(item->tags.begin(), item->tags.end());
+			}
+		}
+	}
+
+	female = female || tags.count("female") != 0;
+	if (female)
+	{
+		tags.insert("female");
+	}
+
+	bool hat_in_set = false, full_mask = false;
+	for (const Item& item : items)
+	{
+		tags.insert(item.row->tags.begin(), item.row->tags.end());
+		if (item.row->category == "hat")
+		{
+			hat_in_set = true;
+			full_mask = std::find(item.row->tags.begin(), item.row->tags.end(), "fullmask") != item.row->tags.end();
+		}
 	}
 
 	PendingSet pending;
 	pending.entity = entity;
 	pending.name = name;
 	pending.since = GetTickCount64();
-	for (const SetRow& set : g_set_rows)
+
+	// the face: a hat that is not a whole mask sits on one, and a player in a whole mask has none
+	const ModelRow* head_added = nullptr;
+	if (!head_now && hat_in_set && !full_mask)
 	{
-		if (set.name != name)
+		// (a face of the player's kind the game has in memory, if there is one)
+		const IdRow* chosen = nullptr;
+		for (const IdRow& item : g_id_rows)
 		{
-			continue;
-		}
-
-		for (const unsigned id : set.ids)
-		{
-			Wanted wanted;
-			const ModelRow* row = nullptr;
-			if ((id >> 12) & 0xFF)
-			{
-				// a skin: the model it is for (the player's kind), and its material
-				const OverrideRow* chosen = nullptr;
-				for (const OverrideRow& over : g_override_rows)
-				{
-					if (over.id == id && (!chosen || (over.model.find("_f_") != std::string::npos) == female))
-					{
-						chosen = &over;
-					}
-				}
-
-				if (!chosen)
-				{
-					continue;
-				}
-
-				wanted.skin.over = chosen->material;
-				for (const ModelRow& model : g_model_rows)
-				{
-					if (model.model == chosen->model)
-					{
-						row = &model;
-					}
-				}
-			}
-			else
-			{
-				for (const IdRow& item : g_id_rows)
-				{
-					if (item.id != id)
-					{
-						continue;
-					}
-
-					for (const ModelRow& model : g_model_rows)
-					{
-						if (model.category == item.category && model.primary == item.primary && (!row || model.female == (female ? 1 : 0)))
-						{
-							row = &model;
-						}
-					}
-				}
-			}
-
-			if (!row)
+			if (item.category != "head" || (std::find(item.tags.begin(), item.tags.end(), "female") != item.tags.end()) != female)
 			{
 				continue;
 			}
 
-			wanted.model = lob && !row->lob.empty() ? row->lob : row->model;
-			wanted.skin.base = row->material;
-			wanted.slot = slot_of(row->model);
-			if (wanted.slot >= 0 && wanted.slot != SLOT_HEAD)
+			for (const ModelRow& row : g_model_rows)
 			{
-				pending.parts.push_back(wanted);
+				const bool better = !chosen || ((!head_added || !g_loaded.count(head_added->model)) && g_loaded.count(row.model) != 0);
+				if (row.category == "head" && row.primary == item.primary && better)
+				{
+					chosen = &item;
+					head_added = &row;
+				}
 			}
+		}
+
+		if (chosen && head_added)
+		{
+			tags.insert(chosen->tags.begin(), chosen->tags.end());
+			Wanted face;
+			face.slot = SLOT_HEAD;
+			face.model = lob && !head_added->lob.empty() ? head_added->lob : head_added->model;
+			pending.parts.push_back(face);
+		}
+	}
+	else if (head_now && full_mask)
+	{
+		// (left out: the mask is the whole head)
+		Wanted face;
+		face.slot = SLOT_HEAD;
+		pending.parts.push_back(face);
+	}
+
+	auto fits = [&tags](const ModelRow& row) {
+		for (const std::string& group : row.groups)
+		{
+			const bool not_this = group[0] == '!';
+			if ((tags.count(not_this ? group.substr(1) : group) != 0) == not_this)
+			{
+				return false;
+			}
+		}
+
+		return true;
+	};
+
+	std::string all_tags;
+	for (const std::string& tag : tags)
+	{
+		all_tags += " " + tag;
+	}
+
+	std::string chosen_models;
+	for (const Item& item : items)
+	{
+		const ModelRow* row = nullptr;
+		const ModelRow* any = nullptr;
+		for (const ModelRow& model : g_model_rows)
+		{
+			if (model.category != item.row->category || model.primary != item.row->primary)
+			{
+				continue;
+			}
+
+			any = any ? any : &model;
+			if (!row && fits(model))
+			{
+				row = &model;
+			}
+		}
+
+		// (none fits: the first there is, better than nothing)
+		row = row ? row : any;
+		if (!row)
+		{
+			continue;
+		}
+
+		Wanted wanted;
+		if ((item.id >> 12) & 0xFF)
+		{
+			// a skin: a material over this model's own
+			for (const OverrideRow& over : g_override_rows)
+			{
+				if (over.id == item.id && (wanted.skin.over.empty() || over.model == row->model))
+				{
+					wanted.skin.over = over.material;
+				}
+			}
+		}
+
+		wanted.model = lob && !row->lob.empty() ? row->lob : row->model;
+		wanted.skin.base = row->material;
+		wanted.slot = slot_of(row->model);
+		chosen_models += " " + wanted.model;
+		if (wanted.slot >= 0 && wanted.slot != SLOT_HEAD)
+		{
+			pending.parts.push_back(wanted);
 		}
 	}
 
+	note("models: set %s for entity %d (tags:%s):%s", name, entity, all_tags.c_str(), chosen_models.c_str());
 	if (pending.parts.empty())
 	{
 		snprintf(g_status, sizeof(g_status), "The set %s has no parts the game's tables give a model for.", name);
@@ -1571,7 +1747,7 @@ void models_game_frame(const TheaterState& state)
 	size_t there = 0;
 	for (const Wanted& part : pending.parts)
 	{
-		there += g_loaded.count(part.model);
+		there += part.model.empty() ? 1 : g_loaded.count(part.model);
 	}
 
 	if (there < pending.parts.size() && (now < pending.since || now - pending.since < 8000))
@@ -1588,10 +1764,10 @@ void models_game_frame(const TheaterState& state)
 	g_swaps.erase(entity);
 	g_adds.erase(entity);
 	g_skins.erase(entity);
-	std::string missing;
+	std::string missing, no_skin;
 	for (const Wanted& part : pending.parts)
 	{
-		if (!g_loaded.count(part.model))
+		if (!part.model.empty() && !g_loaded.count(part.model))
 		{
 			missing += (missing.empty() ? "" : ", ") + part.model;
 			continue;
@@ -1609,6 +1785,17 @@ void models_game_frame(const TheaterState& state)
 			}
 		}
 
+		if (part.model.empty())
+		{
+			// (a part left out: the face under a whole mask)
+			if (!own.empty())
+			{
+				g_swaps[entity][own] = "";
+			}
+
+			continue;
+		}
+
 		if (own.empty())
 		{
 			g_adds[entity].push_back(part.model);
@@ -1619,6 +1806,16 @@ void models_game_frame(const TheaterState& state)
 		}
 
 		g_skins[entity][part.model] = part.skin;
+		if (!part.skin.over.empty() && !g_materials.count(part.skin.over))
+		{
+			// (the part is there in its plain colours: its skin's material is not in memory)
+			no_skin += (no_skin.empty() ? "" : ", ") + part.skin.over;
+		}
+	}
+
+	if (!no_skin.empty())
+	{
+		note("models: set %s: skins not in memory: %s", pending.name.c_str(), no_skin.c_str());
 	}
 
 	snprintf(g_status, sizeof(g_status),

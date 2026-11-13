@@ -86,3 +86,13 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
   tree = *(obj), Com_SafeClientDObjFree(handle) 0x1403D2DF0, then 0x1401A2BF0 with the game's last list (rewinding did not always make the game rebuild).
   First person (2048) still rewinds. Untested when written.
 - Timeline: names column draggable, trash per effect row.
+
+## 0.53: gear sets matched the game's way
+- mp_costumemodeltable cols 10..17 are conditions on TAGS ("female", "!female", "kneepads", "!shinguard", a head's name, "!fullmask", "helmet", "eyewear",
+  "skinN"); mp_costumeidtable cols 9..11 are the tags an item gives (head: name, skinN, female; kneepads item: kneepads|shinguard; hat: helmet|fullmask, visor;
+  eyewear: eyewear). Categories by id prefix: gender 61, shirt 62, head 63, pants 64, hat 66, gear 67, kneepads 68, gloves 69, shoes 6A, exo 6B, eyewear 6C
+  (set columns in that order: eyewear, hat, shirt, gear, gloves, pants, kneepads, shoes, exo). Skin = bits 12..19 of the id; override rows are per model.
+  models_apply_set now gathers tags (player's head + what the set gives + current gear of kinds the set lacks) and picks the row whose conditions hold;
+  a full mask drops the head, a helmet on a masked player adds a head. Checked offline: "samurai" resolves to exactly the user's own recorded outfit.
+- Old code read only col 10 as gender, so pants (gender in col 12) and hats (head name) got an arbitrary row.
+- Loading of parts not in memory is still the 0.46 stream-sync path behind the checkbox, never yet run by the user.

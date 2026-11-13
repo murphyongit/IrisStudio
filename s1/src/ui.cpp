@@ -1387,11 +1387,26 @@ namespace
 					ImGui::BeginDisabled(entity == FIRST_PERSON);
 					row_label("Gear set");
 					ImGui::SetNextItemWidth(-ImGui::CalcTextSize("Apply").x - ImGui::GetStyle().FramePadding.x * 2.0f - ImGui::GetStyle().ItemSpacing.x);
-					if (ImGui::BeginCombo("##gearSet", set_id[0] ? set_id : "Choose..."))
+					// (the tables' names, made readable: atlas_campaign_1 is Atlas Campaign 1)
+					auto readable = [](const char* id, char out[40]) {
+						bool start = true;
+						size_t n = 0;
+						for (; id[n] && n < 39; ++n)
+						{
+							out[n] = id[n] == '_' ? ' ' : start ? static_cast<char>(toupper(static_cast<unsigned char>(id[n]))) : id[n];
+							start = id[n] == '_';
+						}
+
+						out[n] = 0;
+						return out;
+					};
+					char shown_set[40] = "";
+					if (ImGui::BeginCombo("##gearSet", set_id[0] ? readable(set_id, shown_set) : "Choose..."))
 					{
 						for (int i = 0; i < set_count; ++i)
 						{
-							if (ImGui::Selectable(sets[i], strcmp(sets[i], set_id) == 0))
+							char label[40];
+							if (ImGui::Selectable(readable(sets[i], label), strcmp(sets[i], set_id) == 0))
 							{
 								snprintf(set_id, sizeof(set_id), "%s", sets[i]);
 							}
@@ -1411,7 +1426,7 @@ namespace
 					ImGui::EndDisabled();
 					ImGui::SetItemTooltip("The game's own sets of gear, loot included: every part at once (the face stays)");
 					bool loading = models_loading_allowed();
-					if (ImGui::Checkbox("Load gear nobody in the match wears (experimental)", &loading))
+					if (ImGui::Checkbox("Load a set's missing parts from the game's files (experimental)", &loading))
 					{
 						models_allow_loading(loading);
 					}
