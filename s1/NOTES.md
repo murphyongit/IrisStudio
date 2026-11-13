@@ -152,3 +152,13 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
 - Also 0.59: camera mode loop used a fixed 6 (garbage button after Orbit was removed); bone fly speed of its own (g_bone_speed, 40); effect clips fire when
   the settled time is inside the clip (g_inside), not only on crossing its start.
 - Not done, asked for: HUD timers follow real time (kill feed stays after a rewind, fades too fast in slow motion) -> needs the LUI frame clock.
+
+## 0.60: kill feed and popups cleared on a rewind (HUD script)
+- lua/s1iris/__init__.lua (installed by hand to D:\GAMES\AW\s1x\ui_scripts\s1iris\__init__.lua; S1x loads it at game start): flush() watches what is under
+  the obituary, pointsPopup, splashesHud and killstreakEarned parts; after 10 s with no change it takes what is there as the HUD's own; when the dvar
+  s1iris_hud_flush changes (theater.cpp go_back_to counts it up) it closes elements not among those whose parent is. Untested when written.
+- HUD timers/animations run on real time in the engine (LUI). Looked for the clock: 0x1405B01B0 only sets the renderer's time (cg time in a match);
+  0x1400CE810 is a Lua C function (animate), 0x1400D0040 dispatches the animation-complete event ("lateness"); LUI_CoD_Layout computes dt inside (not found
+  on PC). So fades still ignore the playback speed.
+- User's roadmap after this: death animations like T5 Iris, then actors (spawned fake players with animation chains). Spot lights exist since 0.46
+  (Scene > Lights > Kind), never confirmed by the user.

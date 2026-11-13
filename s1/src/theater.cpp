@@ -37,7 +37,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.59 (recorder, playback, IrisStudio's editor)";
+	constexpr char VERSION[] = "0.60 (recorder, playback, IrisStudio's editor)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -882,6 +882,11 @@ namespace
 	// that time given as fast as the game takes them.
 	void go_back_to(const std::uint64_t ms)
 	{
+		// (the HUD's script takes down the kill feed's lines and the popups left from later in the recording)
+		static int flushes = 0;
+		char flush[48];
+		snprintf(flush, sizeof(flush), "set s1iris_hud_flush %d", ++flushes);
+		theater_command(flush);
 		g_faults_noted = 0;
 		log_stream("before going back");
 		g_log_ticks = 12;

@@ -81,12 +81,83 @@ end
 local hidden_now = {}
 local ticks = 0
 
+-- What a kill puts on screen (the kill feed's lines, the score popups, the medals) is added to the HUD as
+-- it happens and takes itself off after a few seconds of the clock on the wall, not of the recording: gone
+-- back in, the recording left them standing. The editor counts its rewinds in the dvar s1iris_hud_flush;
+-- when the count changes, what was added under those parts is closed.
+-- What was "added" is told from what is always there by waiting: once nothing under them has changed for
+-- ten seconds, whatever is there is the HUD's own, and anything not among it later was added since.
+local WATCHED = {"obituary", "pointsPopup", "splashesHud", "killstreakEarned"}
+local own = nil
+local quiet, last_count, last_flush = 0, -1, nil
+
+local function below(element, into, parent_of, depth)
+	if depth > 8 or #into > 600 then
+		return
+	end
+	for _, child in ipairs(children(element)) do
+		into[#into + 1] = child
+		parent_of[child] = element
+		below(child, into, parent_of, depth + 1)
+	end
+end
+
+local function flush(found)
+	local roots = {}
+	for _, part in ipairs(found) do
+		if part.depth == 2 then
+			for _, word in ipairs(WATCHED) do
+				if part.name:find(word, 1, true) then
+					roots[#roots + 1] = part.element
+				end
+			end
+		end
+	end
+	local all, parent_of = {}, {}
+	for _, root in ipairs(roots) do
+		all[#all + 1] = root
+		below(root, all, parent_of, 0)
+	end
+	if #all ~= last_count then
+		last_count = #all
+		quiet = 0
+	else
+		quiet = quiet + 1
+	end
+	if quiet == 100 then
+		own = {}
+		for _, element in ipairs(all) do
+			own[element] = true
+		end
+	end
+	local ok, count = pcall(function() return Engine.GetDvarString("s1iris_hud_flush") end)
+	if not ok or type(count) ~= "string" then
+		return
+	end
+	if last_flush == nil then
+		last_flush = count
+	elseif count ~= last_flush then
+		last_flush = count
+		if own then
+			for _, element in ipairs(all) do
+				local parent = parent_of[element]
+				-- (only what was added straight onto something of the HUD's own: a line, a popup)
+				if not own[element] and parent and own[parent] then
+					pcall(function() element:close() end)
+				end
+			end
+		end
+		quiet = 0
+	end
+end
+
 local function tick(hud)
 	ticks = ticks + 1
 	local found = parts(hud)
 	if ticks % 20 == 1 then
 		tell(found)
 	end
+	pcall(flush, found)
 	local wanted = hidden_names()
 	for _, part in ipairs(found) do
 		local element = part.element
