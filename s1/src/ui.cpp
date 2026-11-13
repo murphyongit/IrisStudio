@@ -920,6 +920,32 @@ namespace
 						remove = i;
 					}
 
+					row_label("Kind");
+					if (ImGui::RadioButton("Point", !light.spot))
+					{
+						light.spot = false;
+						changed = true;
+					}
+
+					ImGui::SameLine();
+					if (ImGui::RadioButton("Spot", light.spot))
+					{
+						light.spot = true;
+						changed = true;
+					}
+
+					ImGui::SetItemTooltip("A cone that shines one way and can cast shadows. The game draws two spot lights at most.");
+					if (light.spot)
+					{
+						row_label("Direction");
+						changed = ImGui::DragFloat3("##angles", light.angles, 0.5f, -360.0f, 360.0f, "%.0f") || changed;
+						ImGui::SetItemTooltip("Up and down, around, roll. \"Move here\" also points it the way the camera looks.");
+						row_label("Cone");
+						changed = ImGui::SliderFloat("##cone", &light.cone, 5.0f, 150.0f, "%.0f deg") || changed;
+						row_label("Shadows");
+						changed = ImGui::Checkbox("##shadows", &light.shadows) || changed;
+					}
+
 					// (each row can have keyframes: light<N>_...)
 					char id[32], name[48];
 					const float key = look_key_width();
@@ -1193,12 +1219,12 @@ namespace
 					ImGui::EndDisabled();
 					ImGui::SetItemTooltip("The game's own sets of gear, loot included: every part at once (the face stays)");
 					bool loading = models_loading_allowed();
-					if (ImGui::Checkbox("Load gear nobody in the match wears (can crash)", &loading))
+					if (ImGui::Checkbox("Load gear nobody in the match wears (experimental)", &loading))
 					{
 						models_allow_loading(loading);
 					}
 
-					ImGui::SetItemTooltip("Off: a set's parts are put on as far as this match has them in memory.\nOn: the game is asked to load the rest, which can push out a model a player is using and crash (it did in 0.44).");
+					ImGui::SetItemTooltip("Off: a set's parts are put on as far as this match has them in memory.\nOn: the rest are added to the list of gear the game itself keeps loaded for the match; the recording goes back twice while it loads.");
 					char gear_status[200];
 					models_status(gear_status);
 					if (gear_status[0])

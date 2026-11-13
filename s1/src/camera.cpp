@@ -39,6 +39,19 @@ namespace
 	// lies along, its radius, its colour's red, green and blue, and a block of four numbers for the bulb's
 	// size and fade, which may all be 0). The scene takes 32 a frame, the game's own effects' included.
 	constexpr uintptr_t R_ADD_OMNI_LIGHT_TO_SCENE = 0x1405C9D90;
+	// A spot light: R_AddSpotLightToScene (0x1405C9FE0: where it is, the way it shines, its up, a scale
+	// for its radius, for its inner and for its outer cone, its colour's red, green and blue, a light
+	// definition (the game's default one is at 0x14D85F500) and a block: half the outer and the inner
+	// cone's angle, radius, brightness, greatest length, exponent, near clip, the bulb's radius and
+	// length, the two fade numbers, and a byte for shadows). The scene takes two of them a frame.
+	constexpr uintptr_t R_ADD_SPOT_LIGHT_TO_SCENE = 0x1405C9FE0, DEFAULT_LIGHT_DEF = 0x14D85F500;
+	struct SpotBlock
+	{
+		float half_outer, half_inner, radius, brightness, max_length;
+		int exponent;
+		float near_clip, bulb_radius, bulb_length, fade[2];
+		unsigned char shadows, pad[3];
+	};
 	constexpr int MAX_LIGHTS = 16;
 	// The exo's effects (a dash, a boost jump, a slam, a slide): CG_PlayExoFx (0x14019A230: the client, the
 	// entity, the event, its parameter, then whether it is seen in first person). In first person the
@@ -346,7 +359,12 @@ namespace
 	// ---- the scene's lights
 	SceneLight g_lights[MAX_LIGHTS];
 	int g_light_count = 0;
-	float g_view_now[3] = {};  // where the picture is taken from this frame
+	float g_view_now[3] = {}, g_view_angles[3] = {};  // where the picture is taken from this frame, and which way it looks
+	using add_spot_light_t = void (*)(const float*, const float*, const float*, float, float, float, float, float, float, const void*, const SpotBlock*);
+	add_spot_light_t g_original_add_spot_light = nullptr;
+	SpotBlock g_game_spot = {0.5f, 0.4f, 400.0f, 1.0f, 400.0f, 1, 1.0f, 1.0f, 0.0f, {0.0f, -1.0f}, 1, {}};
+	bool g_have_game_spot = false;
+	int g_spots_noted = 0;
 
 	// A part of an entity's model: where it is and how it is turned (forward, left, up).
 	bool bone_matrix(const int entity, const char* name, float axis[3][3], float origin[3])
@@ -566,12 +584,71 @@ namespace
 		g_original_add_omni_light(origin, direction, radius, r, g, b, bulb);
 	}
 
+	// A spot light of the game's own going into the scene: its numbers are noted.
+	void hooked_add_spot_light(const float* origin, const float* direction, const float* up, const float radius, const float inner, const float outer,
+	                           const float r, const float g, const float b, const void* definition, const SpotBlock* block)
+	{
+		if (block && !IsBadReadPtr(block, sizeof(SpotBlock)))
+		{
+			g_game_spot = *block;
+			g_have_game_spot = true;
+			if (g_spots_noted < 8)
+			{
+				++g_spots_noted;
+				log("lights: a spot of the game's: scales %g %g %g, colour %g %g %g, cone %g %g, radius %g, brightness %g, length %g, exponent %d, near %g, "
+				    "bulb %g %g, fade %g %g, shadows %d",
+				    radius, inner, outer, r, g, b, block->half_outer, block->half_inner, block->radius, block->brightness, block->max_length,
+				    block->exponent, block->near_clip, block->bulb_radius, block->bulb_length, block->fade[0], block->fade[1], block->shadows);
+			}
+		}
+
+		g_original_add_spot_light(origin, direction, up, radius, inner, outer, r, g, b, definition, block);
+	}
+
+	void add_spot(const SceneLight& light)
+	{
+		__try
+		{
+			float axis[3][3];
+			angles_to_axis(light.angles, axis);
+			// (what a spot of the game's own was seen to have, where the editor has no control for it)
+			SpotBlock block = g_game_spot;
+			const float half = light.cone * 0.5f * TO_RAD;
+			block.half_outer = half;
+			block.half_inner = half * 0.75f;
+			block.radius = light.radius;
+			block.max_length = light.radius;
+			block.brightness = 1.0f;
+			block.shadows = light.shadows ? 1 : 0;
+			const void* definition = *reinterpret_cast<const void* const*>(DEFAULT_LIGHT_DEF);
+			if (definition)
+			{
+				g_original_add_spot_light(light.origin, axis[0], axis[2], 1.0f, 1.0f, 1.0f, light.color[0] * light.intensity, light.color[1] * light.intensity,
+				                          light.color[2] * light.intensity, definition, &block);
+			}
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+		}
+	}
+
 	// The editor's lights, into the scene about to be drawn.
 	void add_lights()
 	{
 		if (!g_original_add_omni_light)
 		{
 			return;
+		}
+
+		int spots = 0;
+		for (int i = 0; i < g_light_count && g_original_add_spot_light; ++i)
+		{
+			const SceneLight& light = g_lights[i];
+			if (light.spot && light.on && light.radius > 0.0f && light.intensity > 0.0f && spots < 2)
+			{
+				++spots;
+				add_spot(light);
+			}
 		}
 
 		__try
@@ -582,7 +659,7 @@ namespace
 			for (int i = 0; i < g_light_count; ++i)
 			{
 				const SceneLight& light = g_lights[i];
-				if (light.on && light.radius > 0.0f && light.intensity > 0.0f)
+				if (!light.spot && light.on && light.radius > 0.0f && light.intensity > 0.0f)
 				{
 					g_original_add_omni_light(light.origin, up, light.radius, light.color[0] * light.intensity, light.color[1] * light.intensity,
 					                          light.color[2] * light.intensity, bulb);
@@ -841,6 +918,12 @@ namespace
 			}
 
 			memcpy(g_view_now, &at<float>(REFDEF_ORIGIN), sizeof(g_view_now));
+			{
+				const float* forward = &at<float>(REFDEF_AXIS);
+				g_view_angles[1] = std::atan2(forward[1], forward[0]) * TO_DEG;
+				g_view_angles[0] = std::atan2(-forward[2], std::sqrt(forward[0] * forward[0] + forward[1] * forward[1])) * TO_DEG;
+			}
+
 			if (theater_state().playing)
 			{
 				add_lights();
@@ -939,6 +1022,7 @@ int scene_add_light()
 
 	SceneLight light;
 	memcpy(light.origin, g_view_now, sizeof(light.origin));
+	memcpy(light.angles, g_view_angles, sizeof(light.angles));
 	g_lights[g_light_count] = light;
 	return g_light_count++;
 }
@@ -949,6 +1033,7 @@ void scene_move_light_here(const int index)
 	if (index >= 0 && index < g_light_count)
 	{
 		memcpy(g_lights[index].origin, g_view_now, sizeof(g_view_now));
+		memcpy(g_lights[index].angles, g_view_angles, sizeof(g_view_angles));
 	}
 }
 
@@ -1026,6 +1111,14 @@ void camera_start()
 	    MH_EnableHook(reinterpret_cast<LPVOID>(CG_PLAY_EXO_FX)) != MH_OK)
 	{
 		log("camera: the exo's effects NOT hooked");
+	}
+
+	if (MH_CreateHook(reinterpret_cast<LPVOID>(R_ADD_SPOT_LIGHT_TO_SCENE), reinterpret_cast<LPVOID>(&hooked_add_spot_light),
+	                  reinterpret_cast<LPVOID*>(&g_original_add_spot_light)) != MH_OK ||
+	    MH_EnableHook(reinterpret_cast<LPVOID>(R_ADD_SPOT_LIGHT_TO_SCENE)) != MH_OK)
+	{
+		g_original_add_spot_light = nullptr;
+		log("lights: spot lights NOT hooked");
 	}
 
 	if (MH_CreateHook(reinterpret_cast<LPVOID>(R_ADD_OMNI_LIGHT_TO_SCENE), reinterpret_cast<LPVOID>(&hooked_add_omni_light),

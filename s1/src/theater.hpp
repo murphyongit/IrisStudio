@@ -115,6 +115,9 @@ struct SceneLight
 	float origin[3] = {};
 	float color[3] = {1.0f, 1.0f, 1.0f};
 	float intensity = 256.0f, radius = 400.0f;  // (the game's own lights' colours are in the hundreds)
+	// a spot light: a cone that shines one way (pitch, yaw, roll), and can cast shadows; the scene takes two
+	bool spot = false, shadows = true;
+	float angles[3] = {}, cone = 60.0f;
 };
 
 // models.cpp: what an entity is made of, and models drawn as others (to: "" leaves the model out, null

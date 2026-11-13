@@ -103,6 +103,23 @@ namespace
 	// as far as the match has them loaded.
 	bool g_allow_loading = false;
 
+	// The proper way to have gear loaded: the match's server tells the client which gear models to keep
+	// loaded, a list for each kind of gear (0x140022290 takes them: lists of 16 bytes each, a count and
+	// the numbers, each a model's number within its kind), and the game loads and lets go of models by
+	// those lists. A set asked for is added to the lists as they come (the recording gives them again
+	// when it is gone back in), so the game holds the set's models itself, with everything else the match
+	// needs. A model's number within its kind is found by asking the game for each number's name
+	// (0x14000C100, with the kind from 0x1403CC830).
+	constexpr std::uintptr_t CL_STREAM_SYNC = 0x140022290, BG_CUSTOMIZATION_KIND = 0x1403CC830, BG_CUSTOMIZATION_MODEL_NAME = 0x14000C100;
+	constexpr int SYNC_KINDS = 10;
+	constexpr size_t SYNC_SIZE = 0x4A0;
+	using stream_sync_t = void (*)(int, unsigned char*, int);
+	stream_sync_t g_original_stream_sync = nullptr;
+	std::unordered_map<std::string, std::pair<int, unsigned>> g_numbers;  // a gear model's kind and number
+	bool g_numbers_read = false;
+	std::vector<std::pair<int, unsigned>> g_extra;  // what is asked for on top of the server's lists
+	unsigned g_syncs = 0;
+
 	// The parts of a multiplayer outfit, by how their models' names begin (headgear before head).
 	const char* const SLOTS[] = {"mp_top", "mp_headgear", "mp_head", "mp_pants", "mp_glove", "mp_boot", "mp_kneepad", "mp_loadouts", "mp_eyewear", "mp_exo"};
 	constexpr int SLOT_COUNT = 10, SLOT_HEAD = 2;
@@ -350,6 +367,122 @@ namespace
 		{
 			return -1;
 		}
+	}
+
+	const char* number_name(const int kind, const unsigned number)
+	{
+		__try
+		{
+			const int of_kind = reinterpret_cast<int (*)(int)>(BG_CUSTOMIZATION_KIND)(kind);
+			return reinterpret_cast<const char* (*)(int, unsigned)>(BG_CUSTOMIZATION_MODEL_NAME)(of_kind, number);
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			return nullptr;
+		}
+	}
+
+	// (with the lock held)
+	void read_numbers()
+	{
+		if (g_numbers_read)
+		{
+			return;
+		}
+
+		g_numbers_read = true;
+		for (int kind = 0; kind < SYNC_KINDS; ++kind)
+		{
+			std::string first;
+			for (unsigned number = 0; number < 1500; ++number)
+			{
+				const char* name = number_name(kind, number);
+				if (!name || IsBadStringPtrA(name, 96) || name[0] < 33 || strnlen(name, 96) >= 90)
+				{
+					break;
+				}
+
+				// (past the last of a kind the game may give its first again)
+				if (number > 0 && first == name)
+				{
+					break;
+				}
+
+				if (number == 0)
+				{
+					first = name;
+				}
+
+				g_numbers.emplace(name, std::make_pair(kind, number));
+			}
+		}
+
+		note("models: %zu gear models have a number the game's lists can ask for", g_numbers.size());
+	}
+
+	// The server's lists, with what the editor asks for added.
+	void hooked_stream_sync(const int client, unsigned char* lists, const int flag)
+	{
+		static unsigned char copy[SYNC_SIZE];
+		static std::vector<std::uint32_t> numbers[SYNC_KINDS];
+		bool changed = false;
+		if (client == 0 && lists && !IsBadReadPtr(lists, SYNC_SIZE))
+		{
+			std::lock_guard<std::mutex> lock(g_lock);
+			++g_syncs;
+			const TheaterState state = theater_state();
+			if (!g_extra.empty() && (state.playing || state.starting))
+			{
+				memcpy(copy, lists, SYNC_SIZE);
+				for (int kind = 0; kind < SYNC_KINDS; ++kind)
+				{
+					unsigned char* list = copy + kind * 16;
+					const unsigned count = *reinterpret_cast<const std::uint16_t*>(list);
+					const auto* values = *reinterpret_cast<const std::uint32_t* const*>(list + 8);
+					if (count > 2000 || (count && IsBadReadPtr(values, count * 4)))
+					{
+						continue;
+					}
+
+					numbers[kind].assign(values, values + count);
+					bool added = false;
+					for (const auto& extra : g_extra)
+					{
+						if (extra.first != kind)
+						{
+							continue;
+						}
+
+						bool there = false;
+						for (const std::uint32_t value : numbers[kind])
+						{
+							there = there || (value & 0xFFFFFF) == extra.second;
+						}
+
+						if (!there)
+						{
+							numbers[kind].push_back(extra.second);
+							added = true;
+						}
+					}
+
+					if (added)
+					{
+						*reinterpret_cast<std::uint16_t*>(list) = static_cast<std::uint16_t>(numbers[kind].size());
+						*reinterpret_cast<const std::uint32_t**>(list + 8) = numbers[kind].data();
+						changed = true;
+					}
+				}
+
+				if (changed && g_noted < 200)
+				{
+					++g_noted;
+					note("models: %zu gear models added to the lists the game loads by", g_extra.size());
+				}
+			}
+		}
+
+		g_original_stream_sync(client, changed ? copy : lists, flag);
 	}
 
 	bool ask_for(const char* model)
@@ -1002,9 +1135,15 @@ bool models_loading_allowed()
 void models_game_frame(const TheaterState& state)
 {
 	std::lock_guard<std::mutex> lock(g_lock);
-	if (g_pending.empty() || !state.playing)
+	if (!state.playing && !state.starting)
 	{
 		g_pending.clear();
+		g_extra.clear();
+		return;
+	}
+
+	if (g_pending.empty())
+	{
 		return;
 	}
 
@@ -1016,12 +1155,27 @@ void models_game_frame(const TheaterState& state)
 		pending.since = now;
 		if (g_allow_loading)
 		{
+			// what is not loaded goes onto the game's own lists: they are given again, with it, when the
+			// recording is gone back in
+			read_numbers();
+			list_loaded();
+			size_t asked = 0;
 			for (const Wanted& part : pending.parts)
 			{
-				ask_for(part.model.c_str());
+				const auto number = g_numbers.find(part.model);
+				if (!g_loaded.count(part.model) && number != g_numbers.end())
+				{
+					g_extra.push_back(number->second);
+					++asked;
+				}
 			}
 
-			return;
+			if (asked)
+			{
+				pending.since = now + 4000;  // (the going back, then the loading)
+				theater_rebuild();
+				return;
+			}
 		}
 
 		// (nothing is asked for: what is there now is what there is)
@@ -1043,7 +1197,7 @@ void models_game_frame(const TheaterState& state)
 		there += g_loaded.count(part.model);
 	}
 
-	if (there < pending.parts.size() && now - pending.since < 6000)
+	if (there < pending.parts.size() && (now < pending.since || now - pending.since < 8000))
 	{
 		snprintf(g_status, sizeof(g_status), "Loading %s: %zu of %zu parts are there...", pending.name.c_str(), there, pending.parts.size());
 		return;
@@ -1109,6 +1263,8 @@ void models_frame(const TheaterState& state)
 		g_listed = false;
 		g_seen.clear();
 		g_built.clear();
+		g_extra.clear();
+		g_pending.clear();
 	}
 }
 
@@ -1122,4 +1278,10 @@ void models_start()
 	}
 
 	theater_log(status == MH_OK ? "models: the making of models hooked (models can be swapped)" : "models: the making of models NOT hooked");
+	if (MH_CreateHook(reinterpret_cast<LPVOID>(CL_STREAM_SYNC), reinterpret_cast<LPVOID>(&hooked_stream_sync),
+	                  reinterpret_cast<LPVOID*>(&g_original_stream_sync)) != MH_OK ||
+	    MH_EnableHook(reinterpret_cast<LPVOID>(CL_STREAM_SYNC)) != MH_OK)
+	{
+		theater_log("models: the lists the game loads gear by NOT hooked");
+	}
 }
