@@ -42,7 +42,13 @@
 
 namespace
 {
-	constexpr std::uintptr_t BSP_CAMERA = 0x1405CB8D0, SMODEL_CAMERA = 0x1405C9AE0, DOBJ_CAMERA = 0x1405C8BB0;
+	// (0.63) In the game's usual way of drawing, the map's surfaces and static models are put in the camera's
+	// lists by worker commands of their own (the dispatcher 0x1405E5B80 has the table): 0x10 -> 0x140569EB0
+	// and 0x12 -> 0x14056A2F0 the map's surfaces, 0x1D -> 0x14056FFD0 and 0x13 -> 0x14056D940 its static
+	// models. 0x1405CB8D0 queues only the glowing surfaces then, and 0x1405C9AE0 (command 0x1B) is the
+	// effects', not the models': 0.62 held those two back and the map was drawn all the same.
+	constexpr std::uintptr_t BSP_CAMERA = 0x1405CB8D0, DOBJ_CAMERA = 0x1405C8BB0;
+	constexpr std::uintptr_t WORLD_COMMANDS[4] = {0x140569EB0, 0x14056A2F0, 0x14056FFD0, 0x14056D940};
 	constexpr std::uintptr_t COM_GET_CLIENT_DOBJ = 0x1403D2BA0, CHARACTERS = 0x141620568;
 	constexpr int CHARACTER_COUNT = 42, CHARACTER_SIZE = 0xCC0, FIRST_PERSON_HANDLE = 2048, VIEW_HANDLES = 4;
 
@@ -91,11 +97,12 @@ namespace
 	std::atomic<unsigned> g_view_flags{0};
 
 	using bsp_t = void (*)(void*, void*, void*);
-	using smodel_t = void (*)(void*);
+	using command_t = void (*)(void*);
 	using dobj_t = void (*)(void*, void*, unsigned char*, int, int, void*, void*, int);
 	bsp_t g_original_bsp = nullptr;
-	smodel_t g_original_smodel = nullptr;
+	command_t g_original_world[4] = {};
 	dobj_t g_original_dobj = nullptr;
+	std::atomic<int> g_world_held{0};
 
 	void hooked_bsp(void* a, void* b, void* c)
 	{
@@ -105,17 +112,23 @@ namespace
 		}
 	}
 
-	void hooked_smodel(void* a)
+	template <int N>
+	void hooked_world(void* a)
 	{
-		if (!g_hide_world)
+		if (g_hide_world)
 		{
-			g_original_smodel(a);
+			g_world_held.fetch_add(1, std::memory_order_relaxed);
+			return;
 		}
+
+		g_original_world[N](a);
 	}
 
 	void hooked_dobj(void* a, void* b, unsigned char* entry, const int d, const int e, void* f, void* g, const int h)
 	{
-		void* model = entry ? *reinterpret_cast<void**>(entry + 0x68) : nullptr;
+		// (0.62 took the pointer at +0x68 for the model: it is something else that has to be there; the model
+		// is at +0x98, which is what the game asks for the model's parts)
+		void* model = entry ? *reinterpret_cast<void**>(entry + 0x98) : nullptr;
 		if (!model || !g_playing)
 		{
 			g_original_dobj(a, b, entry, d, e, f, g, h);
@@ -144,17 +157,8 @@ namespace
 
 		if (view)
 		{
-			const unsigned flags = *reinterpret_cast<unsigned*>(entry + 0x94);
-			g_view_flags = flags;
-			if (g_gun_true_depth && (flags & 0xE))
-			{
-				// (bits 1 to 3 of the entry's flags are what has a model drawn pressed to the front of the
-				// depth: without them the gun is drawn at the depth it is really at)
-				*reinterpret_cast<unsigned*>(entry + 0x94) = flags & ~0xEu;
-				g_original_dobj(a, b, entry, d, e, f, g, h);
-				*reinterpret_cast<unsigned*>(entry + 0x94) = flags;
-				return;
-			}
+			// (noted for the log: what marks the gun's models)
+			g_view_flags = *reinterpret_cast<unsigned*>(entry + 0x94);
 		}
 
 		g_original_dobj(a, b, entry, d, e, f, g, h);
@@ -324,21 +328,18 @@ namespace
 		}
 	}
 
-	// (on the game's thread) false: a fault reading or writing the game's fog
-	bool fog_step(const FogWish& wish, FogShown* shown)
+	// (on the game's thread) false: a fault reading or writing the game's fog. Every one of the seven sets is
+	// brought to what is wished: 0.62 wrote the set the server gave and the one drawn from, but each frame
+	// the game writes the one drawn from anew out of a copy it keeps of where the fog is going (set 4, with
+	// the times of the change at +0x74 and +0x78 of it; 0x1405D347A), so nothing of it showed.
+	constexpr int FOG_TO = 4;
+	bool fog_step(const FogWish& wish, FogShown* shown, int* going_to)
 	{
 		__try
 		{
-			const int going_to = *reinterpret_cast<const int*>(FOG_GOING_TO);
-			const int sets[2] = {going_to >= 0 && going_to < FOG_SET_COUNT ? going_to : 1, FOG_DRAWN};
-			for (int i = 0; i < 2; ++i)
+			*going_to = *reinterpret_cast<const int*>(FOG_GOING_TO);
+			for (int set = 0; set < FOG_SET_COUNT; ++set)
 			{
-				const int set = sets[i];
-				if (i == 1 && set == sets[0])
-				{
-					continue;
-				}
-
 				auto* at = reinterpret_cast<unsigned char*>(FOG_SETS + static_cast<std::uintptr_t>(set) * FOG_SET_SIZE);
 				if (!g_fog_have[set] || memcmp(at, g_fog_written[set], FOG_SET_SIZE) != 0)
 				{
@@ -356,20 +357,26 @@ namespace
 				}
 
 				memcpy(g_fog_written[set], wanted, FOG_SET_SIZE);
-				if (i == 0)
-				{
-					const unsigned char* own = g_fog_original[set];
-					shown->have = true;
-					shown->atmos = own[0x3C] != 0;
-					memcpy(&shown->start, own + 0x00, 4);
-					memcpy(&shown->half, own + 0x80, 4);
-					get_colour(own + (shown->atmos ? 0x94 : 0x7C), shown->colour);
-					get_colour(own + (shown->atmos ? 0x98 : 0x84), shown->colour2);
-					for (int n = 0; n < FOG_NUMBER_COUNT; ++n)
-					{
-						memcpy(&shown->number[n], own + FOG_ATMOS_NUMBERS[n], 4);
-					}
-				}
+			}
+
+			// what is shown as the game's own: where the fog is going, or the set the server gave if that is empty
+			const unsigned char* own = g_fog_original[FOG_TO];
+			float half = 0.0f;
+			memcpy(&half, own + 0x80, 4);
+			if (!own[0x3C] && half == 0.0f)
+			{
+				own = g_fog_original[*going_to >= 0 && *going_to < FOG_SET_COUNT ? *going_to : 1];
+			}
+
+			shown->have = true;
+			shown->atmos = own[0x3C] != 0;
+			memcpy(&shown->start, own + 0x00, 4);
+			memcpy(&shown->half, own + 0x80, 4);
+			get_colour(own + (shown->atmos ? 0x94 : 0x7C), shown->colour);
+			get_colour(own + (shown->atmos ? 0x98 : 0x84), shown->colour2);
+			for (int n = 0; n < FOG_NUMBER_COUNT; ++n)
+			{
+				memcpy(&shown->number[n], own + FOG_ATMOS_NUMBERS[n], 4);
 			}
 
 			return true;
@@ -385,10 +392,11 @@ namespace
 	{
 		ID3D11Texture2D* texture;
 		DXGI_FORMAT format;
-		unsigned samples, clears;
+		unsigned samples, clears, binds, width, height;
 		float cleared_to;
 	};
-	constexpr int CANDIDATE_MOST = 6;
+	ID3D11Texture2D* g_depth_chosen = nullptr;  // (only compared) the candidate that is the depth buffer, as of the last frame
+	constexpr int CANDIDATE_MOST = 10;
 	std::mutex g_depth_lock;
 	Candidate g_candidates[CANDIDATE_MOST] = {}, g_last_candidates[CANDIDATE_MOST] = {};
 	int g_candidate_count = 0, g_last_candidate_count = 0;
@@ -493,13 +501,10 @@ namespace
 		return g_depth_copy && g_depth_view;
 	}
 
-	void seen_clear(ID3D11DeviceContext* context, ID3D11DepthStencilView* view, const UINT flags, const FLOAT depth)
+	// A depth buffer the game has cleared (cleared: true) or set to be drawn to. 0.62 looked only at clears
+	// of buffers of the picture's size and found none.
+	void seen_depth(ID3D11DeviceContext* context, ID3D11DepthStencilView* view, const bool cleared, const FLOAT depth)
 	{
-		if (!g_depth || !view || !(flags & D3D11_CLEAR_DEPTH))
-		{
-			return;
-		}
-
 		ID3D11Resource* resource = nullptr;
 		view->GetResource(&resource);
 		if (!resource)
@@ -510,41 +515,46 @@ namespace
 		ID3D11Texture2D* texture = nullptr;
 		if (SUCCEEDED(resource->QueryInterface(__uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&texture))) && texture)
 		{
-			D3D11_TEXTURE2D_DESC desc{};
-			texture->GetDesc(&desc);
-			if (desc.Width == g_picture_width && desc.Height == g_picture_height && desc.Width)
+			std::lock_guard<std::mutex> lock(g_depth_lock);
+			int index = -1;
+			for (int i = 0; i < g_candidate_count; ++i)
 			{
-				std::lock_guard<std::mutex> lock(g_depth_lock);
-				int index = -1;
-				for (int i = 0; i < g_candidate_count; ++i)
-				{
-					index = g_candidates[i].texture == texture ? i : index;
-				}
+				index = g_candidates[i].texture == texture ? i : index;
+			}
 
-				if (index < 0 && g_candidate_count < CANDIDATE_MOST)
-				{
-					index = g_candidate_count++;
-					g_candidates[index] = {texture, desc.Format, desc.SampleDesc.Count, 0, depth};
-				}
+			if (index < 0 && g_candidate_count < CANDIDATE_MOST)
+			{
+				D3D11_TEXTURE2D_DESC desc{};
+				texture->GetDesc(&desc);
+				index = g_candidate_count++;
+				g_candidates[index] = {texture, desc.Format, desc.SampleDesc.Count, 0, 0, desc.Width, desc.Height, -1.0f};
+			}
 
-				if (index >= 0)
+			if (index >= 0)
+			{
+				Candidate& candidate = g_candidates[index];
+				candidate.clears += cleared ? 1 : 0;
+				candidate.binds += cleared ? 0 : 1;
+				if (cleared)
 				{
-					Candidate& candidate = g_candidates[index];
-					++candidate.clears;
 					candidate.cleared_to = depth;
-					if (index == g_depth_buffer)
-					{
-						if (g_depth_source != texture)
-						{
-							if (g_depth_source)
-							{
-								g_depth_source->Release();
-							}
+				}
 
-							g_depth_source = texture;
-							texture->AddRef();
+				if (texture == g_depth_chosen)
+				{
+					if (g_depth_source != texture)
+					{
+						if (g_depth_source)
+						{
+							g_depth_source->Release();
 						}
 
+						g_depth_source = texture;
+						texture->AddRef();
+					}
+
+					if (cleared)
+					{
 						g_depth_reversed = depth < 0.5f;
 						// (what the buffer holds before this clear, if that is what is asked for)
 						if (g_depth_taken > 0 && static_cast<int>(candidate.clears) == g_depth_taken && ready_copy(texture))
@@ -562,46 +572,85 @@ namespace
 		resource->Release();
 	}
 
+	thread_local bool t_own_drawing = false;  // (the depth being drawn over the picture: not the game's doing)
+	using targets_t = void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*, UINT, ID3D11RenderTargetView* const*, ID3D11DepthStencilView*);
+	targets_t g_original_targets = nullptr, g_original_deferred_targets = nullptr;
+
 	void STDMETHODCALLTYPE hooked_clear(ID3D11DeviceContext* context, ID3D11DepthStencilView* view, const UINT flags, const FLOAT depth, const UINT8 stencil)
 	{
-		seen_clear(context, view, flags, depth);
+		if (g_depth && view && (flags & D3D11_CLEAR_DEPTH) && !t_own_drawing)
+		{
+			seen_depth(context, view, true, depth);
+		}
+
 		g_original_clear(context, view, flags, depth, stencil);
 	}
 
 	void STDMETHODCALLTYPE hooked_deferred_clear(ID3D11DeviceContext* context, ID3D11DepthStencilView* view, const UINT flags, const FLOAT depth,
 	                                             const UINT8 stencil)
 	{
-		seen_clear(context, view, flags, depth);
+		if (g_depth && view && (flags & D3D11_CLEAR_DEPTH) && !t_own_drawing)
+		{
+			seen_depth(context, view, true, depth);
+		}
+
 		g_original_deferred_clear(context, view, flags, depth, stencil);
 	}
 
+	void STDMETHODCALLTYPE hooked_targets(ID3D11DeviceContext* context, const UINT count, ID3D11RenderTargetView* const* targets, ID3D11DepthStencilView* view)
+	{
+		if (g_depth && view && count && !t_own_drawing)
+		{
+			seen_depth(context, view, false, 0.0f);
+		}
+
+		g_original_targets(context, count, targets, view);
+	}
+
+	void STDMETHODCALLTYPE hooked_deferred_targets(ID3D11DeviceContext* context, const UINT count, ID3D11RenderTargetView* const* targets, ID3D11DepthStencilView* view)
+	{
+		if (g_depth && view && count && !t_own_drawing)
+		{
+			seen_depth(context, view, false, 0.0f);
+		}
+
+		g_original_deferred_targets(context, count, targets, view);
+	}
+
+	bool hook_method(void* method, void* detour, void* original)
+	{
+		return MH_CreateHook(method, detour, static_cast<LPVOID*>(original)) == MH_OK && MH_EnableHook(method) == MH_OK;
+	}
+
+	// (the methods are slots 53, the clearing of a depth buffer, and 33, the setting of what is drawn to, of
+	// the drawing context: the game's own and the kind it draws ahead with have each their own)
 	void hook_clears(ID3D11Device* device, ID3D11DeviceContext* context)
 	{
 		g_clear_hooked = true;
-		void* immediate = (*reinterpret_cast<void***>(context))[53];
-		const bool first = MH_CreateHook(immediate, reinterpret_cast<LPVOID>(&hooked_clear), reinterpret_cast<LPVOID*>(&g_original_clear)) == MH_OK &&
-		                   MH_EnableHook(immediate) == MH_OK;
-		bool second = false;
+		void** own = *reinterpret_cast<void***>(context);
+		const bool first = hook_method(own[53], reinterpret_cast<void*>(&hooked_clear), &g_original_clear);
+		const bool first_set = hook_method(own[33], reinterpret_cast<void*>(&hooked_targets), &g_original_targets);
+		bool second = false, second_set = false;
 		ID3D11DeviceContext* deferred = nullptr;
 		if (SUCCEEDED(device->CreateDeferredContext(0, &deferred)) && deferred)
 		{
-			void* other = (*reinterpret_cast<void***>(deferred))[53];
-			second = other != immediate &&
-			         MH_CreateHook(other, reinterpret_cast<LPVOID>(&hooked_deferred_clear), reinterpret_cast<LPVOID*>(&g_original_deferred_clear)) == MH_OK &&
-			         MH_EnableHook(other) == MH_OK;
+			void** other = *reinterpret_cast<void***>(deferred);
+			second = other[53] != own[53] && hook_method(other[53], reinterpret_cast<void*>(&hooked_deferred_clear), &g_original_deferred_clear);
+			second_set = other[33] != own[33] && hook_method(other[33], reinterpret_cast<void*>(&hooked_deferred_targets), &g_original_deferred_targets);
 			deferred->Release();
 		}
 
-		ui_log("passes: the depth buffer's clears are watched: on the game's own drawing %s, on its drawing ahead %s", first ? "yes" : "NO", second ? "yes" : "no");
+		ui_log("passes: the game's depth buffers are watched: cleared %s/%s, set to be drawn to %s/%s (its own drawing / its drawing ahead)", first ? "yes" : "NO",
+		       second ? "yes" : "no", first_set ? "yes" : "NO", second_set ? "yes" : "no");
 	}
 
 	const char* const DEPTH_VS = "float4 main(uint id : SV_VertexID) : SV_POSITION { return float4((id == 2) ? 3.0 : -1.0, (id == 1) ? 3.0 : -1.0, 0.0, 1.0); }";
-	const char* const DEPTH_PS_HEAD = "cbuffer P : register(b0) { float4 a; float4 b; };\n";
+	const char* const DEPTH_PS_HEAD = "cbuffer P : register(b0) { float4 a; float4 b; float4 c; };\n";
 	const char* const DEPTH_PS_ONE = "Texture2D<float> t : register(t0);\nfloat take(float2 p) { return t.Load(int3(p, 0)); }\n";
 	const char* const DEPTH_PS_MANY = "Texture2DMS<float> t : register(t0);\nfloat take(float2 p) { return t.Load(int2(p), 0); }\n";
 	const char* const DEPTH_PS_BODY =
 		"float4 main(float4 pos : SV_POSITION) : SV_TARGET {\n"
-		"  float d = take(pos.xy);\n"
+		"  float d = take(pos.xy * c.xy);\n"
 		"  if (a.z > 0.5) d = 1.0 - d;\n"
 		"  float v = d;\n"
 		"  if (a.w < 0.5) {\n"
@@ -647,7 +696,7 @@ namespace
 		}
 
 		D3D11_BUFFER_DESC buffer{};
-		buffer.ByteWidth = 32;
+		buffer.ByteWidth = 48;
 		buffer.Usage = D3D11_USAGE_DEFAULT;
 		buffer.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
 		device->CreateBuffer(&buffer, nullptr, &g_depth_constants);
@@ -712,8 +761,9 @@ namespace
 		context->IAGetPrimitiveTopology(&kept.topology);
 
 		const float reverse = g_depth_reversed_choice == 1 ? 0.0f : g_depth_reversed_choice == 2 ? 1.0f : reversed ? 1.0f : 0.0f;
-		const float values[8] = {g_depth_near, g_depth_range > 1.0f ? g_depth_range : 1.0f, reverse, g_depth_raw ? 1.0f : 0.0f, g_depth_curve > 0.05f ? g_depth_curve : 0.05f,
-		                         g_depth_near_white ? 1.0f : 0.0f, g_depth_far, 0.0f};
+		const float values[12] = {g_depth_near, g_depth_range > 1.0f ? g_depth_range : 1.0f, reverse, g_depth_raw ? 1.0f : 0.0f, g_depth_curve > 0.05f ? g_depth_curve : 0.05f,
+		                          g_depth_near_white ? 1.0f : 0.0f, g_depth_far, 0.0f, width ? static_cast<float>(g_depth_copy_desc.Width) / static_cast<float>(width) : 1.0f,
+		                          height ? static_cast<float>(g_depth_copy_desc.Height) / static_cast<float>(height) : 1.0f, 0.0f, 0.0f};
 		context->UpdateSubresource(g_depth_constants, 0, nullptr, values, 0, 0);
 		D3D11_VIEWPORT viewport{};
 		viewport.Width = static_cast<float>(width);
@@ -771,10 +821,15 @@ namespace
 
 void passes_start()
 {
-	const bool world = hook(BSP_CAMERA, &hooked_bsp, &g_original_bsp) && hook(SMODEL_CAMERA, &hooked_smodel, &g_original_smodel);
+	const bool glow = hook(BSP_CAMERA, &hooked_bsp, &g_original_bsp);
+	const bool w0 = hook(WORLD_COMMANDS[0], reinterpret_cast<void*>(static_cast<command_t>(&hooked_world<0>)), &g_original_world[0]);
+	const bool w1 = hook(WORLD_COMMANDS[1], reinterpret_cast<void*>(static_cast<command_t>(&hooked_world<1>)), &g_original_world[1]);
+	const bool w2 = hook(WORLD_COMMANDS[2], reinterpret_cast<void*>(static_cast<command_t>(&hooked_world<2>)), &g_original_world[2]);
+	const bool w3 = hook(WORLD_COMMANDS[3], reinterpret_cast<void*>(static_cast<command_t>(&hooked_world<3>)), &g_original_world[3]);
 	const bool models = hook(DOBJ_CAMERA, &hooked_dobj, &g_original_dobj);
-	char text[160];
-	snprintf(text, sizeof(text), "hook: passes: the map's drawing %s, the models' drawing %s", world ? "held" : "NOT held", models ? "held" : "NOT held");
+	char text[200];
+	snprintf(text, sizeof(text), "hook: passes: the map's surfaces %s/%s/%s, its static models %s/%s, the models' drawing %s", glow ? "held" : "NOT", w0 ? "held" : "NOT",
+	         w1 ? "held" : "NOT", w2 ? "held" : "NOT", w3 ? "held" : "NOT", models ? "held" : "NOT held");
 	theater_log(text);
 }
 
@@ -805,7 +860,7 @@ void passes_game_frame(const TheaterState& state)
 
 	apply_settings(elements);
 	const ULONGLONG now = GetTickCount64();
-	if (state.playing && (elements != Everything || g_gun_true_depth) && told < 12 && now - told_at > 3000)
+	if (state.playing && (elements != Everything || g_gun_true_depth) && told < 40 && now - told_at > 3000)
 	{
 		int characters = 0, views = 0;
 		for (const auto& one : g_characters)
@@ -821,8 +876,8 @@ void passes_game_frame(const TheaterState& state)
 		++told;
 		told_at = now;
 		char text[200];
-		snprintf(text, sizeof(text), "passes: showing \"%s\": %d characters' models, %d first-person models (flags %X), %d models held back since last told", ELEMENT_NAMES[elements],
-		         characters, views, g_view_flags.load(), g_held_back.exchange(0));
+		snprintf(text, sizeof(text), "passes: showing \"%s\": %d characters' models, %d first-person models (flags %X), %d models and %d map steps held back since last told",
+		         ELEMENT_NAMES[elements], characters, views, g_view_flags.load(), g_held_back.exchange(0), g_world_held.exchange(0));
 		theater_log(text);
 	}
 
@@ -841,7 +896,39 @@ void passes_game_frame(const TheaterState& state)
 	}
 
 	FogShown shown;
-	if (fog_step(wish, &shown))
+	int going_to = -1;
+	const bool stepped = fog_step(wish, &shown, &going_to);
+	static FogWish told_wish;
+	static int fog_told = 0;
+	static bool fog_first = true;
+	if (fog_told < 24 && (fog_first || memcmp(&told_wish, &wish, sizeof(wish)) != 0))
+	{
+		// (what the game's own fog is, and what is asked of it: for working out which number is which)
+		++fog_told;
+		fog_first = false;
+		told_wish = wish;
+		std::string numbers, asked;
+		for (int i = 0; i < FOG_NUMBER_COUNT; ++i)
+		{
+			char one[40];
+			snprintf(one, sizeof(one), " %g", shown.number[i]);
+			numbers += one;
+			if (wish.number_on[i])
+			{
+				snprintf(one, sizeof(one), " #%d=%g", i + 1, wish.number[i]);
+				asked += one;
+			}
+		}
+
+		char text[420];
+		snprintf(text, sizeof(text), "fog: %s; going to set %d; the game's own: %s, start %g, half %g, colours %.2f %.2f %.2f / %.2f %.2f %.2f, numbers%s; asked: colour %d, second %d, start %d, half %d%s",
+		         stepped ? "read" : "NOT read (a fault)", going_to, shown.atmos ? "atmosphere kind" : "plain kind", shown.start, shown.half, shown.colour[0], shown.colour[1],
+		         shown.colour[2], shown.colour2[0], shown.colour2[1], shown.colour2[2], numbers.c_str(), wish.colour_on ? 1 : 0, wish.colour2_on ? 1 : 0, wish.start_on ? 1 : 0,
+		         wish.half_on ? 1 : 0, asked.c_str());
+		theater_log(text);
+	}
+
+	if (stepped)
 	{
 		std::lock_guard<std::mutex> lock(g_fog_lock);
 		g_fog_shown = shown;
@@ -880,6 +967,34 @@ void passes_before_copy(IDXGISwapChain* swap_chain, ID3D11Device* device, ID3D11
 		g_last_candidate_count = g_candidate_count;
 		g_candidate_count = 0;
 		memset(g_candidates, 0, sizeof(g_candidates));
+		// the depth buffer: the one asked for by number, or of itself the one of the picture's size that
+		// was drawn to most (failing that, the one drawn to most)
+		if (wanted && g_last_candidate_count)
+		{
+			int best = 0;
+			unsigned best_score = 0;
+			for (int i = 0; i < g_last_candidate_count; ++i)
+			{
+				const Candidate& one = g_last_candidates[i];
+				const unsigned score = (one.width == picture.Width && one.height == picture.Height ? 1000000u : 0u) + one.binds + one.clears;
+				if (score > best_score)
+				{
+					best = i;
+					best_score = score;
+				}
+			}
+
+			const int index = g_depth_buffer > 0 && g_depth_buffer <= g_last_candidate_count ? g_depth_buffer - 1 : best;
+			if (g_depth_chosen != g_last_candidates[index].texture)
+			{
+				g_depth_chosen = g_last_candidates[index].texture;
+				g_depth_copied = false;
+			}
+		}
+		else if (!wanted)
+		{
+			g_depth_chosen = nullptr;
+		}
 		if (!wanted)
 		{
 			if (g_depth_source)
@@ -909,20 +1024,22 @@ void passes_before_copy(IDXGISwapChain* swap_chain, ID3D11Device* device, ID3D11
 	if (wanted)
 	{
 		const ULONGLONG now = GetTickCount64();
-		if (told < 8 && now - told_at > 2000)
+		if (told < 16 && now - told_at > 2000)
 		{
 			++told;
 			told_at = now;
 			std::string all;
 			for (int i = 0; i < g_last_candidate_count; ++i)
 			{
-				char one[96];
-				snprintf(one, sizeof(one), " [%d: format %d, %u samples, cleared %u times to %g]", i + 1, static_cast<int>(g_last_candidates[i].format), g_last_candidates[i].samples,
-				         g_last_candidates[i].clears, g_last_candidates[i].cleared_to);
+				char one[160];
+				snprintf(one, sizeof(one), " [%d%s: %ux%u, format %d, %u samples, set %u times, cleared %u times to %g]", i + 1,
+				         g_last_candidates[i].texture == g_depth_chosen ? "*" : "", g_last_candidates[i].width, g_last_candidates[i].height,
+				         static_cast<int>(g_last_candidates[i].format), g_last_candidates[i].samples, g_last_candidates[i].binds, g_last_candidates[i].clears,
+				         g_last_candidates[i].cleared_to);
 				all += one;
 			}
 
-			ui_log("passes: depth buffers of the picture's size (%ux%u) cleared this frame:%s%s", picture.Width, picture.Height, all.empty() ? " none" : all.c_str(),
+			ui_log("passes: the picture is %ux%u; depth buffers the game used this frame:%s%s", picture.Width, picture.Height, all.empty() ? " none" : all.c_str(),
 			       copied ? "; a copy is drawn" : "; NO copy to draw yet");
 		}
 
@@ -943,7 +1060,9 @@ void passes_before_copy(IDXGISwapChain* swap_chain, ID3D11Device* device, ID3D11
 		if (SUCCEEDED(device->CreateRenderTargetView(back, nullptr, &target)) && target)
 		{
 			std::lock_guard<std::mutex> lock(g_depth_lock);
+			t_own_drawing = true;
 			draw_depth(context, target, picture.Width, picture.Height, many, reversed);
+			t_own_drawing = false;
 			target->Release();
 		}
 	}
@@ -979,6 +1098,7 @@ void passes_release()
 	}
 
 	g_depth_copied = false;
+	g_depth_chosen = nullptr;
 	g_candidate_count = 0;
 }
 
@@ -1081,12 +1201,11 @@ void passes_draw_ui(const bool busy)
 			static const char* const WAYS[] = {"As the game clears it", "Near is 0", "Near is 1"};
 			ui_row_label("Buffer");
 			ImGui::SetNextItemWidth(-FLT_MIN);
-			int buffer = g_depth_buffer + 1;
-			if (ImGui::SliderInt("##depthBuffer", &buffer, 1, CANDIDATE_MOST))
+			int buffer = g_depth_buffer;
+			if (ImGui::SliderInt("##depthBuffer", &buffer, 0, CANDIDATE_MOST, buffer ? "%d" : "found by itself"))
 			{
 				std::lock_guard<std::mutex> lock(g_depth_lock);
-				g_depth_buffer = buffer - 1;
-				g_depth_copied = false;
+				g_depth_buffer = buffer;
 			}
 
 			ui_row_label("Taken");
@@ -1125,7 +1244,7 @@ void passes_draw_ui(const bool busy)
 		theater_command(true_depth ? "r_znear 0.5" : "r_znear 4");
 	}
 
-	ImGui::SetItemTooltip("The game draws the gun pressed flat against the front of its depth, so depth effects (ReShade's depth of field)\nsee it as nearer than anything can be. On: the gun is drawn at the depth it is really at, a little in front\nof the camera, so a focus set very near takes in the gun and nothing else. It can poke through walls you stand against.\nExperimental: look at \"As depth\" to see what it does.");
+	ImGui::SetItemTooltip("For depth effects such as ReShade's depth of field: the game's near plane is brought in from 4 to 0.5, which spreads the gun's depth out\nso a focus set very near takes in the gun and nothing else. Untick to put it back.");
 	ImGui::Spacing();
 	ImGui::TextDisabled("Recorded one after another when Start recording is pressed:");
 	ImGui::BeginDisabled(busy);

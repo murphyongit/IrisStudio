@@ -158,6 +158,30 @@ namespace
 	std::unordered_map<std::string, std::pair<int, unsigned>> g_numbers;  // a gear model's kind and number
 	bool g_numbers_read = false;
 	std::vector<std::pair<int, unsigned>> g_extra;  // what is asked for on top of the server's lists
+	// ---- a re-dressed player's gear, by name (0.63). The game keeps each character's models as NAMES: a
+	// record of 0xCC0 bytes a character (42 players' from 0x141620568; 8 more from 0x141649350 and the
+	// bodies' from 0x14164F950), its handle first, whether its models are all loaded next (0x1401B06E0
+	// asks for each name), the first model's name at +0x24 and up to 20 more names of 0x40 bytes from
+	// +0x64; a character's model is made from the names. So gear a set replaces is written over in the
+	// player's record with the set's (the game then makes the player with it by itself, and the bodies it
+	// leaves take the record as it is), and the gear the player came with, named by no record any more,
+	// can be taken off the lists and out of memory: that is what lets every player wear something else.
+	struct Renamed
+	{
+		std::string original, written;
+	};
+	std::map<std::pair<std::uintptr_t, int>, Renamed> g_renamed;     // by record and place in it
+	std::map<int, std::map<std::string, std::string>> g_unrenamed;  // per handle: a name written, and what was there
+	std::set<std::string> g_record_names;                           // every name in the records now
+	std::set<std::pair<int, unsigned>> g_dropped;                   // the match's own gear kept off the lists
+	bool g_names_off = false;
+	// (the list the game last made each entity's model from: see hooked_create)
+	struct LastList
+	{
+		std::vector<unsigned char> bytes;
+		unsigned short count = 0;
+	};
+	std::map<int, LastList> g_last;
 	unsigned g_syncs = 0;
 
 	// The parts of a multiplayer outfit, by how their models' names begin (headgear before head).
@@ -521,7 +545,7 @@ namespace
 				note("models: the game was given its lists of gear to load (%u so far; %zu numbers in the ten kinds; flag %d)", g_syncs, held, flag);
 			}
 
-			if (!g_extra.empty() && (state.playing || state.starting))
+			if ((!g_extra.empty() || !g_dropped.empty()) && (state.playing || state.starting))
 			{
 				memcpy(copy, lists, SYNC_SIZE);
 				for (int kind = 0; kind < SYNC_KINDS; ++kind)
@@ -536,6 +560,20 @@ namespace
 
 					numbers[kind].assign(values, values + count);
 					bool added = false;
+					// (the match's own gear nobody is made with any more stays out)
+					for (auto value = numbers[kind].begin(); value != numbers[kind].end();)
+					{
+						if (g_dropped.count({kind, *value & 0xFFFFFF}))
+						{
+							value = numbers[kind].erase(value);
+							added = true;
+						}
+						else
+						{
+							++value;
+						}
+					}
+
 					for (const auto& extra : g_extra)
 					{
 						if (extra.first != kind)
@@ -559,7 +597,7 @@ namespace
 					if (added)
 					{
 						*reinterpret_cast<std::uint16_t*>(list) = static_cast<std::uint16_t>(numbers[kind].size());
-						*reinterpret_cast<const std::uint32_t**>(list + 8) = numbers[kind].data();
+						*reinterpret_cast<const std::uint32_t**>(list + 8) = numbers[kind].empty() ? nullptr : numbers[kind].data();
 						changed = true;
 					}
 				}
@@ -823,6 +861,14 @@ namespace
 				}
 
 				merged[i] = g_saved_sync.numbers[i];
+				if (i < SYNC_KINDS)
+				{
+					for (auto value = merged[i].begin(); value != merged[i].end();)
+					{
+						value = g_dropped.count({i, *value & 0xFFFFFF}) ? merged[i].erase(value) : std::next(value);
+					}
+				}
+
 				for (const auto& extra : g_extra)
 				{
 					bool there = extra.first != i;
@@ -908,6 +954,230 @@ namespace
 		}
 	}
 
+	constexpr std::uintptr_t RECORDS_PLAYERS = 0x141620568, RECORDS_AGENTS = 0x141649350, RECORDS_BODIES = 0x14164F950;
+	constexpr int RECORD_SIZE = 0xCC0, NAME_PLACES = 21, NAME_SIZE = 0x40;
+	struct RecordCopy
+	{
+		int handle, valid;
+		char names[NAME_PLACES][NAME_SIZE];
+	};
+
+	char* name_place(const std::uintptr_t record, const int place)
+	{
+		return reinterpret_cast<char*>(record + (place == 0 ? 0x24 : 0x64 + static_cast<std::uintptr_t>(place - 1) * NAME_SIZE));
+	}
+
+	bool read_record(const std::uintptr_t record, RecordCopy* out)
+	{
+		__try
+		{
+			out->handle = *reinterpret_cast<const int*>(record);
+			out->valid = *reinterpret_cast<const int*>(record + 4);
+			for (int place = 0; place < NAME_PLACES; ++place)
+			{
+				memcpy(out->names[place], name_place(record, place), NAME_SIZE);
+				out->names[place][NAME_SIZE - 1] = 0;
+			}
+
+			return true;
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			return false;
+		}
+	}
+
+	bool write_name(const std::uintptr_t record, const int place, const char* name)
+	{
+		__try
+		{
+			char* at = name_place(record, place);
+			memset(at, 0, NAME_SIZE);
+			strncpy_s(at, NAME_SIZE, name, _TRUNCATE);
+			return true;
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			return false;
+		}
+	}
+
+	bool free_dobj(const int handle)
+	{
+		__try
+		{
+			reinterpret_cast<void (*)(int)>(COM_SAFE_CLIENT_DOBJ_FREE)(handle);
+			return true;
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			return false;
+		}
+	}
+
+	// (on the game's thread, the lock not held) The players' records brought to what the editor's choices
+	// say: gear a set replaces written over with the set's, gear no longer replaced written back. A player
+	// whose record changed is let go of, and the game makes it again from the record.
+	void rename_gear(const TheaterState& state)
+	{
+		if (!state.playing)
+		{
+			return;
+		}
+
+		static ULONGLONG window = 0;
+		static int writes = 0;
+		static int told = 0;
+		std::vector<int> changed;
+		bool back = false;
+		{
+			std::lock_guard<std::mutex> lock(g_lock);
+			if (!g_listed)
+			{
+				list_loaded();
+			}
+
+			g_record_names.clear();
+			g_unrenamed.clear();
+			const struct
+			{
+				std::uintptr_t base;
+				int count;
+				bool players;
+			} arrays[] = {{RECORDS_PLAYERS, 42, true}, {RECORDS_AGENTS, 8, false}, {RECORDS_BODIES, 8, false}};
+			static RecordCopy copy;
+			for (const auto& array : arrays)
+			{
+				for (int index = 0; index < array.count; ++index)
+				{
+					const std::uintptr_t record = array.base + static_cast<std::uintptr_t>(index) * RECORD_SIZE;
+					if (!read_record(record, &copy) || !copy.names[0][0])
+					{
+						continue;
+					}
+
+					const auto swaps = array.players && !g_names_off ? g_swaps.find(copy.handle) : g_swaps.end();
+					for (int place = 0; place < NAME_PLACES; ++place)
+					{
+						std::string now = copy.names[place];
+						const std::pair<std::uintptr_t, int> key{record, place};
+						auto renamed = g_renamed.find(key);
+						if (renamed != g_renamed.end() && (now.empty() || now != renamed->second.written))
+						{
+							// (the game has written the record anew)
+							g_renamed.erase(renamed);
+							renamed = g_renamed.end();
+						}
+
+						if (now.empty())
+						{
+							continue;
+						}
+
+						const std::string original = renamed != g_renamed.end() ? renamed->second.original : now;
+						std::string wanted = original;
+						if (swaps != g_swaps.end())
+						{
+							const auto swap = swaps->second.find(original);
+							if (swap != swaps->second.end() && !swap->second.empty() && swap->second != original && swap->second.size() < NAME_SIZE &&
+							    g_numbers.count(swap->second) && g_numbers.count(original) && g_loaded.count(swap->second))
+							{
+								wanted = swap->second;
+							}
+						}
+
+						if (wanted == original && now != original && !g_loaded.count(original))
+						{
+							// (going back to gear that was let go of: it is asked for again first)
+							const auto number = g_numbers.find(original);
+							if (number != g_numbers.end() && g_dropped.erase(number->second))
+							{
+								back = true;
+							}
+
+							wanted = now;
+						}
+
+						if (wanted != now && write_name(record, place, wanted.c_str()))
+						{
+							if (wanted == original)
+							{
+								g_renamed.erase(key);
+							}
+							else
+							{
+								g_renamed[key] = {original, wanted};
+							}
+
+							if (told < 60)
+							{
+								++told;
+								note("models: entity %d's record: %s written over with %s", copy.handle, now.c_str(), wanted.c_str());
+							}
+
+							now = wanted;
+							changed.push_back(copy.handle);
+							++writes;
+						}
+
+						g_record_names.insert(now);
+						if (array.players && now != original)
+						{
+							g_unrenamed[copy.handle][now] = original;
+						}
+					}
+				}
+			}
+
+			// (if the game keeps writing the records back, this is not the way: the players would flicker)
+			const ULONGLONG now = GetTickCount64();
+			if (now - window > 3000)
+			{
+				window = now;
+				writes = 0;
+			}
+			else if (writes > 400 && !g_names_off)
+			{
+				g_names_off = true;
+				note("models: the game keeps writing the players' records back (%d writes in 3 s): gear is no longer changed by name", writes);
+			}
+		}
+
+		for (const int handle : changed)
+		{
+			free_dobj(handle);
+		}
+
+		if (back)
+		{
+			g_replay_wanted = true;
+		}
+	}
+
+	// (with the lock held) Whether a model that is in memory is in the list a character that is there now was made from.
+	bool in_a_made_model(const std::string& name)
+	{
+		const auto loaded = g_loaded.find(name);
+		if (loaded == g_loaded.end())
+		{
+			return false;
+		}
+
+		for (const auto& last : g_last)
+		{
+			const unsigned char* bytes = last.second.bytes.data();
+			for (unsigned short i = 0; i < last.second.count && (i + 1u) * 0x20 <= last.second.bytes.size(); ++i)
+			{
+				if (*reinterpret_cast<void* const*>(bytes + i * 0x20) == loaded->second && has_dobj(last.first))
+				{
+					return true;
+				}
+			}
+		}
+
+		return false;
+	}
+
 	// (on the game's thread, the lock not held) Two steps, a little apart: the gear no longer worn is taken
 	// off the lists, then everything still counted on it is taken off.
 	void release_unworn(const TheaterState& state)
@@ -953,6 +1223,25 @@ namespace
 					worn.insert(entity.second.begin(), entity.second.end());
 				}
 
+				// (what a record names is what the game makes its character with)
+				worn.insert(g_record_names.begin(), g_record_names.end());
+				// the match's own gear that the editor wrote over in every record that named it: nothing is
+				// made with it any more, and its place can go to something else
+				for (const auto& renamed : g_renamed)
+				{
+					const std::string& own = renamed.second.original;
+					const auto number = g_numbers.find(own);
+					const char* named = number != g_numbers.end() ? number_name(number->second.first, number->second.second) : nullptr;
+					if (!named || worn.count(own) || !g_loaded.count(own) || g_dropped.count(number->second) || !server_lists(number->second) ||
+					    in_a_made_model(own))
+					{
+						continue;
+					}
+
+					g_dropped.insert(number->second);
+					g_release.names.emplace_back(own, named);
+				}
+
 				for (auto asked = g_asked_models.begin(); asked != g_asked_models.end();)
 				{
 					const auto number = g_numbers.find(*asked);
@@ -964,7 +1253,7 @@ namespace
 					}
 
 					// (what the match's own lists have come to hold as well is the game's to keep)
-					if (!server_lists(number->second))
+					if (!server_lists(number->second) || g_dropped.count(number->second))
 					{
 						g_release.names.emplace_back(*asked, named);
 					}
@@ -995,7 +1284,7 @@ namespace
 			{
 				std::lock_guard<std::mutex> lock(g_lock);
 				const auto number = g_numbers.find(name.first);
-				if (g_asked_models.count(name.first) || number == g_numbers.end() || server_lists(number->second) ||
+				if (g_asked_models.count(name.first) || number == g_numbers.end() || (server_lists(number->second) && !g_dropped.count(number->second)) ||
 				    std::find(g_extra.begin(), g_extra.end(), number->second) != g_extra.end())
 				{
 					continue;
@@ -1273,12 +1562,6 @@ namespace
 	// the list the game last made each entity's model from, as the game gave it: the model is made again
 	// from it when the editor's choices change (going back in the recording did not always make the game
 	// do so: a player whose gear is the same before and after is not made again)
-	struct LastList
-	{
-		std::vector<unsigned char> bytes;
-		unsigned short count = 0;
-	};
-	std::map<int, LastList> g_last;
 
 	void hooked_overrides(void* made, unsigned char* list, const int count)
 	{
@@ -1503,6 +1786,20 @@ namespace
 					}
 
 					names.emplace_back(name);
+				}
+			}
+
+			// (gear the editor wrote into the player's record goes by the name that was there: the editor's
+			// choices are kept by the player's own gear)
+			if (const auto renamed = g_unrenamed.find(handle); renamed != g_unrenamed.end())
+			{
+				for (std::string& name : names)
+				{
+					const auto was = renamed->second.find(name);
+					if (was != renamed->second.end())
+					{
+						name = was->second;
+					}
 				}
 			}
 
@@ -2398,6 +2695,7 @@ void models_game_frame(const TheaterState& state)
 		theater_rebuild();
 	}
 
+	rename_gear(state);
 	remake_changed(state);
 	release_unworn(state);
 	std::lock_guard<std::mutex> lock(g_lock);
@@ -2416,6 +2714,11 @@ void models_game_frame(const TheaterState& state)
 		g_asked_models.clear();
 		g_release.names.clear();
 		g_release.due = 0;
+		g_dropped.clear();
+		g_renamed.clear();
+		g_unrenamed.clear();
+		g_record_names.clear();
+		g_names_off = false;
 		return;
 	}
 
