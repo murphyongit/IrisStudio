@@ -13,6 +13,7 @@
 #include <MinHook.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cstdarg>
 #include <cstdio>
@@ -130,6 +131,22 @@ namespace
 	constexpr std::uintptr_t CL_STREAM_SYNC = 0x140022290, BG_CUSTOMIZATION_KIND = 0x1403CC830, BG_CUSTOMIZATION_MODEL_NAME = 0x14000C100;
 	constexpr int SYNC_KINDS = 10;
 	constexpr size_t SYNC_SIZE = 0x4A0;
+	constexpr int SYNC_LISTS = static_cast<int>(SYNC_SIZE / 16);
+	constexpr std::uintptr_t CUSTOM_IN_USE = 0x140B5F0E8, CUSTOM_KINDS = 0x140B33B48, CUSTOM_ENTRIES = 0x140B33B90;
+
+	// the lists as the game last had them from the server, kept whole (their numbers copied): the game's
+	// own handling of them is run again with what the editor asks for added, so the asking does not wait
+	// for the recording to give the lists again (it may never)
+	struct SavedSync
+	{
+		bool have = false;
+		int flag = 0;
+		unsigned char bytes[SYNC_SIZE];
+		std::vector<std::uint32_t> numbers[SYNC_LISTS];
+		bool owned[SYNC_LISTS];
+	};
+	SavedSync g_saved_sync;
+	std::atomic<bool> g_replay_wanted{false};
 	using stream_sync_t = void (*)(int, unsigned char*, int);
 	stream_sync_t g_original_stream_sync = nullptr;
 	std::unordered_map<std::string, std::pair<int, unsigned>> g_numbers;  // a gear model's kind and number
@@ -392,19 +409,6 @@ namespace
 		}
 	}
 
-	const char* number_name(const int kind, const unsigned number)
-	{
-		__try
-		{
-			const int of_kind = reinterpret_cast<int (*)(int)>(BG_CUSTOMIZATION_KIND)(kind);
-			return reinterpret_cast<const char* (*)(int, unsigned)>(BG_CUSTOMIZATION_MODEL_NAME)(of_kind, number);
-		}
-		__except (EXCEPTION_EXECUTE_HANDLER)
-		{
-			return nullptr;
-		}
-	}
-
 	// (with the lock held)
 	void read_numbers()
 	{
@@ -413,34 +417,45 @@ namespace
 			return;
 		}
 
-		g_numbers_read = true;
-		for (int kind = 0; kind < SYNC_KINDS; ++kind)
+		// The game's own table of gear models, as its code reads it (0x14000C100, 0x14000C3D0): entries of
+		// 0x58 bytes from 0x140B33B90 (the model's name, its lobby model's name, the name it is loaded by),
+		// and for each kind of gear where its entries begin and how many there are (two words each, from
+		// 0x140B33B48). The lists the game loads gear by hold an entry's place in the whole table, from 1.
+		// (0.46 to 0.53 asked the game for the name of number 0 of each kind, which is none: nothing was
+		// ever found, and nothing was ever asked for.)
+		const int in_use = IsBadReadPtr(reinterpret_cast<const void*>(CUSTOM_IN_USE), 4) ? -1 : *reinterpret_cast<const int*>(CUSTOM_IN_USE);
+		std::string layout;
+		for (int t = 0; t < 12 && !IsBadReadPtr(reinterpret_cast<const void*>(CUSTOM_KINDS), 48); ++t)
 		{
-			std::string first;
-			for (unsigned number = 0; number < 1500; ++number)
+			const unsigned first = *reinterpret_cast<const std::uint16_t*>(CUSTOM_KINDS + t * 4);
+			const unsigned count = *reinterpret_cast<const std::uint16_t*>(CUSTOM_KINDS + t * 4 + 2);
+			layout += " " + std::to_string(first) + "+" + std::to_string(count);
+			if (!count || count > 1500 || first + count > 4000)
 			{
-				const char* name = number_name(kind, number);
-				if (!name || IsBadStringPtrA(name, 96) || name[0] < 33 || strnlen(name, 96) >= 90)
+				continue;
+			}
+
+			for (unsigned i = 0; i < count; ++i)
+			{
+				const std::uintptr_t entry = CUSTOM_ENTRIES + static_cast<std::uintptr_t>(first + i) * 0x58;
+				if (IsBadReadPtr(reinterpret_cast<const void*>(entry), 0x18))
 				{
 					break;
 				}
 
-				// (past the last of a kind the game may give its first again)
-				if (number > 0 && first == name)
+				for (const int offset : {0, 8})
 				{
-					break;
+					const char* name = *reinterpret_cast<const char* const*>(entry + offset);
+					if (name && !IsBadStringPtrA(name, 96) && name[0] >= 33 && strnlen(name, 96) < 90)
+					{
+						g_numbers.emplace(name, std::make_pair(t >= 1 && t <= SYNC_KINDS ? t - 1 : 0, first + i + 1));
+					}
 				}
-
-				if (number == 0)
-				{
-					first = name;
-				}
-
-				g_numbers.emplace(name, std::make_pair(kind, number));
 			}
 		}
 
-		note("models: %zu gear models have a number the game's lists can ask for", g_numbers.size());
+		g_numbers_read = !g_numbers.empty();
+		note("models: %zu gear models have a place in the game's table (in use %d; kinds' first+count:%s)", g_numbers.size(), in_use, layout.c_str());
 	}
 
 	// The server's lists, with what the editor asks for added.
@@ -454,6 +469,31 @@ namespace
 			std::lock_guard<std::mutex> lock(g_lock);
 			++g_syncs;
 			const TheaterState state = theater_state();
+			// kept, as the server gave them
+			g_saved_sync.have = true;
+			g_saved_sync.flag = flag;
+			memcpy(g_saved_sync.bytes, lists, SYNC_SIZE);
+			size_t held = 0;
+			for (int i = 0; i < SYNC_LISTS; ++i)
+			{
+				const unsigned char* list = lists + i * 16;
+				const unsigned count = *reinterpret_cast<const std::uint16_t*>(list);
+				const auto* values = *reinterpret_cast<const std::uint32_t* const*>(list + 8);
+				g_saved_sync.numbers[i].clear();
+				g_saved_sync.owned[i] = count == 0 && i < SYNC_KINDS;
+				if (count && count <= 4096 && values && !IsBadReadPtr(values, count * 4))
+				{
+					g_saved_sync.numbers[i].assign(values, values + count);
+					g_saved_sync.owned[i] = true;
+					held += i < SYNC_KINDS ? count : 0;
+				}
+			}
+
+			if (g_syncs <= 6)
+			{
+				note("models: the game was given its lists of gear to load (%u so far; %zu numbers in the ten kinds; flag %d)", g_syncs, held, flag);
+			}
+
 			if (!g_extra.empty() && (state.playing || state.starting))
 			{
 				memcpy(copy, lists, SYNC_SIZE);
@@ -506,6 +546,69 @@ namespace
 		}
 
 		g_original_stream_sync(client, changed ? copy : lists, flag);
+	}
+
+	bool call_sync(unsigned char* lists, const int flag)
+	{
+		__try
+		{
+			g_original_stream_sync(0, lists, flag);
+			return true;
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			return false;
+		}
+	}
+
+	// (on the game's thread) The game's handling of its lists run again, with the editor's asked-for gear
+	// in them: false if the game has not been given any lists in this session.
+	bool replay_sync()
+	{
+		static unsigned char buffer[SYNC_SIZE];
+		static std::vector<std::uint32_t> merged[SYNC_LISTS];
+		int flag = 0;
+		size_t added = 0;
+		{
+			std::lock_guard<std::mutex> lock(g_lock);
+			if (!g_saved_sync.have || g_extra.empty())
+			{
+				return false;
+			}
+
+			memcpy(buffer, g_saved_sync.bytes, SYNC_SIZE);
+			flag = g_saved_sync.flag;
+			for (int i = 0; i < SYNC_LISTS; ++i)
+			{
+				if (!g_saved_sync.owned[i])
+				{
+					continue;
+				}
+
+				merged[i] = g_saved_sync.numbers[i];
+				for (const auto& extra : g_extra)
+				{
+					bool there = extra.first != i;
+					for (const std::uint32_t value : merged[i])
+					{
+						there = there || (value & 0xFFFFFF) == extra.second;
+					}
+
+					if (!there)
+					{
+						merged[i].push_back(extra.second);
+						++added;
+					}
+				}
+
+				*reinterpret_cast<std::uint16_t*>(buffer + i * 16) = static_cast<std::uint16_t>(merged[i].size());
+				*reinterpret_cast<const std::uint32_t**>(buffer + i * 16 + 8) = merged[i].empty() ? nullptr : merged[i].data();
+			}
+		}
+
+		const bool done = call_sync(buffer, flag);
+		note(done ? "models: the game's lists handled again with %zu more gear models in them" : "models: a fault handling the game's lists again (%zu more)", added);
+		return done;
 	}
 
 	bool ask_for(const char* model)
@@ -1368,9 +1471,21 @@ int models_find(const char* text, const int group, const int slot, char names[][
 
 		const bool first_person = name.compare(0, 3, "vm_") == 0 || name.compare(0, 10, "viewmodel_") == 0 || name.compare(0, 8, "mp_view_") == 0;
 		const int part = slot_of(name);
+		bool whole = false;
+		if (group == 4 && name.compare(0, slot == 1 ? 3 : 4, slot == 1 ? "vm_" : "npc_") == 0)
+		{
+			// a gun that comes whole: a model made of several (its barrel, stock and the rest), as the loot
+			// variants are; a bare "_base" is the receiver alone, the game adding the rest part by part
+			const auto loaded = g_loaded.find(name);
+			const auto* bytes = loaded != g_loaded.end() ? static_cast<const unsigned char*>(loaded->second) : nullptr;
+			const bool several = bytes && !IsBadReadPtr(bytes + 0x200, 8) && (*reinterpret_cast<const std::uint16_t*>(bytes + 0x204) & 0x400) != 0 && bytes[0x202] > 1;
+			whole = several || name.find("_loot") != std::string::npos;
+		}
+
 		const bool in_group = group == 0 ? part >= 0 && (slot < 0 || part == slot) && !ends_with(name, "_lob")
 			: group == 1 ? name.compare(0, 4, "npc_") == 0
 			: group == 2 ? first_person
+			: group == 4 ? whole
 			: true;
 		if (in_group && (!text[0] || name.find(text) != std::string::npos))
 		{
@@ -1686,6 +1801,13 @@ bool models_loading_allowed()
 // Each frame on the game's own thread: the sets being waited for.
 void models_game_frame(const TheaterState& state)
 {
+	if (g_replay_wanted.exchange(false) && !replay_sync())
+	{
+		// (no lists yet in this session: they are given when the recording is gone back in)
+		theater_log("models: the game has not been given its lists yet; going back in the recording for them");
+		theater_rebuild();
+	}
+
 	remake_changed(state);
 	std::lock_guard<std::mutex> lock(g_lock);
 	if (!state.playing && !state.starting)
@@ -1723,10 +1845,12 @@ void models_game_frame(const TheaterState& state)
 				}
 			}
 
+			note("models: set %s: %zu of its parts not in memory asked for from the game's files", pending.name.c_str(), asked);
 			if (asked)
 			{
-				pending.since = now + 4000;  // (the going back, then the loading)
-				theater_rebuild();
+				// (the lists are handled again on the next frame: see models_game_frame)
+				pending.since = now + 1500;
+				g_replay_wanted = true;
 				return;
 			}
 		}

@@ -1529,7 +1529,9 @@ namespace
 						{
 							snprintf(target, sizeof(target), "%s", own);
 							target_slot = slot;
-							group = entity == FIRST_PERSON ? 2 : slot >= 0 ? 0 : strncmp(own, "npc_", 4) == 0 ? 1 : strncmp(own, "mp_", 3) == 0 || !own[0] ? 0 : 2;
+							// (a gun: the whole guns first, so that it stays in one piece)
+							const bool gun = (strncmp(own, "npc_", 4) == 0 || strncmp(own, "vm_", 3) == 0) && (strstr(own, "_base") || strstr(own, "_loot"));
+							group = gun ? 4 : entity == FIRST_PERSON ? 2 : slot >= 0 ? 0 : strncmp(own, "npc_", 4) == 0 ? 1 : strncmp(own, "mp_", 3) == 0 || !own[0] ? 0 : 2;
 							search[0] = 0;
 						}
 
@@ -1601,8 +1603,8 @@ namespace
 
 						ImGui::SetNextItemWidth(-1.0f);
 						ImGui::InputTextWithHint("##modelSearch", ICON_SEARCH "  search the models by name", search, sizeof(search));
-						static const char* const GROUPS[] = {"Outfit", "Weapons", "First person", "Everything"};
-						for (int g = 0; g < 4; ++g)
+						static const char* const GROUPS[] = {"Outfit", "Weapons", "First person", "Everything", "Whole guns"};
+						for (int g = 0; g < 5; ++g)
 						{
 							if (g)
 							{
@@ -1620,7 +1622,14 @@ namespace
 							ImGui::Checkbox("Only this kind of part", &only_this_kind);
 						}
 
-						const int found_count = models_find(search, group, group == 0 && only_this_kind ? target_slot : -1, found, 400);
+						if (group == 4)
+						{
+							ImGui::PushTextWrapPos(0.0f);
+							ImGui::TextDisabled("Guns that come in one piece. Under Weapons, a \"_base\" model is only the body: its barrel and stock are separate parts.");
+							ImGui::PopTextWrapPos();
+						}
+
+						const int found_count = models_find(search, group, group == 4 ? (entity == FIRST_PERSON ? 1 : 0) : group == 0 && only_this_kind ? target_slot : -1, found, 400);
 						ImGui::BeginChild("modelResults", {0.0f, g_font_size * 14.0f}, ImGuiChildFlags_Border);
 						ImGuiListClipper clipper;
 						clipper.Begin(found_count);

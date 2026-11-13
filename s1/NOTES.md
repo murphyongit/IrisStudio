@@ -96,3 +96,13 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
   a full mask drops the head, a helmet on a masked player adds a head. Checked offline: "samurai" resolves to exactly the user's own recorded outfit.
 - Old code read only col 10 as gender, so pants (gender in col 12) and hats (head name) got an arbitrary row.
 - Loading of parts not in memory is still the 0.46 stream-sync path behind the checkbox, never yet run by the user.
+
+## 0.54: loading a set's missing parts, for real
+- The gear table in memory: entries 0x58 bytes at 0x140B33B90 {+0 model name, +8 lob name, +0x10 name loaded by, +0x18 item word, +0x1C.. tag masks};
+  per kind {u16 first, u16 count} at 0x140B33B48 + t*4 (t = 0x1403CC830(kind) = kind+1); flag 0x140B5F0E8 "in use".
+  0x14000C100(t, n) = entry[first-1+n] (n from 1); 0x14000C3D0(g) = entry[g-1]+0x10 (g = place in the whole table, from 1) and that is what the sync
+  handler 0x140022290 loads with CL_LoadTransientByXModel 0x140026A20. So list numbers are whole-table places. 0.46-0.53 asked for number 0: found nothing
+  ("0 gear models have a number"), so the checkbox never did anything.
+- 0.54: read_numbers reads the table directly; the last lists the game was given are kept (deep copy) and the game's handler is called again with the
+  set's missing parts added (replay_sync), falling back to rewinding if no lists were seen. Untested when written.
+- Weapons: npc_/vm_ "_loot" models are whole guns (composite: word +0x204 & 0x400, parts byte +0x202); "_base" ones are bare receivers. Picker group 4.
