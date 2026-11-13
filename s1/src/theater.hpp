@@ -125,6 +125,9 @@ struct SceneLight
 int models_of(int entity, char names[][64], int max);
 void models_swap(int entity, const char* from, const char* to);
 bool models_swapped(int entity, const char* from, char to[64]);
+int models_camos(const char* model, char materials[][64], int max);
+void models_set_camo(int entity, const char* model, const char* material);
+bool models_camo(int entity, const char* model, char material[64]);
 void models_add(int entity, const char* name, bool on);
 int models_added(int entity, char names[][64], int max);
 void models_clear(int entity);

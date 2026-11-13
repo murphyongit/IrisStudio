@@ -1435,6 +1435,53 @@ namespace
 						rebuilt = true;
 					}
 
+					// a weapon's camouflage: any of that weapon's the game has in memory
+					for (int i = 0; i < part_count; ++i)
+					{
+						static char camos[16][64];
+						const int camo_count = models_camos(parts[i], camos, 16);
+						if (camo_count == 0)
+						{
+							continue;
+						}
+
+						char current[64] = "";
+						const bool painted = models_camo(entity, parts[i], current);
+						auto pretty = [](const char* material) {
+							const char* cut = strrchr(material, '_');
+							return cut ? cut + 1 : material;
+						};
+						ImGui::PushID(3000 + i);
+						row_label("Camo");
+						ImGui::SetNextItemWidth(-1.0f);
+						if (camo_count < 0)
+						{
+							ImGui::TextDisabled("none of this gun's are loaded in this match");
+						}
+						else if (ImGui::BeginCombo("##camo", painted ? pretty(current) : "As recorded"))
+						{
+							if (ImGui::Selectable("As recorded", !painted))
+							{
+								models_set_camo(entity, parts[i], nullptr);
+								rebuilt = true;
+							}
+
+							for (int c = 0; c < camo_count; ++c)
+							{
+								if (ImGui::Selectable(pretty(camos[c]), painted && strcmp(current, camos[c]) == 0))
+								{
+									models_set_camo(entity, parts[i], camos[c]);
+									rebuilt = true;
+								}
+							}
+
+							ImGui::EndCombo();
+						}
+
+						ImGui::SetItemTooltip("%s", parts[i]);
+						ImGui::PopID();
+					}
+
 					// the outfit's parts, then the rest (the weapon and what is on it)
 					auto row = [&](const char* kind, const char* own, const int slot) {
 						char swapped[64] = "";
@@ -1627,9 +1674,11 @@ namespace
 	void draw_timeline(const TheaterState& state, const CameraState& camera, const ImVec2 size)
 	{
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {g_font_size * 0.5f, g_font_size * 0.4f});
-		ImGui::BeginChild("timeline", size, ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoScrollbar);
+		ImGui::BeginChild("timeline", size, ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 		const ImGuiStyle& style = ImGui::GetStyle();
 		const float frame = ImGui::GetFrameHeight();
+		// how far in the timeline is zoomed (1: all of the recording), and the time at its left end
+		static float zoom = 1.0f, view_start = 0.0f;
 
 		// Freeze time: the demo's time stands still (the camera still flies)
 		ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(state.paused ? ImGuiCol_Header : ImGuiCol_Button));
@@ -1705,6 +1754,24 @@ namespace
 			ImGui::SetItemTooltip("Timescale");
 		}
 
+		ImGui::SameLine(0.0f, g_font_size);
+		if (zoom > 1.001f)
+		{
+			if (ImGui::Button("Fit"))
+			{
+				zoom = 1.0f;
+				view_start = 0.0f;
+			}
+
+			ImGui::SetItemTooltip("Show the whole recording again");
+			ImGui::SameLine();
+			ImGui::TextDisabled("%.1fx   wheel: zoom   Shift + wheel: move along", zoom);
+		}
+		else
+		{
+			ImGui::TextDisabled("wheel over the timeline: zoom in");
+		}
+
 		// the ruler and the rows
 		ImGui::Spacing();
 		const float labels = g_font_size * 15.0f;
@@ -1714,7 +1781,47 @@ namespace
 		const float length = state.length_ms > 0 ? static_cast<float>(state.length_ms) : 1.0f;
 		const float row = frame + style.ItemSpacing.y * 0.5f;
 		ImDrawList* draw = ImGui::GetWindowDrawList();
-		auto x_of = [&](const float ms) { return left + (right - left) * (ms / length); };
+		{
+			// the wheel over the timeline zooms about the mouse; with Shift it moves along
+			const ImGuiIO& io = ImGui::GetIO();
+			const bool over_timeline = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+			const float most = length / 2000.0f > 1.0f ? length / 2000.0f : 1.0f; // (two seconds across at the most)
+			if (over_timeline && io.MouseWheel != 0.0f && right > left)
+			{
+				const float t = (io.MousePos.x - left) / (right - left);
+				const float before = length / zoom;
+				if (io.KeyShift)
+				{
+					view_start -= io.MouseWheel * before * 0.15f;
+				}
+				else
+				{
+					const float under = view_start + (t < 0.0f ? 0.0f : t > 1.0f ? 1.0f : t) * before;
+					zoom *= io.MouseWheel > 0.0f ? 1.25f : 0.8f;
+					zoom = zoom < 1.0f ? 1.0f : zoom > most ? most : zoom;
+					view_start = under - (t < 0.0f ? 0.0f : t > 1.0f ? 1.0f : t) * (length / zoom);
+				}
+			}
+
+			zoom = zoom < 1.0f ? 1.0f : zoom > most ? most : zoom;
+		}
+
+		const float shown = length / zoom;
+		if (zoom > 1.001f && !state.paused && state.playing)
+		{
+			// playing: the timeline follows the playhead
+			const float now_ms = static_cast<float>(state.position_ms);
+			if (now_ms < view_start || now_ms > view_start + shown)
+			{
+				view_start = now_ms - shown * 0.1f;
+			}
+		}
+
+		view_start = view_start > length - shown ? length - shown : view_start;
+		view_start = view_start < 0.0f ? 0.0f : view_start;
+		auto x_of = [&](const float ms) { return left + (right - left) * ((ms - view_start) / shown); };
+		auto ms_at = [&](const float x) { return view_start + (x - left) / (right - left) * shown; };
+		auto in_view = [&](const float x) { return x >= left - 1.0f && x <= right + 1.0f; };
 
 		// a tick every so many seconds that the labels have room
 		const float label_room = ImGui::CalcTextSize("0:00").x * 2.2f;
@@ -1722,7 +1829,7 @@ namespace
 		int every = EVERY[9];
 		for (const int candidate : EVERY)
 		{
-			if ((right - left) * (candidate * 1000.0f / length) >= label_room)
+			if ((right - left) * (candidate * 1000.0f / shown) >= label_room)
 			{
 				every = candidate;
 				break;
@@ -1731,16 +1838,21 @@ namespace
 
 		const float ruler_bottom = origin.y + frame;
 		const float rows_bottom = origin.y + size.y;
-		for (int s = 0; s * 1000.0f <= length; s += every)
+		for (int s = (static_cast<int>(view_start / 1000.0f) / every) * every; s * 1000.0f <= view_start + shown; s += every)
 		{
 			const float x = std::floor(x_of(s * 1000.0f));
+			if (!in_view(x))
+			{
+				continue;
+			}
+
 			char text[16];
 			snprintf(text, sizeof(text), "%d:%02d", s / 60, s % 60);
 			draw->AddLine({x, origin.y + frame * 0.25f}, {x, ruler_bottom}, u32(P.muted));
 			draw->AddText({x + 4.0f, origin.y}, u32(P.text), text);
 			draw->AddLine({x, ruler_bottom}, {x, rows_bottom}, u32(P.border, 0.5f));
 			const float half = std::floor(x_of((s + every * 0.5f) * 1000.0f));
-			if (half < right)
+			if (half < right && half > left)
 			{
 				draw->AddLine({half, origin.y + frame * 0.65f}, {half, ruler_bottom}, u32(P.muted));
 			}
@@ -1754,7 +1866,7 @@ namespace
 		if (ImGui::IsItemActive())
 		{
 			const float t = (ImGui::GetIO().MousePos.x - left) / (right - left);
-			scrub_ms = (t < 0.0f ? 0.0f : t > 1.0f ? 1.0f : t) * length;
+			scrub_ms = ms_at(left + (t < 0.0f ? 0.0f : t > 1.0f ? 1.0f : t) * (right - left));
 			scrubbing = true;
 		}
 		else if (scrubbing)
@@ -1784,6 +1896,11 @@ namespace
 		for (int i = 0; i < camera.points && i < 64; ++i)
 		{
 			const float x = std::floor(x_of(static_cast<float>(camera.point_ms[i]))), middle = y + frame * 0.5f;
+			if (!in_view(x))
+			{
+				continue;
+			}
+
 			draw->AddQuadFilled({x, middle - diamond}, {x + diamond, middle}, {x, middle + diamond}, {x - diamond, middle}, u32(P.text));
 		}
 
@@ -1815,6 +1932,11 @@ namespace
 			for (int i = 0; i < track.keys; ++i)
 			{
 				const float x = std::floor(x_of(static_cast<float>(track.ms[i]))), middle = y + frame * 0.5f;
+				if (!in_view(x))
+				{
+					continue;
+				}
+
 				ImGui::SetCursorScreenPos({x - diamond, y});
 				ImGui::PushID(i);
 				if (ImGui::InvisibleButton("##key", {diamond * 2.0f, frame}))
@@ -1867,10 +1989,17 @@ namespace
 				snprintf(name, sizeof(name), ICON_WAND "  %s", shown);
 				draw->AddText({origin.x + g_font_size * 0.5f, y + style.FramePadding.y}, u32(effect.on ? P.text : P.muted), name);
 				ImGui::PopClipRect();
-				const float x0 = std::floor(x_of(static_cast<float>(effect.at_ms)));
+				float x0 = std::floor(x_of(static_cast<float>(effect.at_ms)));
 				float x1 = std::floor(x_of(static_cast<float>(effect.at_ms + effect.length_ms)));
+				if (x1 < left || x0 > right)
+				{
+					// (not in the part of the recording shown)
+					continue;
+				}
+
+				x0 = x0 < left ? left : x0;
 				x1 = x1 < x0 + 10.0f ? x0 + 10.0f : x1 > right ? right : x1;
-				const float mouse_ms = (ImGui::GetIO().MousePos.x - left) / (right - left) * length;
+				const float mouse_ms = ms_at(ImGui::GetIO().MousePos.x);
 				ImGui::PushID(5000 + i);
 				// the right end, then the clip itself
 				const float handle = 8.0f;
@@ -1938,8 +2067,11 @@ namespace
 
 		// the playhead over all of it
 		const float head = std::floor(x_of(scrubbing ? scrub_ms : static_cast<float>(state.position_ms)));
-		draw->AddLine({head, origin.y}, {head, rows_bottom}, u32(P.text), 2.0f);
-		draw->AddTriangleFilled({head - frame * 0.3f, origin.y}, {head + frame * 0.3f, origin.y}, {head, origin.y + frame * 0.5f}, u32(P.text));
+		if (in_view(head))
+		{
+			draw->AddLine({head, origin.y}, {head, rows_bottom}, u32(P.text), 2.0f);
+			draw->AddTriangleFilled({head - frame * 0.3f, origin.y}, {head + frame * 0.3f, origin.y}, {head, origin.y + frame * 0.5f}, u32(P.text));
+		}
 		ImGui::EndChild();
 		ImGui::PopStyleVar();
 	}
@@ -1966,17 +2098,56 @@ namespace
 		const int timeline_rows = look_track_count() + effects_placed(all_effects, 32);
 		const int more_rows = timeline_rows > 4 ? timeline_rows - 4 : 0;
 		const float grown = std::floor(g_font_size * 14.0f) + static_cast<float>(more_rows) * (ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y * 0.5f);
-		const float panel = std::floor(g_font_size * 26.0f), timeline = (std::min)(grown, std::floor(room.y * 0.5f));
-		const ImVec2 view = {room.x - panel, room.y - timeline};
+		// the panel's width and the timeline's height are the user's once the lines between are dragged
+		// (0: not yet), with a gap between the three for the mouse to take hold of
+		static float panel_set = 0.0f, timeline_set = 0.0f;
+		const float gap = 6.0f;
+		float panel = panel_set > 0.0f ? panel_set : std::floor(g_font_size * 26.0f);
+		float timeline = timeline_set > 0.0f ? timeline_set : (std::min)(grown, std::floor(room.y * 0.5f));
+		panel = std::floor((std::max)(g_font_size * 16.0f, (std::min)(panel, room.x * 0.7f)));
+		timeline = std::floor((std::max)(g_font_size * 7.0f, (std::min)(timeline, room.y * 0.75f)));
+		const ImVec2 view = {room.x - panel - gap, room.y - timeline - gap};
 		const ImVec2 corner = ImGui::GetCursorScreenPos();
 		draw_view(camera, view);
-		ImGui::SetCursorScreenPos({corner.x + view.x, corner.y});
+		ImGui::SetCursorScreenPos({corner.x + view.x + gap, corner.y});
 		draw_panel(state, camera, {panel, view.y});
-		ImGui::SetCursorScreenPos({corner.x, corner.y + view.y});
+		ImGui::SetCursorScreenPos({corner.x, corner.y + view.y + gap});
 		draw_timeline(state, camera, {room.x, timeline});
 		ImDrawList* draw = ImGui::GetWindowDrawList();
-		draw->AddLine({corner.x + view.x, corner.y}, {corner.x + view.x, corner.y + view.y}, u32(P.border));
-		draw->AddLine({corner.x, corner.y + view.y}, {corner.x + room.x, corner.y + view.y}, u32(P.border));
+		ImGui::SetCursorScreenPos({corner.x + view.x, corner.y});
+		ImGui::InvisibleButton("##splitPanel", {gap, view.y});
+		const bool panel_hot = ImGui::IsItemHovered() || ImGui::IsItemActive();
+		if (ImGui::IsItemActive())
+		{
+			panel_set = panel - io.MouseDelta.x;
+		}
+
+		if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+		{
+			panel_set = 0.0f;
+		}
+
+		ImGui::SetCursorScreenPos({corner.x, corner.y + view.y});
+		ImGui::InvisibleButton("##splitTimeline", {room.x, gap});
+		const bool timeline_hot = ImGui::IsItemHovered() || ImGui::IsItemActive();
+		if (ImGui::IsItemActive())
+		{
+			timeline_set = timeline - io.MouseDelta.y;
+		}
+
+		if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+		{
+			timeline_set = 0.0f;
+		}
+
+		if (panel_hot || timeline_hot)
+		{
+			ImGui::SetMouseCursor(panel_hot ? ImGuiMouseCursor_ResizeEW : ImGuiMouseCursor_ResizeNS);
+		}
+
+		const float line_x = std::floor(corner.x + view.x + gap * 0.5f), line_y = std::floor(corner.y + view.y + gap * 0.5f);
+		draw->AddLine({line_x, corner.y}, {line_x, corner.y + view.y}, u32(panel_hot ? P.accent : P.border), panel_hot ? 2.0f : 1.0f);
+		draw->AddLine({corner.x, line_y}, {corner.x + room.x, line_y}, u32(timeline_hot ? P.accent : P.border), timeline_hot ? 2.0f : 1.0f);
 		ImGui::End();
 	}
 

@@ -66,3 +66,10 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
 - Flashbang/stun screen: CG_DrawShellshockBlend(client) 0x1401D5420 (called from R_RenderScene 0x1405CE650; blend time 0x1401C0020, flashed 0x1401BFE70,
   blurred 0x1401BFDB0). Hooked: skipped while the camera is away from the player.
 - Still open: camos.
+
+## 0.51: camos, resizable panels, timeline zoom
+- Camo (painted ones, camo table rows with a column index into mp_camomaterialtable: reptile..blops, 16 per weapon): the game sets the weapon model's
+  DObj list entry: override material at +0x10 = m/<weaponprefix>_<camo>, byte +0xD = 1 (seen: [vm_dear_base_loot 00002A26 00000100 m/dear_jackpot]).
+  models.cpp g_camos does the same in the Com_ClientDObjCreate hook; only materials already loaded are offered (log line says how many are).
+  Older camos (table rows 1..~19, an image like camo_multicam_e_col and flag 1) work some other way: not found.
+- ui.cpp: panel width / timeline height dragged on the lines between (double click resets); timeline zoom (wheel, Shift+wheel pans, Fit).

@@ -95,6 +95,20 @@ namespace
 	bool g_tables_read = false;
 	std::unordered_map<std::string, void*> g_materials;
 	std::map<int, std::map<std::string, Skin>> g_skins;  // per entity: a model put on, and its skin
+
+	// ---- camouflage. A weapon's painted camouflages (the game's camo table, from "reptile" on) are whole
+	// materials, one per weapon and camouflage (mp/camoMaterialTable: the weapon, then its sixteen), and the
+	// game draws one by putting it in the weapon's model's entry of a list as the material drawn in place of
+	// the model's own, with the byte at +0xD set (seen: [vm_dear_base_loot 00002A26 00000100 m/dear_jackpot]
+	// for the AE4 with Jackpot, and zeros for a weapon with none).
+	struct CamoRow
+	{
+		std::string weapon, prefix;          // iw5_dlcgun1, and what its models are named with: dear
+		std::vector<std::string> materials;  // m/dear_reptile ...
+	};
+	std::vector<CamoRow> g_camo_rows;
+	std::map<int, std::map<std::string, std::string>> g_camos;  // per entity: a model, and the material over it
+	ULONGLONG g_materials_at = 0;
 	std::vector<PendingSet> g_pending;
 	char g_status[200] = "";
 	// Asking the game for a model it has not loaded makes room for it by letting go of another, and that
@@ -502,6 +516,7 @@ namespace
 	void list_materials()
 	{
 		static void* found[MAX_MATERIALS];
+		g_materials_at = GetTickCount64();
 		g_materials.clear();
 		const int count = enumerate_materials(found);
 		for (int i = 0; i < count; ++i)
@@ -618,8 +633,53 @@ namespace
 			}
 		}
 
-		note("models: the game's gear: %zu models, %zu items, %zu skins, %zu sets", g_model_rows.size(), g_id_rows.size(), g_override_rows.size(),
-		     g_set_rows.size());
+		for (const auto& row : read_table("camomaterialtable"))
+		{
+			CamoRow camo;
+			camo.weapon = row.empty() ? "" : row[0];
+			for (size_t c = 1; c < row.size(); ++c)
+			{
+				if (!row[c].empty())
+				{
+					camo.materials.push_back(row[c]);
+				}
+			}
+
+			// what the weapon's materials are named with: m/dear_reptile is dear's
+			if (!camo.materials.empty())
+			{
+				const std::string& first = camo.materials[0];
+				const size_t slash = first.find('/'), last = first.rfind('_');
+				if (slash != std::string::npos && last != std::string::npos && last > slash + 1)
+				{
+					camo.prefix = first.substr(slash + 1, last - slash - 1);
+				}
+			}
+
+			if (!camo.prefix.empty())
+			{
+				g_camo_rows.push_back(camo);
+			}
+		}
+
+		note("models: the game's gear: %zu models, %zu items, %zu skins, %zu sets, %zu weapons with camouflage", g_model_rows.size(), g_id_rows.size(),
+		     g_override_rows.size(), g_set_rows.size(), g_camo_rows.size());
+	}
+
+	// (with the lock held) The camouflage row of the weapon a model is of: the one whose name is in the
+	// model's (vm_dear_base_loot is dear's), the longest if several are.
+	const CamoRow* camo_row(const std::string& model)
+	{
+		const CamoRow* best = nullptr;
+		for (const CamoRow& row : g_camo_rows)
+		{
+			if (model.find("_" + row.prefix + "_") != std::string::npos && (!best || row.prefix.size() > best->prefix.size()))
+			{
+				best = &row;
+			}
+		}
+
+		return best;
 	}
 
 	// (with the lock held)
@@ -751,7 +811,15 @@ namespace
 				const TheaterState state = theater_state();
 				const auto swaps = g_swaps.find(handle);
 				const auto adds = g_adds.find(handle);
-				const bool any = (swaps != g_swaps.end() && !swaps->second.empty()) || (adds != g_adds.end() && !adds->second.empty());
+				const auto camos = g_camos.find(handle);
+				const bool painted = camos != g_camos.end() && !camos->second.empty() && stride == 0x20;
+				if (painted && GetTickCount64() - g_materials_at > 1000)
+				{
+					// (the materials as they are now: one let go of since is not drawn with)
+					list_materials();
+				}
+
+				const bool any = (swaps != g_swaps.end() && !swaps->second.empty()) || (adds != g_adds.end() && !adds->second.empty()) || painted;
 				if (any && stride && stride <= 0x20 && (state.playing || state.starting))
 				{
 					if (!g_listed)
@@ -791,6 +859,21 @@ namespace
 						memcpy(copy + stride * out, models + stride * i, stride);
 						*reinterpret_cast<void**>(copy + stride * out) = model;
 						put_skin(handle, model, copy + stride * out, stride);
+						if (painted)
+						{
+							const char* drawn = name_of(model);
+							const auto camo = drawn ? camos->second.find(drawn) : camos->second.end();
+							const auto material = camo != camos->second.end() ? g_materials.find(camo->second) : g_materials.end();
+							if (material != g_materials.end())
+							{
+								unsigned char* entry = copy + stride * out;
+								reinterpret_cast<void**>(entry)[2] = material->second;
+								entry[0xD] = 1;
+								changed = true;
+								made += std::string(" ") + drawn + "~" + camo->second;
+							}
+						}
+
 						++out;
 					}
 
@@ -869,6 +952,87 @@ void models_swap(const int entity, const char* from, const char* to)
 	}
 }
 
+// The camouflages there are for the weapon a model is of: their materials, those the game has loaded
+// (0: the model is not a weapon with any; -1: it is, and none is loaded).
+int models_camos(const char* model, char materials[][64], const int max)
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	read_gear_tables();
+	const CamoRow* row = camo_row(model);
+	if (!row)
+	{
+		return 0;
+	}
+
+	if (GetTickCount64() - g_materials_at > 3000)
+	{
+		list_materials();
+		static size_t told = static_cast<size_t>(-1);
+		size_t loaded = 0;
+		for (const CamoRow& each : g_camo_rows)
+		{
+			for (const std::string& material : each.materials)
+			{
+				loaded += g_materials.count(material);
+			}
+		}
+
+		if (loaded != told)
+		{
+			told = loaded;
+			note("models: %zu of the camouflage materials are loaded (%zu of %s's %zu)", loaded,
+			     static_cast<size_t>(std::count_if(row->materials.begin(), row->materials.end(), [](const std::string& m) { return g_materials.count(m) != 0; })),
+			     row->weapon.c_str(), row->materials.size());
+		}
+	}
+
+	int count = 0;
+	for (const std::string& material : row->materials)
+	{
+		if (count < max && g_materials.count(material))
+		{
+			copy_name(materials[count++], material);
+		}
+	}
+
+	// (a weapon that has camouflages, none of them in memory: -1)
+	return count ? count : -1;
+}
+
+// A camouflage put on a model of the entity's (its material; none or "": as the recording has it).
+void models_set_camo(const int entity, const char* model, const char* material)
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	++g_changed[entity];
+	if (material && material[0])
+	{
+		g_camos[entity][model] = material;
+	}
+	else
+	{
+		g_camos[entity].erase(model);
+	}
+}
+
+bool models_camo(const int entity, const char* model, char material[64])
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	const auto camos = g_camos.find(entity);
+	if (camos == g_camos.end())
+	{
+		return false;
+	}
+
+	const auto camo = camos->second.find(model);
+	if (camo == camos->second.end())
+	{
+		return false;
+	}
+
+	copy_name(material, camo->second);
+	return true;
+}
+
 // What a model of the entity's is drawn as: false if as it is.
 bool models_swapped(const int entity, const char* from, char to[64])
 {
@@ -927,6 +1091,7 @@ void models_clear(const int entity)
 	g_swaps.erase(entity);
 	g_adds.erase(entity);
 	g_skins.erase(entity);
+	g_camos.erase(entity);
 }
 
 // The entity has changes its model has not been made with yet.
