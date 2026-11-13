@@ -711,6 +711,185 @@ namespace
 		dump_tables();
 	}
 
+	// ---- what the game does with a list besides making the model. The making itself (DObjCreate) reads
+	// only each entry's model and where it hangs; the materials in an entry are put over the model's own
+	// afterwards, by a second call with the same list (0x1404DE730: the model made, the list, its length;
+	// an entry with both materials and the byte at +0xD set has the one at +0x18 drawn as the one at
+	// +0x10). 0.38 to 0.51 changed the list given to the making only, so no skin or camouflage of the
+	// editor's was ever drawn. The game's code calls the two together (0x1401A2BF0: the list, its length,
+	// the animation tree, the entity, the client, the entity again).
+	constexpr std::uintptr_t DOBJ_SET_OVERRIDES = 0x1404DE730, CG_MAKE_DOBJ = 0x1401A2BF0;
+	constexpr std::uintptr_t COM_GET_CLIENT_DOBJ = 0x1403D2BA0, COM_SAFE_CLIENT_DOBJ_FREE = 0x1403D2DF0;
+	constexpr std::uintptr_t XMODEL_MATERIAL_COUNT = 0x1404F8070, XMODEL_MATERIALS = 0x1404F8050;
+	void (*g_original_overrides)(void*, unsigned char*, int) = nullptr;
+	thread_local void* t_made = nullptr;
+	thread_local unsigned char t_list[MAX_IN_LIST * 0x20];
+	thread_local int t_count = 0;
+
+	// the list the game last made each entity's model from, as the game gave it: the model is made again
+	// from it when the editor's choices change (going back in the recording did not always make the game
+	// do so: a player whose gear is the same before and after is not made again)
+	struct LastList
+	{
+		std::vector<unsigned char> bytes;
+		unsigned short count = 0;
+	};
+	std::map<int, LastList> g_last;
+
+	void hooked_overrides(void* made, unsigned char* list, const int count)
+	{
+		if (made && made == t_made && t_count > 0)
+		{
+			t_made = nullptr;
+			g_original_overrides(made, t_list, t_count);
+			return;
+		}
+
+		g_original_overrides(made, list, count);
+	}
+
+	// A model's materials (a model made of several models: all of theirs), as the game's own code reads
+	// them (0x1404F8070 how many, 0x1404F8050 the list; the parts at +0x298, how many at +0x202, when the
+	// word at +0x204 has 0x400).
+	int model_materials(void* model, void** out, const int max)
+	{
+		__try
+		{
+			const auto count_of = reinterpret_cast<int (*)(void*, int)>(XMODEL_MATERIAL_COUNT);
+			const auto list_of = reinterpret_cast<void** (*)(void*, int)>(XMODEL_MATERIALS);
+			auto* bytes = static_cast<unsigned char*>(model);
+			const bool several = (*reinterpret_cast<std::uint16_t*>(bytes + 0x204) & 0x400) != 0;
+			void** parts = several ? *reinterpret_cast<void***>(bytes + 0x298) : nullptr;
+			const int part_count = several ? bytes[0x202] : 1;
+			int found = 0;
+			for (int p = 0; p < part_count; ++p)
+			{
+				void* part = several ? parts[p] : model;
+				if (!part)
+				{
+					continue;
+				}
+
+				const int count = count_of(part, 0);
+				void** list = list_of(part, 0);
+				for (int i = 0; list && i < count && found < max; ++i)
+				{
+					out[found++] = list[i];
+				}
+			}
+
+			return found;
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			return 0;
+		}
+	}
+
+	// (with the lock held) The material of a weapon's model a camouflage is drawn over: the one named
+	// after the weapon, its body before any other.
+	void* camo_base(void* model, const std::string& prefix, const char* model_name)
+	{
+		void* found[64];
+		const int count = model_materials(model, found, 64);
+		void* best = nullptr;
+		int best_score = -1;
+		size_t best_length = 0;
+		std::string all, chosen;
+		for (int i = 0; i < count; ++i)
+		{
+			const char* name = name_of(found[i]);
+			if (!name)
+			{
+				continue;
+			}
+
+			const std::string material = name;
+			all += " " + material;
+			int score = 0;
+			score += material.find(prefix) != std::string::npos ? 4 : 0;
+			score += material.find("base") != std::string::npos || material.find("body") != std::string::npos || material.find("main") != std::string::npos ? 2 : 0;
+			if (score > best_score || (score == best_score && material.size() < best_length))
+			{
+				best = found[i];
+				best_score = score;
+				best_length = material.size();
+				chosen = material;
+			}
+		}
+
+		static std::map<std::string, bool> told;
+		if (!told[model_name] && told.size() < 40)
+		{
+			told[model_name] = true;
+			note("models: %s's materials:%s; a camouflage goes over %s", model_name, all.empty() ? " (none read)" : all.c_str(), chosen.empty() ? "none" : chosen.c_str());
+		}
+
+		return best;
+	}
+
+	// The entity's model made again from the list the game last gave, with the game's own calls: what
+	// there is let go of, and the list made and its materials put on as the game's code does.
+	bool remake(const int handle, const unsigned char* bytes, const unsigned short count)
+	{
+		__try
+		{
+			void* made = reinterpret_cast<void* (*)(int, int)>(COM_GET_CLIENT_DOBJ)(handle, 0);
+			if (!made)
+			{
+				return false;
+			}
+
+			void* tree = *static_cast<void**>(made);
+			reinterpret_cast<void (*)(int)>(COM_SAFE_CLIENT_DOBJ_FREE)(handle);
+			reinterpret_cast<void* (*)(const unsigned char*, unsigned short, void*, int, int, int)>(CG_MAKE_DOBJ)(bytes, count, tree, handle, 0, handle);
+			return true;
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			return false;
+		}
+	}
+
+	// (on the game's thread) The players whose choices changed since their models were made: made again.
+	void remake_changed(const TheaterState& state)
+	{
+		if (!state.playing)
+		{
+			return;
+		}
+
+		struct Job
+		{
+			int handle;
+			LastList list;
+		};
+		std::vector<Job> jobs;
+		{
+			std::lock_guard<std::mutex> lock(g_lock);
+			for (const auto& changed : g_changed)
+			{
+				const auto built = g_built.find(changed.first);
+				const auto last = g_last.find(changed.first);
+				if (changed.first < 2048 && last != g_last.end() && last->second.count && (built == g_built.end() || built->second != changed.second))
+				{
+					jobs.push_back({changed.first, last->second});
+				}
+			}
+		}
+
+		for (const Job& job : jobs)
+		{
+			static int told = 0;
+			const bool done = remake(job.handle, job.list.bytes.data(), job.list.count);
+			if (told < 40 && done)
+			{
+				++told;
+				note("models: entity %d made again (%d parts in the game's list)", job.handle, job.list.count);
+			}
+		}
+	}
+
 	// (with the lock held) A list's entry for a model of the gear's: the entry's third field is the
 	// material drawn in place of the model's own, its fourth the model's own (what the game's own lists
 	// were seen to hold).
@@ -736,6 +915,12 @@ namespace
 		if (base != g_materials.end())
 		{
 			fields[3] = base->second;
+		}
+
+		// (the byte that has the one drawn in place of the other)
+		if (fields[2] && fields[3])
+		{
+			entry[0xD] = 1;
 		}
 	}
 
@@ -808,6 +993,13 @@ namespace
 
 				g_seen[handle] = names;
 				g_built[handle] = g_changed[handle];
+				if (stride == 0x20 && handle < 2048)
+				{
+					LastList& last = g_last[handle];
+					last.bytes.assign(models, models + stride * count);
+					last.count = count;
+				}
+
 				const TheaterState state = theater_state();
 				const auto swaps = g_swaps.find(handle);
 				const auto adds = g_adds.find(handle);
@@ -867,10 +1059,19 @@ namespace
 							if (material != g_materials.end())
 							{
 								unsigned char* entry = copy + stride * out;
-								reinterpret_cast<void**>(entry)[2] = material->second;
+								void** fields = reinterpret_cast<void**>(entry);
+								fields[2] = material->second;
+								if (!fields[3])
+								{
+									// (the material it goes over: the game's own entry has it when the game's
+									// own camouflage is on)
+									const CamoRow* row = camo_row(drawn);
+									fields[3] = row ? camo_base(model, row->prefix, drawn) : nullptr;
+								}
+
 								entry[0xD] = 1;
 								changed = true;
-								made += std::string(" ") + drawn + "~" + camo->second;
+								made += std::string(" ") + drawn + "~" + camo->second + (fields[3] ? "" : " (nothing to put it over)");
 							}
 						}
 
@@ -908,7 +1109,17 @@ namespace
 			}
 		}
 
-		return g_original_create(changed ? copy : models, changed ? out : count, tree, handle);
+		void* result = g_original_create(changed ? copy : models, changed ? out : count, tree, handle);
+		// (the call that puts the list's materials on is given the same list: see hooked_overrides)
+		t_made = nullptr;
+		if (changed && g_stride == 0x20 && out > 0)
+		{
+			memcpy(t_list, copy, static_cast<size_t>(out) * 0x20);
+			t_count = out;
+			t_made = result;
+		}
+
+		return result;
 	}
 
 	void copy_name(char* out, const std::string& name)
@@ -1299,6 +1510,7 @@ bool models_loading_allowed()
 // Each frame on the game's own thread: the sets being waited for.
 void models_game_frame(const TheaterState& state)
 {
+	remake_changed(state);
 	std::lock_guard<std::mutex> lock(g_lock);
 	if (!state.playing && !state.starting)
 	{
@@ -1415,8 +1627,8 @@ void models_game_frame(const TheaterState& state)
 	         pending.name.c_str(), there, missing.c_str());
 	note("models: set %s on entity %d: %zu of %zu parts%s%s", pending.name.c_str(), entity, there, pending.parts.size(), missing.empty() ? "" : "; not loaded: ",
 	     missing.c_str());
+	// (the player's model is made again from here on its own: see remake_changed)
 	g_pending.erase(g_pending.begin());
-	theater_rebuild();
 }
 
 // Each frame: between playbacks the game may load another map's models.
@@ -1427,6 +1639,7 @@ void models_frame(const TheaterState& state)
 		std::lock_guard<std::mutex> lock(g_lock);
 		g_listed = false;
 		g_seen.clear();
+		g_last.clear();
 		g_built.clear();
 		g_extra.clear();
 		g_pending.clear();
@@ -1443,6 +1656,13 @@ void models_start()
 	}
 
 	theater_log(status == MH_OK ? "models: the making of models hooked (models can be swapped)" : "models: the making of models NOT hooked");
+	if (MH_CreateHook(reinterpret_cast<LPVOID>(DOBJ_SET_OVERRIDES), reinterpret_cast<LPVOID>(&hooked_overrides),
+	                  reinterpret_cast<LPVOID*>(&g_original_overrides)) != MH_OK ||
+	    MH_EnableHook(reinterpret_cast<LPVOID>(DOBJ_SET_OVERRIDES)) != MH_OK)
+	{
+		theater_log("models: the putting on of materials NOT hooked (no skins or camouflage)");
+	}
+
 	if (MH_CreateHook(reinterpret_cast<LPVOID>(CL_STREAM_SYNC), reinterpret_cast<LPVOID>(&hooked_stream_sync),
 	                  reinterpret_cast<LPVOID*>(&g_original_stream_sync)) != MH_OK ||
 	    MH_EnableHook(reinterpret_cast<LPVOID>(CL_STREAM_SYNC)) != MH_OK)

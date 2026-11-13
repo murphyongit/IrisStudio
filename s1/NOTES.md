@@ -73,3 +73,16 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
   models.cpp g_camos does the same in the Com_ClientDObjCreate hook; only materials already loaded are offered (log line says how many are).
   Older camos (table rows 1..~19, an image like camo_multicam_e_col and flag 1) work some other way: not found.
 - ui.cpp: panel width / timeline height dragged on the lines between (double click resets); timeline zoom (wheel, Shift+wheel pans, Fit).
+
+## 0.52: materials really put on; players remade directly
+- DObjCreate (0x1404DC8B0, from Com_ClientDObjCreate 0x1403D2AF0) reads only model/tag/flag byte +0xC of each entry; a model with word +0x204 & 0x400 is
+  several models (count byte +0x202, array +0x298). The entry's materials are applied by a SECOND call with the same list:
+  0x1404DE730(obj, list, count): entries with +0x10 and +0x18 both set; byte +0xD != 0 -> 0x1404DEB70(obj, model-or-part, from=+0x18, to=+0x10)
+  (material replaced); byte 0 -> decal maps copied. Game wrapper 0x1401A2BF0(list, count, tree, handle, client, handle) = create + 0x141799F60 cache reset +
+  overrides + 0x1404DEA20(client, obj). First-person builder 0x1401EDDF0: weapon entry +0x18 = 0x1401A2CD0(model, weapondef material @+0x40 via 0x140169C20),
+  +0x10 = camo material 0x140341420(client, camo-1, &byteD). In the user's recording the AE4's entry had +0x10 = m/dear_jackpot but +0x18 = 0 (!).
+- 0.52 hooks 0x1404DE730 to hand it the editor's list (thread-local, keyed by the obj just made), fills +0x18 for camo with a guessed base material
+  (model_materials via 0x1404F8070/0x1404F8050; logged per model), and remakes a player's DObj itself when choices change: Com_GetClientDObj 0x1403D2BA0,
+  tree = *(obj), Com_SafeClientDObjFree(handle) 0x1403D2DF0, then 0x1401A2BF0 with the game's last list (rewinding did not always make the game rebuild).
+  First person (2048) still rewinds. Untested when written.
+- Timeline: names column draggable, trash per effect row.

@@ -1652,9 +1652,10 @@ namespace
 					}
 				}
 
-				if (rebuilt)
+				if (rebuilt && entity == FIRST_PERSON)
 				{
-					// the game makes a model when its entity comes into the match: from the start again
+					// the first person's arms and gun are made by the game as the recording is gone back in
+					// (a player's model is made again where it stands: models.cpp)
 					theater_rebuild();
 				}
 			}
@@ -1774,9 +1775,11 @@ namespace
 
 		// the ruler and the rows
 		ImGui::Spacing();
-		const float labels = g_font_size * 15.0f;
+		// (the names' column is as wide as the line between it and the rows is dragged)
+		static float labels_set = 0.0f;
 		const ImVec2 origin = ImGui::GetCursorScreenPos();
 		const float full = ImGui::GetContentRegionAvail().x;
+		const float labels = (std::max)(g_font_size * 8.0f, (std::min)(labels_set > 0.0f ? labels_set : g_font_size * 15.0f, full * 0.6f));
 		const float left = origin.x + labels, right = origin.x + full - g_font_size * 0.5f;
 		const float length = state.length_ms > 0 ? static_cast<float>(state.length_ms) : 1.0f;
 		const float row = frame + style.ItemSpacing.y * 0.5f;
@@ -1875,6 +1878,29 @@ namespace
 			scrubbing = false;
 		}
 
+		// the line between the names and the rows: dragged, the names' column is wider or narrower
+		{
+			const float grip = 6.0f;
+			ImGui::SetCursorScreenPos({left - grip, ruler_bottom});
+			ImGui::InvisibleButton("##labelsWidth", {grip, (std::max)(1.0f, rows_bottom - ruler_bottom)});
+			const bool hot = ImGui::IsItemHovered() || ImGui::IsItemActive();
+			if (ImGui::IsItemActive())
+			{
+				labels_set = labels + ImGui::GetIO().MouseDelta.x;
+			}
+
+			if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+			{
+				labels_set = 0.0f;
+			}
+
+			if (hot)
+			{
+				ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+				draw->AddLine({left - grip * 0.5f, ruler_bottom}, {left - grip * 0.5f, rows_bottom}, u32(P.accent), 2.0f);
+			}
+		}
+
 		// the rows: Markers, Campath
 		float y = ruler_bottom + style.ItemSpacing.y * 0.5f;
 		draw->AddRectFilled({left, y}, {right, y + frame}, u32(P.surface));
@@ -1884,7 +1910,7 @@ namespace
 		char campath[48];
 		snprintf(campath, sizeof(campath), ICON_VIDEO "  Campath (%d)", camera.points);
 		draw->AddText({origin.x + g_font_size * 0.5f, y + style.FramePadding.y}, u32(P.text), campath);
-		ImGui::SetCursorScreenPos({left - frame * 1.2f - style.ItemSpacing.x, y});
+		ImGui::SetCursorScreenPos({left - frame * 1.2f - style.ItemSpacing.x - 6.0f, y});
 		ImGui::BeginDisabled(camera.points == 0);
 		if (ImGui::Button(ICON_TRASH "##clearCampath", {frame * 1.2f, frame}))
 		{
@@ -1917,12 +1943,12 @@ namespace
 
 			draw->AddRectFilled({left, y}, {right, y + frame}, u32(P.surface));
 			ImGui::PushID(t);
-			ImGui::PushClipRect({origin.x, y}, {left - frame * 1.2f - style.ItemSpacing.x * 2.0f, y + frame}, true);
+			ImGui::PushClipRect({origin.x, y}, {left - frame * 1.2f - style.ItemSpacing.x * 2.0f - 6.0f, y + frame}, true);
 			char name[96];
 			snprintf(name, sizeof(name), ICON_SLIDERS "  %s (%d)", track.label, track.keys);
 			draw->AddText({origin.x + g_font_size * 0.5f, y + style.FramePadding.y}, u32(P.text), name);
 			ImGui::PopClipRect();
-			ImGui::SetCursorScreenPos({left - frame * 1.2f - style.ItemSpacing.x, y});
+			ImGui::SetCursorScreenPos({left - frame * 1.2f - style.ItemSpacing.x - 6.0f, y});
 			if (ImGui::Button(ICON_TRASH "##clearTrack", {frame * 1.2f, frame}))
 			{
 				clear = t;
@@ -1972,6 +1998,7 @@ namespace
 			PlacedEffect placed[32];
 			const int placed_count = effects_placed(placed, 32);
 			static float grab_ms = 0.0f;
+			int remove_effect = -1;
 			for (int i = 0; i < placed_count; ++i)
 			{
 				y += row;
@@ -1984,11 +2011,20 @@ namespace
 				const char* slash = strrchr(effect.name, '/');
 				const char* shown = slash ? slash + 1 : effect.name;
 				draw->AddRectFilled({left, y}, {right, y + frame}, u32(P.surface));
-				ImGui::PushClipRect({origin.x, y}, {left - style.ItemSpacing.x, y + frame}, true);
+				ImGui::PushClipRect({origin.x, y}, {left - frame * 1.2f - style.ItemSpacing.x * 2.0f - 6.0f, y + frame}, true);
 				char name[128];
 				snprintf(name, sizeof(name), ICON_WAND "  %s", shown);
 				draw->AddText({origin.x + g_font_size * 0.5f, y + style.FramePadding.y}, u32(effect.on ? P.text : P.muted), name);
 				ImGui::PopClipRect();
+				ImGui::PushID(7000 + i);
+				ImGui::SetCursorScreenPos({left - frame * 1.2f - style.ItemSpacing.x - 6.0f, y});
+				if (ImGui::Button(ICON_TRASH "##removeEffect", {frame * 1.2f, frame}))
+				{
+					remove_effect = i;
+				}
+
+				ImGui::SetItemTooltip("Remove this effect");
+				ImGui::PopID();
 				float x0 = std::floor(x_of(static_cast<float>(effect.at_ms)));
 				float x1 = std::floor(x_of(static_cast<float>(effect.at_ms + effect.length_ms)));
 				if (x1 < left || x0 > right)
@@ -2053,6 +2089,11 @@ namespace
 				ImGui::PushClipRect({x0 + 4.0f, y}, {x1 - 4.0f, y + frame}, true);
 				draw->AddText({x0 + 6.0f, y + style.FramePadding.y}, u32(P.text), shown);
 				ImGui::PopClipRect();
+			}
+
+			if (remove_effect >= 0)
+			{
+				effects_remove(remove_effect);
 			}
 		}
 
