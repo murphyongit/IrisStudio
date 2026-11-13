@@ -2694,6 +2694,29 @@ void ui_row_label(const char* label)
 	row_label(label);
 }
 
+// A row's right-click menu, asked for after the row's controls are drawn: true when "Reset to default"
+// was chosen.
+bool ui_reset_menu(const char* id)
+{
+	const ImVec2 low = ImGui::GetItemRectMin(), high = ImGui::GetItemRectMax();
+	const float left = ImGui::GetWindowPos().x, right = left + ImGui::GetWindowWidth();
+	ImGui::PushID(id);
+	if (ImGui::IsWindowHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Right) && ImGui::IsMouseHoveringRect({left, low.y}, {right, high.y}, false))
+	{
+		ImGui::OpenPopup("##resetMenu");
+	}
+
+	bool chosen = false;
+	if (ImGui::BeginPopup("##resetMenu"))
+	{
+		chosen = ImGui::MenuItem("Reset to default");
+		ImGui::EndPopup();
+	}
+
+	ImGui::PopID();
+	return chosen;
+}
+
 float ui_font_size()
 {
 	return g_font_size;

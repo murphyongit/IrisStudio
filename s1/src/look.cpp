@@ -556,6 +556,13 @@ namespace
 			key_button(dvar.name(), label ? label : dvar.name(), count, shown);
 		}
 
+		// (right click on the row: the setting as the game had it, its keyframes gone)
+		if (ui_reset_menu("##row"))
+		{
+			remove_track(dvar.name());
+			restore(dvar.name());
+		}
+
 		ImGui::PopID();
 		return changed;
 	}
@@ -1588,6 +1595,7 @@ void look_draw_tab(const TheaterState& state)
 {
 	(void)state;
 	bool reset = false;
+	ImGui::TextDisabled("Right-click any setting to reset it to default.");
 	if (ui_section(ICON_SLIDERS, "Presets"))
 	{
 		draw_presets();

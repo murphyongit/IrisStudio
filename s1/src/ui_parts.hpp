@@ -37,6 +37,8 @@
 bool ui_section(const char* icon, const char* label, bool* reset = nullptr, bool open_by_default = true);
 // A row: the label on the left, the next control from 40% across.
 void ui_row_label(const char* label);
+// A row's right-click menu (call after the row's controls): true when "Reset to default" was chosen.
+bool ui_reset_menu(const char* id);
 float ui_font_size();
 ImFont* ui_bold_font();
 void ui_not_built(const char* what);

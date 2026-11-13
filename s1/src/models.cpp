@@ -1078,9 +1078,11 @@ namespace
 						std::string now = copy.names[place];
 						const std::pair<std::uintptr_t, int> key{record, place};
 						auto renamed = g_renamed.find(key);
-						if (renamed != g_renamed.end() && (now.empty() || now != renamed->second.written))
+						// (0.63 found the game writes the records anew a few times a second, from the match's
+						// data: a name gone back to the player's own is written over again, without the
+						// player being made again; only another name altogether is the game's own change)
+						if (renamed != g_renamed.end() && now != renamed->second.written && now != renamed->second.original)
 						{
-							// (the game has written the record anew)
 							g_renamed.erase(renamed);
 							renamed = g_renamed.end();
 						}
@@ -1102,36 +1104,50 @@ namespace
 							}
 						}
 
-						if (wanted == original && now != original && !g_loaded.count(original))
+						bool remake_wanted = false;
+						if (wanted == original)
 						{
-							// (going back to gear that was let go of: it is asked for again first)
-							const auto number = g_numbers.find(original);
-							if (number != g_numbers.end() && g_dropped.erase(number->second))
+							if (renamed != g_renamed.end())
 							{
-								back = true;
-							}
+								if (g_loaded.count(original))
+								{
+									// (back to the player's own gear, which is in memory)
+									g_renamed.erase(renamed);
+									renamed = g_renamed.end();
+									remake_wanted = true;
+								}
+								else
+								{
+									// (it was let go of: asked for again first, and what is worn stays till then)
+									const auto number = g_numbers.find(original);
+									if (number != g_numbers.end() && g_dropped.erase(number->second))
+									{
+										back = true;
+									}
 
-							wanted = now;
+									wanted = renamed->second.written;
+								}
+							}
+						}
+						else
+						{
+							remake_wanted = renamed == g_renamed.end() || renamed->second.written != wanted;
+							g_renamed[key] = {original, wanted};
 						}
 
 						if (wanted != now && write_name(record, place, wanted.c_str()))
 						{
-							if (wanted == original)
-							{
-								g_renamed.erase(key);
-							}
-							else
-							{
-								g_renamed[key] = {original, wanted};
-							}
-
-							if (told < 60)
+							if (told < 60 && remake_wanted)
 							{
 								++told;
 								note("models: entity %d's record: %s written over with %s", copy.handle, now.c_str(), wanted.c_str());
 							}
 
 							now = wanted;
+						}
+
+						if (remake_wanted)
+						{
 							changed.push_back(copy.handle);
 							++writes;
 						}
@@ -1164,10 +1180,13 @@ namespace
 				window = now;
 				writes = 0;
 			}
-			else if (writes > 400 && !g_names_off)
+			else if (writes > 300 && !g_names_off)
 			{
+				// (players being made again over and over: not the way; the players' own gear is asked for back)
 				g_names_off = true;
-				note("models: the game keeps writing the players' records back (%d writes in 3 s): gear is no longer changed by name", writes);
+				back = back || !g_dropped.empty();
+				g_dropped.clear();
+				note("models: the players are being made again over and over (%d times in 3 s): gear is no longer changed by name", writes);
 			}
 		}
 

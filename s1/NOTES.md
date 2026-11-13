@@ -244,3 +244,19 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
   If the game rewrote the records every frame the pass turns itself off (g_names_off, "keeps writing the players' records back").
   Unknown: whether DObjs are built from the names each time (then originals really leave) or from cached pointers (then nothing is dropped, and
   nothing breaks: the log will show no "let go" of own gear).
+
+## 0.64 (untested when written)
+- User on 0.63: depth showed a wrong, smaller buffer (looks like the sun shadow map); the gun-only colour pass still drew many props; fog did nothing;
+  wants player effects gone with the players; wants a reset on every setting. Log: no depth buffer seen through slots 33/53 at the logged frames;
+  every fog set EMPTY (going to set 0; all zero) on that recording (mp map with Ascend's rain loaded) -> there was no game fog to change;
+  "the game keeps writing the players' records back (420 writes in 3 s)" -> the records are rewritten a few times a second from the match's data.
+- Gear by name now lives with that: a record's name gone back to the original is rewritten silently (no DObj free); the DObj is freed only when what is
+  wanted changes. Guard counts frees (300 in 3 s) and, when it trips, un-drops everything. Free places after 0.63's short run had risen (shirt 6,
+  pants 4), so own gear does leave memory when renamed.
+- Passes: command 0x11 (0x14056B110) held back too; FX_PlayBoltedEffect 0x1402AC420(client, def, time, dobjHandle, bone, ...) held back for hidden
+  players' handles (all handles below 2048 in the gun-only pass). Family of FX play functions 0x1402AC45F..0x1402ACCC0 all end in 0x1402B2490 +
+  0x1402AC050; bolt lookup 0x1402B1400(client, handle, bone, out).
+- Fog: when the game's sets are empty a plain fog can be made (start +0x00, half +0x80, colour +0x7C, +0x04 taken as max opacity, +0x24 as HDR colour
+  intensity, +0x14 scale): guesses from the classic argument order.
+- Depth: also hooks OMSetRenderTargetsAndUnorderedAccessViews (slot 34) and depth-only binds; by itself only a buffer of the picture's size is shown.
+- ui_reset_menu(id): right-click "Reset to default" on a row (every Look setting through control(), the Passes rows).

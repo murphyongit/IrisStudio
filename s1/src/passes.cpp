@@ -48,7 +48,13 @@ namespace
 	// models. 0x1405CB8D0 queues only the glowing surfaces then, and 0x1405C9AE0 (command 0x1B) is the
 	// effects', not the models': 0.62 held those two back and the map was drawn all the same.
 	constexpr std::uintptr_t BSP_CAMERA = 0x1405CB8D0, DOBJ_CAMERA = 0x1405C8BB0;
-	constexpr std::uintptr_t WORLD_COMMANDS[4] = {0x140569EB0, 0x14056A2F0, 0x14056FFD0, 0x14056D940};
+	// (0.64) With those four held back the map's walls and sky were gone but many of its props were not: the
+	// command 0x11 -> 0x14056B110 (it too works from the map at [0x14D8F2640]) is held back as well.
+	constexpr std::uintptr_t WORLD_COMMANDS[5] = {0x140569EB0, 0x14056A2F0, 0x14056FFD0, 0x14056D940, 0x14056B110};
+	// The game's playing of an effect fixed to a model's bone: 0x1402AC420(client, effect, time, the model's
+	// handle, bone, ...), which gives nothing back when the bone is not found. Held back for the players'
+	// models while they are not drawn (their jets and muzzle flashes would hang in the air).
+	constexpr std::uintptr_t FX_PLAY_BOLTED = 0x1402AC420;
 	constexpr std::uintptr_t COM_GET_CLIENT_DOBJ = 0x1403D2BA0, CHARACTERS = 0x141620568;
 	constexpr int CHARACTER_COUNT = 42, CHARACTER_SIZE = 0xCC0, FIRST_PERSON_HANDLE = 2048, VIEW_HANDLES = 4;
 
@@ -100,7 +106,10 @@ namespace
 	using command_t = void (*)(void*);
 	using dobj_t = void (*)(void*, void*, unsigned char*, int, int, void*, void*, int);
 	bsp_t g_original_bsp = nullptr;
-	command_t g_original_world[4] = {};
+	command_t g_original_world[5] = {};
+	using bolted_t = void* (*)(int, void*, int, int, int, int, int, int);
+	bolted_t g_original_bolted = nullptr;
+	std::atomic<int> g_effects_held{0};
 	dobj_t g_original_dobj = nullptr;
 	std::atomic<int> g_world_held{0};
 
@@ -162,6 +171,32 @@ namespace
 		}
 
 		g_original_dobj(a, b, entry, d, e, f, g, h);
+	}
+
+	void* client_dobj(const int handle);
+
+	void* hooked_bolted(const int client, void* effect, const int time, const int handle, const int bone, const int a6, const int a7, const int a8)
+	{
+		if (g_playing && handle >= 0 && handle < FIRST_PERSON_HANDLE && (g_hide_characters || g_only_view))
+		{
+			bool held = g_only_view.load();
+			if (!held)
+			{
+				void* model = client_dobj(handle);
+				for (const auto& one : g_characters)
+				{
+					held = held || (model && one.load(std::memory_order_relaxed) == model);
+				}
+			}
+
+			if (held)
+			{
+				g_effects_held.fetch_add(1, std::memory_order_relaxed);
+				return nullptr;
+			}
+		}
+
+		return g_original_bolted(client, effect, time, handle, bone, a6, a7, a8);
 	}
 
 	void* client_dobj(const int handle)
@@ -253,6 +288,10 @@ namespace
 
 	struct FogWish
 	{
+		// (made: the map has no fog of the game's own, and one is made of the plain kind: start, half-way
+		// distance, colour, how thick it gets at most (+0x04) and how bright (+0x24))
+		bool made = false;
+		float most = 1.0f;
 		bool colour_on = false, colour2_on = false, start_on = false, half_on = false;
 		float colour[3] = {0.6f, 0.65f, 0.7f}, colour2[3] = {1.0f, 0.9f, 0.7f};
 		float start = 0.0f, half = 2000.0f;
@@ -262,7 +301,7 @@ namespace
 
 	struct FogShown
 	{
-		bool have = false, atmos = false;
+		bool have = false, atmos = false, none = false;
 		float start = 0.0f, half = 0.0f;
 		float colour[3] = {}, colour2[3] = {};
 		float number[FOG_NUMBER_COUNT] = {};
@@ -293,6 +332,21 @@ namespace
 
 	void fog_apply(unsigned char* set, const FogWish& wish)
 	{
+		float own_half = 0.0f;
+		memcpy(&own_half, set + 0x80, 4);
+		if (wish.made && !set[0x3C] && own_half == 0.0f)
+		{
+			const float one = 1.0f, half = wish.half > 1.0f ? wish.half : 1.0f;
+			memcpy(set + 0x00, &wish.start, 4);
+			memcpy(set + 0x80, &half, 4);
+			memcpy(set + 0x04, &wish.most, 4);
+			memcpy(set + 0x24, &one, 4);
+			memcpy(set + 0x14, &one, 4);
+			put_colour(set + 0x7C, wish.colour);
+			set[0x7C + 3] = 255;
+			return;
+		}
+
 		const bool atmos = set[0x3C] != 0;
 		if (wish.colour_on)
 		{
@@ -372,6 +426,7 @@ namespace
 			shown->atmos = own[0x3C] != 0;
 			memcpy(&shown->start, own + 0x00, 4);
 			memcpy(&shown->half, own + 0x80, 4);
+			shown->none = !shown->atmos && shown->half == 0.0f;
 			get_colour(own + (shown->atmos ? 0x94 : 0x7C), shown->colour);
 			get_colour(own + (shown->atmos ? 0x98 : 0x84), shown->colour2);
 			for (int n = 0; n < FOG_NUMBER_COUNT; ++n)
@@ -396,7 +451,7 @@ namespace
 		float cleared_to;
 	};
 	ID3D11Texture2D* g_depth_chosen = nullptr;  // (only compared) the candidate that is the depth buffer, as of the last frame
-	constexpr int CANDIDATE_MOST = 10;
+	constexpr int CANDIDATE_MOST = 16;
 	std::mutex g_depth_lock;
 	Candidate g_candidates[CANDIDATE_MOST] = {}, g_last_candidates[CANDIDATE_MOST] = {};
 	int g_candidate_count = 0, g_last_candidate_count = 0;
@@ -599,7 +654,7 @@ namespace
 
 	void STDMETHODCALLTYPE hooked_targets(ID3D11DeviceContext* context, const UINT count, ID3D11RenderTargetView* const* targets, ID3D11DepthStencilView* view)
 	{
-		if (g_depth && view && count && !t_own_drawing)
+		if (g_depth && view && !t_own_drawing)
 		{
 			seen_depth(context, view, false, 0.0f);
 		}
@@ -609,12 +664,41 @@ namespace
 
 	void STDMETHODCALLTYPE hooked_deferred_targets(ID3D11DeviceContext* context, const UINT count, ID3D11RenderTargetView* const* targets, ID3D11DepthStencilView* view)
 	{
-		if (g_depth && view && count && !t_own_drawing)
+		if (g_depth && view && !t_own_drawing)
 		{
 			seen_depth(context, view, false, 0.0f);
 		}
 
 		g_original_deferred_targets(context, count, targets, view);
+	}
+
+	// (slot 34: what is drawn to, set together with the outputs of compute shaders)
+	using targets_more_t = void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*, UINT, ID3D11RenderTargetView* const*, ID3D11DepthStencilView*, UINT, UINT,
+	                                                ID3D11UnorderedAccessView* const*, const UINT*);
+	targets_more_t g_original_targets_more = nullptr, g_original_deferred_targets_more = nullptr;
+
+	void STDMETHODCALLTYPE hooked_targets_more(ID3D11DeviceContext* context, const UINT count, ID3D11RenderTargetView* const* targets, ID3D11DepthStencilView* view,
+	                                           const UINT first, const UINT outputs, ID3D11UnorderedAccessView* const* views, const UINT* counts)
+	{
+		// (a count of 0xFFFFFFFF keeps what is drawn to as it is: the depth buffer given then is not looked at)
+		if (g_depth && view && count != 0xFFFFFFFF && !t_own_drawing)
+		{
+			seen_depth(context, view, false, 0.0f);
+		}
+
+		g_original_targets_more(context, count, targets, view, first, outputs, views, counts);
+	}
+
+	void STDMETHODCALLTYPE hooked_deferred_targets_more(ID3D11DeviceContext* context, const UINT count, ID3D11RenderTargetView* const* targets,
+	                                                    ID3D11DepthStencilView* view, const UINT first, const UINT outputs, ID3D11UnorderedAccessView* const* views,
+	                                                    const UINT* counts)
+	{
+		if (g_depth && view && count != 0xFFFFFFFF && !t_own_drawing)
+		{
+			seen_depth(context, view, false, 0.0f);
+		}
+
+		g_original_deferred_targets_more(context, count, targets, view, first, outputs, views, counts);
 	}
 
 	bool hook_method(void* method, void* detour, void* original)
@@ -630,6 +714,8 @@ namespace
 		void** own = *reinterpret_cast<void***>(context);
 		const bool first = hook_method(own[53], reinterpret_cast<void*>(&hooked_clear), &g_original_clear);
 		const bool first_set = hook_method(own[33], reinterpret_cast<void*>(&hooked_targets), &g_original_targets);
+		const bool first_more = hook_method(own[34], reinterpret_cast<void*>(&hooked_targets_more), &g_original_targets_more);
+		bool second_more = false;
 		bool second = false, second_set = false;
 		ID3D11DeviceContext* deferred = nullptr;
 		if (SUCCEEDED(device->CreateDeferredContext(0, &deferred)) && deferred)
@@ -637,11 +723,12 @@ namespace
 			void** other = *reinterpret_cast<void***>(deferred);
 			second = other[53] != own[53] && hook_method(other[53], reinterpret_cast<void*>(&hooked_deferred_clear), &g_original_deferred_clear);
 			second_set = other[33] != own[33] && hook_method(other[33], reinterpret_cast<void*>(&hooked_deferred_targets), &g_original_deferred_targets);
+			second_more = other[34] != own[34] && hook_method(other[34], reinterpret_cast<void*>(&hooked_deferred_targets_more), &g_original_deferred_targets_more);
 			deferred->Release();
 		}
 
-		ui_log("passes: the game's depth buffers are watched: cleared %s/%s, set to be drawn to %s/%s (its own drawing / its drawing ahead)", first ? "yes" : "NO",
-		       second ? "yes" : "no", first_set ? "yes" : "NO", second_set ? "yes" : "no");
+		ui_log("passes: the game's depth buffers are watched: cleared %s/%s, set to be drawn to %s/%s and %s/%s (its own drawing / its drawing ahead)", first ? "yes" : "NO",
+		       second ? "yes" : "no", first_set ? "yes" : "NO", second_set ? "yes" : "no", first_more ? "yes" : "NO", second_more ? "yes" : "no");
 	}
 
 	const char* const DEPTH_VS = "float4 main(uint id : SV_VertexID) : SV_POSITION { return float4((id == 2) ? 3.0 : -1.0, (id == 1) ? 3.0 : -1.0, 0.0, 1.0); }";
@@ -826,10 +913,12 @@ void passes_start()
 	const bool w1 = hook(WORLD_COMMANDS[1], reinterpret_cast<void*>(static_cast<command_t>(&hooked_world<1>)), &g_original_world[1]);
 	const bool w2 = hook(WORLD_COMMANDS[2], reinterpret_cast<void*>(static_cast<command_t>(&hooked_world<2>)), &g_original_world[2]);
 	const bool w3 = hook(WORLD_COMMANDS[3], reinterpret_cast<void*>(static_cast<command_t>(&hooked_world<3>)), &g_original_world[3]);
+	const bool w4 = hook(WORLD_COMMANDS[4], reinterpret_cast<void*>(static_cast<command_t>(&hooked_world<4>)), &g_original_world[4]);
+	const bool bolted = hook(FX_PLAY_BOLTED, reinterpret_cast<void*>(&hooked_bolted), &g_original_bolted);
 	const bool models = hook(DOBJ_CAMERA, &hooked_dobj, &g_original_dobj);
 	char text[200];
-	snprintf(text, sizeof(text), "hook: passes: the map's surfaces %s/%s/%s, its static models %s/%s, the models' drawing %s", glow ? "held" : "NOT", w0 ? "held" : "NOT",
-	         w1 ? "held" : "NOT", w2 ? "held" : "NOT", w3 ? "held" : "NOT", models ? "held" : "NOT held");
+	snprintf(text, sizeof(text), "hook: passes: the map's surfaces %s/%s/%s, its static models %s/%s/%s, the models' drawing %s, effects on models %s", glow ? "held" : "NOT",
+	         w0 ? "held" : "NOT", w1 ? "held" : "NOT", w2 ? "held" : "NOT", w3 ? "held" : "NOT", w4 ? "held" : "NOT", models ? "held" : "NOT held", bolted ? "held" : "NOT held");
 	theater_log(text);
 }
 
@@ -876,8 +965,8 @@ void passes_game_frame(const TheaterState& state)
 		++told;
 		told_at = now;
 		char text[200];
-		snprintf(text, sizeof(text), "passes: showing \"%s\": %d characters' models, %d first-person models (flags %X), %d models and %d map steps held back since last told",
-		         ELEMENT_NAMES[elements], characters, views, g_view_flags.load(), g_held_back.exchange(0), g_world_held.exchange(0));
+		snprintf(text, sizeof(text), "passes: showing \"%s\": %d characters' models, %d first-person models (flags %X), %d models, %d map steps, %d effects held back",
+		         ELEMENT_NAMES[elements], characters, views, g_view_flags.load(), g_held_back.exchange(0), g_world_held.exchange(0), g_effects_held.exchange(0));
 		theater_log(text);
 	}
 
@@ -920,11 +1009,11 @@ void passes_game_frame(const TheaterState& state)
 			}
 		}
 
-		char text[420];
-		snprintf(text, sizeof(text), "fog: %s; going to set %d; the game's own: %s, start %g, half %g, colours %.2f %.2f %.2f / %.2f %.2f %.2f, numbers%s; asked: colour %d, second %d, start %d, half %d%s",
+		char text[520];
+		snprintf(text, sizeof(text), "fog: %s; going to set %d; the game's own: %s, start %g, half %g, colours %.2f %.2f %.2f / %.2f %.2f %.2f, numbers%s; asked: made %d (start %g half %g most %g), colour %d, second %d, start %d, half %d%s",
 		         stepped ? "read" : "NOT read (a fault)", going_to, shown.atmos ? "atmosphere kind" : "plain kind", shown.start, shown.half, shown.colour[0], shown.colour[1],
-		         shown.colour[2], shown.colour2[0], shown.colour2[1], shown.colour2[2], numbers.c_str(), wish.colour_on ? 1 : 0, wish.colour2_on ? 1 : 0, wish.start_on ? 1 : 0,
-		         wish.half_on ? 1 : 0, asked.c_str());
+		         shown.colour[2], shown.colour2[0], shown.colour2[1], shown.colour2[2], numbers.c_str(), wish.made ? 1 : 0, wish.start, wish.half, wish.most, wish.colour_on ? 1 : 0,
+		         wish.colour2_on ? 1 : 0, wish.start_on ? 1 : 0, wish.half_on ? 1 : 0, asked.c_str());
 		theater_log(text);
 	}
 
@@ -984,11 +1073,19 @@ void passes_before_copy(IDXGISwapChain* swap_chain, ID3D11Device* device, ID3D11
 				}
 			}
 
-			const int index = g_depth_buffer > 0 && g_depth_buffer <= g_last_candidate_count ? g_depth_buffer - 1 : best;
-			if (g_depth_chosen != g_last_candidates[index].texture)
+			// (0.63 took whatever was there, and showed what looks like the sun's shadow map)
+			const bool by_number = g_depth_buffer > 0 && g_depth_buffer <= g_last_candidate_count;
+			const int index = by_number ? g_depth_buffer - 1 : best;
+			ID3D11Texture2D* chosen = by_number || best_score >= 1000000u ? g_last_candidates[index].texture : nullptr;
+			if (g_depth_chosen != chosen)
 			{
-				g_depth_chosen = g_last_candidates[index].texture;
+				g_depth_chosen = chosen;
 				g_depth_copied = false;
+				if (!chosen && g_depth_source)
+				{
+					g_depth_source->Release();
+					g_depth_source = nullptr;
+				}
 			}
 		}
 		else if (!wanted)
@@ -1045,8 +1142,8 @@ void passes_before_copy(IDXGISwapChain* swap_chain, ID3D11Device* device, ID3D11
 
 		if (g_last_candidate_count)
 		{
-			snprintf(g_depth_status, sizeof(g_depth_status), "%d depth buffer%s found%s.", g_last_candidate_count, g_last_candidate_count == 1 ? "" : "s",
-			         copied ? "" : ", but it could not be copied yet");
+			snprintf(g_depth_status, sizeof(g_depth_status), "%d depth buffer%s seen this frame%s.", g_last_candidate_count, g_last_candidate_count == 1 ? "" : "s",
+			         copied ? "" : "; none of the picture's size is being shown (try Buffer 1, 2, ...)");
 		}
 		else
 		{
@@ -1179,6 +1276,11 @@ void passes_draw_ui(const bool busy)
 		ui_row_label("Colour behind");
 		ImGui::SetNextItemWidth(-FLT_MIN);
 		ImGui::ColorEdit3("##passColour", g_colour, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
+		if (ui_reset_menu("##passColourReset"))
+		{
+			g_colour[0] = 0.0f, g_colour[1] = 1.0f, g_colour[2] = 0.0f;
+		}
+
 		ImGui::PushTextWrapPos(0.0f);
 		ImGui::TextDisabled("The map and its sky are not drawn. Glow and the film settings still act on the colour: turn them off in Look for a clean one.");
 		ImGui::PopTextWrapPos();
@@ -1189,12 +1291,27 @@ void passes_draw_ui(const bool busy)
 		ui_row_label("Range");
 		ImGui::SetNextItemWidth(-FLT_MIN);
 		ImGui::SliderFloat("##depthRange", &g_depth_range, 50.0f, 20000.0f, "%.0f units", ImGuiSliderFlags_Logarithmic);
+		if (ui_reset_menu("##depthRangeReset"))
+		{
+			g_depth_range = 3000.0f;
+		}
+
 		ImGui::SetItemTooltip("How far away the grey runs out.");
 		ui_row_label("Curve");
 		ImGui::SetNextItemWidth(-FLT_MIN);
 		ImGui::SliderFloat("##depthCurve", &g_depth_curve, 0.1f, 4.0f, "%.2f");
+		if (ui_reset_menu("##depthCurveReset"))
+		{
+			g_depth_curve = 1.0f;
+		}
+
 		ui_row_label("Near is white");
 		ImGui::Checkbox("##depthWhite", &g_depth_near_white);
+		if (ui_reset_menu("##depthWhiteReset"))
+		{
+			g_depth_near_white = true;
+		}
+
 		if (ImGui::TreeNode("More about the depth"))
 		{
 			static const char* const TAKEN[] = {"When the frame is done", "Before its 1st clear", "Before its 2nd clear", "Before its 3rd clear", "Before its 4th clear"};
@@ -1222,14 +1339,34 @@ void passes_draw_ui(const bool busy)
 			ui_row_label("Direction");
 			ImGui::SetNextItemWidth(-FLT_MIN);
 			ImGui::Combo("##depthWay", &g_depth_reversed_choice, WAYS, 3);
+		if (ui_reset_menu("##depthWayReset"))
+		{
+			g_depth_reversed_choice = 0;
+		}
+
 			ui_row_label("Near plane");
 			ImGui::SetNextItemWidth(-FLT_MIN);
 			ImGui::SliderFloat("##depthNear", &g_depth_near, 0.01f, 16.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
+		if (ui_reset_menu("##depthNearReset"))
+		{
+			g_depth_near = 4.0f;
+		}
+
 			ui_row_label("Far plane");
 			ImGui::SetNextItemWidth(-FLT_MIN);
 			ImGui::SliderFloat("##depthFar", &g_depth_far, 0.0f, 100000.0f, g_depth_far > 0.0f ? "%.0f" : "none");
+		if (ui_reset_menu("##depthFarReset"))
+		{
+			g_depth_far = 0.0f;
+		}
+
 			ui_row_label("As stored");
 			ImGui::Checkbox("##depthRaw", &g_depth_raw);
+		if (ui_reset_menu("##depthRawReset"))
+		{
+			g_depth_raw = false;
+		}
+
 			ImGui::TextDisabled("%s", g_depth_status);
 			ImGui::TreePop();
 		}
@@ -1330,6 +1467,38 @@ void passes_draw_fog()
 		ImGui::EndDisabled();
 		ImGui::PopID();
 	};
+	if (shown.none)
+	{
+		// (0.63's log: every one of the game's fog sets was empty on the map tried, so there was nothing to change)
+		ImGui::PushTextWrapPos(0.0f);
+		ImGui::TextDisabled("The game has no fog of its own in this recording (any haze you see is the map's effects or lighting). One can be made here.");
+		ImGui::PopTextWrapPos();
+		ui_row_label("Make fog");
+		changed = ImGui::Checkbox("##fogMade", &wish.made) || changed;
+		ImGui::BeginDisabled(!wish.made);
+		ui_row_label("Colour");
+		ImGui::SetNextItemWidth(-FLT_MIN);
+		changed = ImGui::ColorEdit3("##fogMadeColour", wish.colour, ImGuiColorEditFlags_NoLabel) || changed;
+		ui_row_label("Starts at");
+		ImGui::SetNextItemWidth(-FLT_MIN);
+		changed = ImGui::SliderFloat("##fogMadeStart", &wish.start, 0.0f, 5000.0f, "%.0f units") || changed;
+		ui_row_label("Half-way distance");
+		ImGui::SetNextItemWidth(-FLT_MIN);
+		changed = ImGui::SliderFloat("##fogMadeHalf", &wish.half, 50.0f, 20000.0f, "%.0f units", ImGuiSliderFlags_Logarithmic) || changed;
+		ImGui::SetItemTooltip("Shorter is thicker.");
+		ui_row_label("Thickest");
+		ImGui::SetNextItemWidth(-FLT_MIN);
+		changed = ImGui::SliderFloat("##fogMadeMost", &wish.most, 0.0f, 1.0f, "%.2f") || changed;
+		ImGui::EndDisabled();
+		if (changed)
+		{
+			std::lock_guard<std::mutex> lock(g_fog_lock);
+			g_fog_wish = wish;
+		}
+
+		return;
+	}
+
 	colour_row("Fog colour", "fogColour", &wish.colour_on, wish.colour, shown.colour);
 	colour_row(shown.atmos ? "Haze colour" : "Colour towards the sun", "fogColour2", &wish.colour2_on, wish.colour2, shown.colour2);
 	if (!shown.atmos)
