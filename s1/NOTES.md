@@ -196,3 +196,29 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
   0x1400DA6D0. 0.61 hooks 0x1400D7480: in playback dtA = the recording's clock (g_clock) since that root's last step (0 backwards, 60 s at most), unless
   a menu has the keys (key catchers 0x1417E168C other than bit 1) or the editor just told the HUD's script something (theater_hud_wake, 0.5 s real).
   The script's own 100 ms tick therefore stands still while paused: "quiet for 100 ticks" is now 10 s of the recording's time. Untested when written.
+
+## 0.62: passes, the gun's depth, the fog's own values (all untested when written)
+- 0.61 confirmed by the user: gear release works ("no crashes, outfits basically solved"; log: free places by kind move up and down), HUD clock hooked
+  ("root 141432860 follows the recording's clock (key catchers 0)").
+- rgp.world = [0x14D85F640] (GfxWorld; dpvs at +1808 = 0x710: smodelCount +0x710, surface ranges +0x71C..+0x748, smodelVisData[0] +0x758; layout in
+  x64-zt src/zonetool/zonetool/s1/structs.hpp).
+- 0x1405CB8D0(a, b, c): queues the map's BSP surface ranges for the camera (calls 0x14056A0F0(begin, end, args) five times; only caller of it);
+  0x1405C9AE0(a): the static models' worker command 0x1B (R_AddWorkerCmd = 0x1405E5130); both called from the scene builders 0x1405CBD30/0x1405CBF70.
+  Skipping both = the map and sky not drawn (passes.cpp hide_world). Scene models (dropped weapons etc.) and brush models are still drawn.
+- 0x1405C8BB0(a, b, sceneEnt, d, e, f, g, h): one scene DObj's camera surfaces (caller loop at 0x140579D98, entries 0xB0 bytes: DObj +0x68, flags +0x94,
+  bits 1..3 looked at as "(flags >> 1) - 1 & 7" and "flags & 0xE": taken to be the depth hack). Returns at once for a null DObj, so skipping is safe.
+  Shadows are a different path (a hidden player still casts one).
+- Com_GetClientDObj 0x1403D2BA0: word map at 0x147DA8660[handle] -> DObj 0x147B76660 + index*0x190 (second argument unused).
+- No dvars for hiding world/entities or showing depth exist (checked dvars.txt): r_clear (3 = steady) + r_clearColor do the colour behind.
+- Depth: found by hooking ClearDepthStencilView (vtable slot 53) on the immediate context and on a deferred context's vtable; candidates = depth
+  textures of the back buffer's size; copied at present (or before the n-th clear) into a typeless SRV texture and drawn by a full-screen triangle
+  before ui.cpp's targets() copies the back buffer. The log lists the candidates ("passes: depth buffers ...") the first few times.
+- Fog: per client 7 sets of 0x9C bytes at 0x14D858C34 (set 2 = drawn/current, 3 = blended from, [0x14D8594BC] = the set being gone to; the server's is 1).
+  Setter 0x14059EC50(client, set*, index); blend 0x14059ED00(client, index, start, duration); the "atmosfog"/fog command handler 0x1401BD580 gives the
+  layout: +0x3C atmos flag; plain: start +0x00, half +0x80, colour +0x7C, sun colour +0x84 (if +0x08), +0x24/+0x04/+0x0C.. more; atmos: first two
+  floats -> +0x50, +0x8C, colours +0x94 (sun fog) and +0x98 (haze), then +0x40, +0x44, +0x4C, +0x48, +0x54, +0x58, +0x5C, +0x60, direction
+  +0x64..+0x6C, +0x70, +0x90. Colours are 4 bytes B,G,R,A (packer 0x1401BA430). passes.cpp writes wishes into the going-to set and set 2 each frame.
+  The dump function with the names (ent.atmosFog...) is 0x1401CDD09: reading it would name the atmos numbers.
+- Multi-pass recording: capture.cpp runs the ticked passes one after another over the same stretch (finish() -> next pass -> seek), file names get
+  the pass's word (passes_tag).
+- Not done: older pattern camos; dropping original gear (see 0.61); scene/brush models in the colour passes.
