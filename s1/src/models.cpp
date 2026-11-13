@@ -1002,6 +1002,21 @@ namespace
 		}
 	}
 
+	// (a record the game marked as not having its models loaded, because the gear it named had been let go
+	// of when the game looked: marked as having them again once every name in it is in memory)
+	bool mark_loaded(const std::uintptr_t record)
+	{
+		__try
+		{
+			*reinterpret_cast<int*>(record + 4) = 1;
+			return true;
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			return false;
+		}
+	}
+
 	bool free_dobj(const int handle)
 	{
 		__try
@@ -1057,6 +1072,7 @@ namespace
 					}
 
 					const auto swaps = array.players && !g_names_off ? g_swaps.find(copy.handle) : g_swaps.end();
+					bool ours = false, all_loaded = true;
 					for (int place = 0; place < NAME_PLACES; ++place)
 					{
 						std::string now = copy.names[place];
@@ -1121,9 +1137,21 @@ namespace
 						}
 
 						g_record_names.insert(now);
+						all_loaded = all_loaded && g_loaded.count(now) != 0;
 						if (array.players && now != original)
 						{
 							g_unrenamed[copy.handle][now] = original;
+							ours = true;
+						}
+					}
+
+					if (ours && !copy.valid && all_loaded && mark_loaded(record))
+					{
+						changed.push_back(copy.handle);
+						if (told < 60)
+						{
+							++told;
+							note("models: entity %d's record was marked as lacking its models: marked as having them (every name in it is in memory)", copy.handle);
 						}
 					}
 				}

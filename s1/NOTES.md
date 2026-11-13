@@ -222,3 +222,25 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
 - Multi-pass recording: capture.cpp runs the ticked passes one after another over the same stretch (finish() -> next pass -> seek), file names get
   the pass's word (passes_tag).
 - Not done: older pattern camos; dropping original gear (see 0.61); scene/brush models in the colour passes.
+
+## 0.63: original gear dropped (by name in the character records); 0.62's passes and fog fixed (untested when written)
+- User on 0.62: Everything / no gun worked; "only the world" kept the players; the colour passes hid players and gun but drew the map; fog did nothing;
+  "gun at its true depth" worked (in effect only r_znear 0.5: the flag stripping never ran, see next line; kept as r_znear only).
+- passes: the scene entry's DObj is at +0x98 (the argument of DObjGetNumModels in 0x1405C8BB0), not +0x68 (0.62 matched nothing: "0 held back").
+  The map is drawn by worker commands (dispatcher 0x1405E5B80, jump table at +0x5E5EB0, 0x24 types): 0x10 -> 0x140569EB0 (BSP, usual path; uses the
+  second world pointer [0x14D8F2640]), 0x12 -> 0x14056A2F0 (BSP ranges), 0x1D -> 0x14056FFD0 and 0x13 -> 0x14056D940 (static models), 0x11 ->
+  0x14056B110 (unknown, big stack, queued with the FX command 0x19), 0x15 -> 0x140579B90 (scene DObjs), 0x16 -> 0x1405CBD30, 0x1B -> 0x1402A5410 (FX).
+  [0x14D80FD98] != 0 selects the range path (0x1405CB8D0 queues all five ranges); normally 0 (only the emissive range goes that way).
+- fog: per frame 0x1405D347A writes set 2 (drawn) from set 4 (the "to" copy; times at +0x74/+0x78 of it) or a blend from set 3: 0.62 wrote sets
+  [going_to] and 2 only, so it was overwritten. 0.63 writes all seven; the log line "fog: ..." gives the game's own values and what was asked.
+- depth: no ClearDepthStencilView of a 2560x1440 buffer was seen; 0.63 also watches OMSetRenderTargets (slot 33), takes any size, picks by score, and
+  logs every candidate with its size.
+- Character records: 0xCC0 bytes: +0 handle, +4 models-loaded flag (cleared by the per-frame check 0x1401B06E0 via 0x1400239F0(client, name) ->
+  0x1400256E0), +0x24 first model NAME, +0x64 + i*0x40 twenty more names. Arrays: 42 players at 0x141620568, 8 at 0x141649350 (entity - 42), bodies at
+  0x14164F950 (entity - 50). models.cpp rename_gear(): a swap whose two names are both gear is written into the player's record (g_renamed,
+  g_unrenamed maps it back for hooked_create so g_seen/g_swaps stay in terms of the player's own gear), the DObj freed for the game to rebuild; the
+  displaced own gear is then dropped (g_dropped: filtered out of the server's lists in the hook and the replay, counted off with tr_let_go) when no
+  record names it and no live DObj's list holds its pointer. Going back: the number is un-dropped, reloaded, then the name written back.
+  If the game rewrote the records every frame the pass turns itself off (g_names_off, "keeps writing the players' records back").
+  Unknown: whether DObjs are built from the names each time (then originals really leave) or from cached pointers (then nothing is dropped, and
+  nothing breaks: the log will show no "let go" of own gear).
