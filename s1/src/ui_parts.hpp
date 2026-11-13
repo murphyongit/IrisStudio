@@ -60,6 +60,7 @@ struct LookTrack
 float look_key_width();
 void look_key_button(const char* id, const char* label, int count, const float* values);
 void look_key_changed(const char* id, const float* values);
+void look_key_add(const char* id, const char* label, int count, const float* values);
 void look_key_remove(const char* id);
 int look_track_count();
 bool look_track(int index, LookTrack* out);

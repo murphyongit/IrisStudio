@@ -273,7 +273,6 @@ namespace
 		{CameraMode::FirstPerson, "First person", "First Person Camera", true},
 		{CameraMode::ThirdPerson, "Third person", "Third Person Camera", true},
 		{CameraMode::Free, "Free", "Free Camera", true},
-		{CameraMode::Orbit, "Orbit", "Orbit Camera", false},
 		{CameraMode::Dolly, "Dolly", "Dolly Camera", true},
 		{CameraMode::Bone, "Bone", "Bone Camera", true}};
 
@@ -386,6 +385,24 @@ namespace
 		snprintf(g_fx_last, sizeof(g_fx_last), "%s", name);
 	}
 
+	// an effect copied, with its settings: pasted, it is the same effect somewhere else (foliage, fires...)
+	PlacedEffect g_fx_clip;
+	bool g_fx_copied = false;
+
+	void paste_effect_at(const float point[3])
+	{
+		const int index = effects_add(g_fx_clip.name, point, g_fx_clip.at_ms);
+		PlacedEffect placed[32];
+		const int count = effects_placed(placed, 32);
+		if (index >= 0 && index < count)
+		{
+			PlacedEffect copy = g_fx_clip;
+			memcpy(copy.origin, point, sizeof(copy.origin));
+			copy.follow = false;
+			effects_set(index, copy);
+		}
+	}
+
 	// The menu a right click on the picture opens: things put at the place clicked.
 	void draw_place_menu()
 	{
@@ -441,6 +458,17 @@ namespace
 		}
 
 		ImGui::Separator();
+		if (g_fx_copied)
+		{
+			const char* slash = strrchr(g_fx_clip.name, '/');
+			char label[128];
+			snprintf(label, sizeof(label), "Paste %s here", slash ? slash + 1 : g_fx_clip.name);
+			if (ImGui::MenuItem(label))
+			{
+				paste_effect_at(point);
+			}
+		}
+
 		if (g_fx_last[0])
 		{
 			char label[128];
@@ -500,6 +528,8 @@ namespace
 			ImGui::EndMenu();
 		}
 	}
+
+	float g_lane_scale = 1.0f;  // how tall the timeline's rows are, against a line of text
 
 	// The game's picture, as large as fits, under the camera's name.
 	void draw_view(const CameraState& camera, const ImVec2 size)
@@ -672,11 +702,15 @@ namespace
 			float fov = camera.fov;
 			row_label("Field of View");
 			ImGui::BeginDisabled(camera.mode != CameraMode::Free && camera.mode != CameraMode::Bone);
+			ImGui::SetNextItemWidth(-look_key_width());
 			if (ImGui::SliderFloat("##fov", &fov, 5.0f, 160.0f, "%.1f"))
 			{
 				camera_set_fov(fov);
+				look_key_changed("camera_fov", &fov);
 			}
 
+			// (a keyframe: with the bone camera the view can zoom as the recording plays)
+			look_key_button("camera_fov", "Field of view", 1, &fov);
 			ImGui::EndDisabled();
 			if (camera.mode == CameraMode::Free)
 			{
@@ -759,12 +793,38 @@ namespace
 				changed = true;
 			}
 
+			// (Offset and Rotation can have keyframes: the camera moves and looks around on the bone as the
+			// recording plays; flown with the mouse, press the diamond to keep where it is now)
 			row_label("Offset");
-			changed = ImGui::DragFloat3("##boneOffset", wanted.offset, 0.25f, -2000.0f, 2000.0f, "%.1f") || changed;
+			ImGui::SetNextItemWidth(-look_key_width());
+			if (ImGui::DragFloat3("##boneOffset", wanted.offset, 0.25f, -2000.0f, 2000.0f, "%.1f"))
+			{
+				changed = true;
+				look_key_changed("bone_offset", wanted.offset);
+			}
+
 			ImGui::SetItemTooltip("Forward, right, up, along the bone's own directions");
+			look_key_button("bone_offset", "Bone camera offset", 3, wanted.offset);
 			row_label("Rotation");
-			changed = ImGui::DragFloat3("##boneTurn", wanted.turn, 0.5f, -720.0f, 720.0f, "%.1f") || changed;
+			ImGui::SetNextItemWidth(-look_key_width());
+			if (ImGui::DragFloat3("##boneTurn", wanted.turn, 0.5f, -720.0f, 720.0f, "%.1f"))
+			{
+				changed = true;
+				look_key_changed("bone_turn", wanted.turn);
+			}
+
 			ImGui::SetItemTooltip("Up and down, around, roll");
+			look_key_button("bone_turn", "Bone camera rotation", 3, wanted.turn);
+			if (ImGui::Button("Add a camera point here"))
+			{
+				// the three at once: where the camera is on the bone, where it looks, and how wide
+				look_key_add("bone_offset", "Bone camera offset", 3, wanted.offset);
+				look_key_add("bone_turn", "Bone camera rotation", 3, wanted.turn);
+				float wide = camera.fov;
+				look_key_add("camera_fov", "Field of view", 1, &wide);
+			}
+
+			ImGui::SetItemTooltip("Keeps the bone camera's offset, rotation and field of view at this time of the recording.\nBetween two points the camera glides from one to the other. They show on the timeline.");
 			row_label("Turn with the bone");
 			changed = ImGui::Checkbox("##boneRotate", &wanted.rotate) || changed;
 			if (changed)
@@ -1230,12 +1290,45 @@ namespace
 				PlacedEffect placed[32];
 				const int placed_count = effects_placed(placed, 32);
 				int remove_fx = -1;
+				// the placed effects, a line each; a click on one opens its settings under it
+				static int fx_open = -1, fx_order = 0;
+				if (placed_count > 0)
+				{
+					ImGui::Separator();
+					ImGui::AlignTextToFramePadding();
+					ImGui::TextDisabled("%d placed", placed_count);
+					ImGui::SameLine();
+					ImGui::SetNextItemWidth(g_font_size * 9.0f);
+					ImGui::Combo("##fxOrder", &fx_order, "As added\0By time\0By name\0");
+					if (g_fx_copied)
+					{
+						ImGui::SameLine();
+						if (ImGui::Button("Paste here"))
+						{
+							float here[3];
+							camera_view_origin(here);
+							paste_effect_at(here);
+						}
+
+						ImGui::SetItemTooltip("A copy of %s where the camera is.\nOr right click a place on the picture and choose Paste.", g_fx_clip.name);
+					}
+				}
+
+				int order[32];
 				for (int i = 0; i < placed_count; ++i)
 				{
+					order[i] = i;
+				}
+
+				std::stable_sort(order, order + placed_count, [&](const int a, const int b) {
+					return fx_order == 1 ? placed[a].at_ms < placed[b].at_ms : fx_order == 2 ? strcmp(placed[a].name, placed[b].name) < 0 : a < b;
+				});
+				for (int k = 0; k < placed_count; ++k)
+				{
+					const int i = order[k];
 					PlacedEffect effect = placed[i];
 					bool changed = false;
 					ImGui::PushID(2000 + i);
-					ImGui::Separator();
 					changed = ImGui::Checkbox("##on", &effect.on) || changed;
 					ImGui::SameLine();
 					if (ImGui::SmallButton(ICON_PLAY))
@@ -1245,21 +1338,53 @@ namespace
 
 					ImGui::SetItemTooltip("Play it now");
 					ImGui::SameLine();
-					if (ImGui::SmallButton("Move here"))
 					{
-						camera_view_origin(effect.origin);
-						changed = true;
+						const char* slash = strrchr(effect.name, '/');
+						char at[32], line[160];
+						format_time(at, sizeof(at), effect.at_ms);
+						snprintf(line, sizeof(line), "%s   %s", slash ? slash + 1 : effect.name, at);
+						const float buttons = ImGui::CalcTextSize("Copy").x + ImGui::CalcTextSize(ICON_TRASH).x + ImGui::GetStyle().FramePadding.x * 4.0f +
+						                      ImGui::GetStyle().ItemSpacing.x * 2.0f;
+						if (ImGui::Selectable(line, fx_open == i, 0, {ImGui::GetContentRegionAvail().x - buttons, 0.0f}))
+						{
+							fx_open = fx_open == i ? -1 : i;
+						}
+
+						ImGui::SetItemTooltip("%s\nClick: its settings", effect.name);
 					}
 
+					ImGui::SameLine();
+					if (ImGui::SmallButton("Copy"))
+					{
+						g_fx_clip = effect;
+						g_fx_copied = true;
+					}
+
+					ImGui::SetItemTooltip("Copy it: then right click places on the picture and choose Paste, or use Paste here");
 					ImGui::SameLine();
 					if (ImGui::SmallButton(ICON_TRASH))
 					{
 						remove_fx = i;
 					}
 
-					ImGui::PushTextWrapPos(0.0f);
-					ImGui::TextUnformatted(effect.name);
-					ImGui::PopTextWrapPos();
+					if (fx_open != i)
+					{
+						if (changed)
+						{
+							effects_set(i, effect);
+						}
+
+						ImGui::PopID();
+						continue;
+					}
+
+					ImGui::Indent();
+					if (ImGui::SmallButton("Move to the camera"))
+					{
+						camera_view_origin(effect.origin);
+						changed = true;
+					}
+
 					float seconds = effect.at_ms / 1000.0f, again = effect.every_ms / 1000.0f;
 					row_label("Plays at");
 					ImGui::SetNextItemWidth(-ImGui::CalcTextSize("Now").x - ImGui::GetStyle().FramePadding.x * 2.0f - ImGui::GetStyle().ItemSpacing.x);
@@ -1309,6 +1434,7 @@ namespace
 					row_label("Direction");
 					changed = ImGui::DragFloat3("##angles", effect.angles, 1.0f, -360.0f, 360.0f, "%.0f") || changed;
 					ImGui::SetItemTooltip("Up and down, around, roll: which way the effect goes (it starts going up)");
+					ImGui::Unindent();
 					if (changed)
 					{
 						effects_set(i, effect);
@@ -1320,6 +1446,7 @@ namespace
 				if (remove_fx >= 0)
 				{
 					effects_remove(remove_fx);
+					fx_open = -1;
 				}
 			}
 
@@ -1809,7 +1936,7 @@ namespace
 		}
 		else
 		{
-			ImGui::TextDisabled("wheel over the timeline: zoom in");
+			ImGui::TextDisabled("wheel over the timeline: zoom in   Ctrl + wheel: taller or shorter rows");
 		}
 
 		// the ruler and the rows
@@ -1821,7 +1948,6 @@ namespace
 		const float labels = (std::max)(g_font_size * 8.0f, (std::min)(labels_set > 0.0f ? labels_set : g_font_size * 15.0f, full * 0.6f));
 		const float left = origin.x + labels, right = origin.x + full - g_font_size * 0.5f;
 		const float length = state.length_ms > 0 ? static_cast<float>(state.length_ms) : 1.0f;
-		const float row = frame + style.ItemSpacing.y * 0.5f;
 		ImDrawList* draw = ImGui::GetWindowDrawList();
 		{
 			// the wheel over the timeline zooms about the mouse; with Shift it moves along
@@ -1832,7 +1958,13 @@ namespace
 			{
 				const float t = (io.MousePos.x - left) / (right - left);
 				const float before = length / zoom;
-				if (io.KeyShift)
+				if (io.KeyCtrl)
+				{
+					// (the rows' height)
+					g_lane_scale *= io.MouseWheel > 0.0f ? 1.15f : 1.0f / 1.15f;
+					g_lane_scale = g_lane_scale < 0.6f ? 0.6f : g_lane_scale > 4.0f ? 4.0f : g_lane_scale;
+				}
+				else if (io.KeyShift)
 				{
 					view_start -= io.MouseWheel * before * 0.15f;
 				}
@@ -1940,27 +2072,29 @@ namespace
 			}
 		}
 
-		// the rows: Markers, Campath
+		// the rows: Markers, Campath (as tall as Ctrl + the wheel has made them)
+		const float lane = std::floor(frame * g_lane_scale);
+		const float row = lane + style.ItemSpacing.y * 0.5f;
 		float y = ruler_bottom + style.ItemSpacing.y * 0.5f;
-		draw->AddRectFilled({left, y}, {right, y + frame}, u32(P.surface));
+		draw->AddRectFilled({left, y}, {right, y + lane}, u32(P.surface));
 		draw->AddText({origin.x + g_font_size * 0.5f, y + style.FramePadding.y}, u32(P.muted), ICON_FLAG "  Markers");
 		y += row;
-		draw->AddRectFilled({left, y}, {right, y + frame}, u32(P.surface));
+		draw->AddRectFilled({left, y}, {right, y + lane}, u32(P.surface));
 		char campath[48];
 		snprintf(campath, sizeof(campath), ICON_VIDEO "  Campath (%d)", camera.points);
 		draw->AddText({origin.x + g_font_size * 0.5f, y + style.FramePadding.y}, u32(P.text), campath);
-		ImGui::SetCursorScreenPos({left - frame * 1.2f - style.ItemSpacing.x - 6.0f, y});
+		ImGui::SetCursorScreenPos({left - lane * 1.2f - style.ItemSpacing.x - 6.0f, y});
 		ImGui::BeginDisabled(camera.points == 0);
-		if (ImGui::Button(ICON_TRASH "##clearCampath", {frame * 1.2f, frame}))
+		if (ImGui::Button(ICON_TRASH "##clearCampath", {lane * 1.2f, lane}))
 		{
 			camera_clear_points();
 		}
 
 		ImGui::EndDisabled();
-		const float diamond = frame * 0.28f;
+		const float diamond = lane * 0.28f;
 		for (int i = 0; i < camera.points && i < 64; ++i)
 		{
-			const float x = std::floor(x_of(static_cast<float>(camera.point_ms[i]))), middle = y + frame * 0.5f;
+			const float x = std::floor(x_of(static_cast<float>(camera.point_ms[i]))), middle = y + lane * 0.5f;
 			if (!in_view(x))
 			{
 				continue;
@@ -1975,20 +2109,20 @@ namespace
 		for (int t = 0; look_track(t, &track); ++t)
 		{
 			y += row;
-			if (y + frame > rows_bottom)
+			if (y + lane > rows_bottom)
 			{
 				break;
 			}
 
-			draw->AddRectFilled({left, y}, {right, y + frame}, u32(P.surface));
+			draw->AddRectFilled({left, y}, {right, y + lane}, u32(P.surface));
 			ImGui::PushID(t);
-			ImGui::PushClipRect({origin.x, y}, {left - frame * 1.2f - style.ItemSpacing.x * 2.0f - 6.0f, y + frame}, true);
+			ImGui::PushClipRect({origin.x, y}, {left - lane * 1.2f - style.ItemSpacing.x * 2.0f - 6.0f, y + lane}, true);
 			char name[96];
 			snprintf(name, sizeof(name), ICON_SLIDERS "  %s (%d)", track.label, track.keys);
 			draw->AddText({origin.x + g_font_size * 0.5f, y + style.FramePadding.y}, u32(P.text), name);
 			ImGui::PopClipRect();
-			ImGui::SetCursorScreenPos({left - frame * 1.2f - style.ItemSpacing.x - 6.0f, y});
-			if (ImGui::Button(ICON_TRASH "##clearTrack", {frame * 1.2f, frame}))
+			ImGui::SetCursorScreenPos({left - lane * 1.2f - style.ItemSpacing.x - 6.0f, y});
+			if (ImGui::Button(ICON_TRASH "##clearTrack", {lane * 1.2f, lane}))
 			{
 				clear = t;
 			}
@@ -1996,7 +2130,7 @@ namespace
 			ImGui::SetItemTooltip("Remove these keyframes");
 			for (int i = 0; i < track.keys; ++i)
 			{
-				const float x = std::floor(x_of(static_cast<float>(track.ms[i]))), middle = y + frame * 0.5f;
+				const float x = std::floor(x_of(static_cast<float>(track.ms[i]))), middle = y + lane * 0.5f;
 				if (!in_view(x))
 				{
 					continue;
@@ -2004,7 +2138,7 @@ namespace
 
 				ImGui::SetCursorScreenPos({x - diamond, y});
 				ImGui::PushID(i);
-				if (ImGui::InvisibleButton("##key", {diamond * 2.0f, frame}))
+				if (ImGui::InvisibleButton("##key", {diamond * 2.0f, lane}))
 				{
 					theater_seek(track.ms[i]);
 				}
@@ -2041,7 +2175,7 @@ namespace
 			for (int i = 0; i < placed_count; ++i)
 			{
 				y += row;
-				if (y + frame > rows_bottom)
+				if (y + lane > rows_bottom)
 				{
 					break;
 				}
@@ -2049,15 +2183,15 @@ namespace
 				PlacedEffect& effect = placed[i];
 				const char* slash = strrchr(effect.name, '/');
 				const char* shown = slash ? slash + 1 : effect.name;
-				draw->AddRectFilled({left, y}, {right, y + frame}, u32(P.surface));
-				ImGui::PushClipRect({origin.x, y}, {left - frame * 1.2f - style.ItemSpacing.x * 2.0f - 6.0f, y + frame}, true);
+				draw->AddRectFilled({left, y}, {right, y + lane}, u32(P.surface));
+				ImGui::PushClipRect({origin.x, y}, {left - lane * 1.2f - style.ItemSpacing.x * 2.0f - 6.0f, y + lane}, true);
 				char name[128];
 				snprintf(name, sizeof(name), ICON_WAND "  %s", shown);
 				draw->AddText({origin.x + g_font_size * 0.5f, y + style.FramePadding.y}, u32(effect.on ? P.text : P.muted), name);
 				ImGui::PopClipRect();
 				ImGui::PushID(7000 + i);
-				ImGui::SetCursorScreenPos({left - frame * 1.2f - style.ItemSpacing.x - 6.0f, y});
-				if (ImGui::Button(ICON_TRASH "##removeEffect", {frame * 1.2f, frame}))
+				ImGui::SetCursorScreenPos({left - lane * 1.2f - style.ItemSpacing.x - 6.0f, y});
+				if (ImGui::Button(ICON_TRASH "##removeEffect", {lane * 1.2f, lane}))
 				{
 					remove_effect = i;
 				}
@@ -2079,7 +2213,7 @@ namespace
 				// the right end, then the clip itself
 				const float handle = 8.0f;
 				ImGui::SetCursorScreenPos({x1 - handle, y});
-				ImGui::InvisibleButton("##end", {handle * 2.0f, frame});
+				ImGui::InvisibleButton("##end", {handle * 2.0f, lane});
 				const bool end_over = ImGui::IsItemHovered(), end_held = ImGui::IsItemActive();
 				if (end_held)
 				{
@@ -2089,7 +2223,7 @@ namespace
 				}
 
 				ImGui::SetCursorScreenPos({x0, y});
-				ImGui::InvisibleButton("##clip", {(x1 - handle - x0) < 4.0f ? 4.0f : x1 - handle - x0, frame});
+				ImGui::InvisibleButton("##clip", {(x1 - handle - x0) < 4.0f ? 4.0f : x1 - handle - x0, lane});
 				const bool over = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
 				if (ImGui::IsItemActivated())
 				{
@@ -2122,10 +2256,10 @@ namespace
 
 				ImGui::PopID();
 				const unsigned fill = effect.on ? P.warn : P.muted;
-				draw->AddRectFilled({x0, y + 2.0f}, {x1, y + frame - 2.0f}, u32(fill, over || held ? 0.55f : 0.35f), 3.0f);
-				draw->AddRect({x0, y + 2.0f}, {x1, y + frame - 2.0f}, u32(fill), 3.0f);
-				draw->AddRectFilled({x1 - 3.0f, y + 2.0f}, {x1, y + frame - 2.0f}, u32(fill));
-				ImGui::PushClipRect({x0 + 4.0f, y}, {x1 - 4.0f, y + frame}, true);
+				draw->AddRectFilled({x0, y + 2.0f}, {x1, y + lane - 2.0f}, u32(fill, over || held ? 0.55f : 0.35f), 3.0f);
+				draw->AddRect({x0, y + 2.0f}, {x1, y + lane - 2.0f}, u32(fill), 3.0f);
+				draw->AddRectFilled({x1 - 3.0f, y + 2.0f}, {x1, y + lane - 2.0f}, u32(fill));
+				ImGui::PushClipRect({x0 + 4.0f, y}, {x1 - 4.0f, y + lane}, true);
 				draw->AddText({x0 + 6.0f, y + style.FramePadding.y}, u32(P.text), shown);
 				ImGui::PopClipRect();
 			}

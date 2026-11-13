@@ -592,7 +592,14 @@ namespace
 		  {"Ambient occlusion", "r_ssao"},
 		  {"Use the occlusion strength below", "r_ssaoUseTweaks"},
 		  {"Occlusion strength", "r_ssaoStrength"}}},
-		{ICON_CLOUD, "Fog", false, {{"Fog", "r_fog"}}},
+		// (the fog's own colour and thickness are the map's script's, not settings: these are what the game
+		// lets be changed over them)
+		{ICON_CLOUD, "Fog", false,
+		 {{"Fog", "r_fog"},
+		  {"Fog brightness", "r_fog_ev_adjust"},
+		  {"Fog over the sky", "r_sky_fog_intensity"},
+		  {"Sky fog from angle", "r_sky_fog_min_angle"},
+		  {"Sky fog up to angle", "r_sky_fog_max_angle"}}},
 		{ICON_EYE, "Depth of Field", false,
 		 {{"Depth of field", "r_dof_enable"},
 		  {"Use the values below", "r_dof_tweak"},
@@ -632,15 +639,9 @@ namespace
 		  {"Detail kept longer, characters", "r_lodBiasSkinned"},
 		  {"Detail kept longer, objects", "r_lodBiasRigid"},
 		  {"Detail falloff, characters", "r_lodScaleSkinned"},
-		  {"Detail falloff, objects", "r_lodScaleRigid"},
-		  {"Smoothing (subdivision)", "r_subdiv"},
-		  {"Smoothing, which models", "r_adaptiveSubdiv"},
-		  {"Smoothing steps", "r_subdivLimit"},
-		  {"Smoothing patches", "r_subdivPatchCount"},
-		  {"Smoothing by distance", "r_adaptiveSubdivBaseFactor"},
-		  {"Surface relief", "r_tessellation"},
-		  {"Surface relief amount", "r_tessellationFactor"},
-		  {"Surface relief distance", "r_tessellationCutoffDistance"}}},
+		  // (the smoothing and surface relief settings were here to 0.57: multiplayer's models are not made
+		  // for either, and they changed nothing; they are still under All settings)
+		  {"Detail falloff, objects", "r_lodScaleRigid"}}},
 		{ICON_WAND, "Effects", false,
 		 {{"Effects", "fx_enable"},
 		  {"Draw effects", "fx_draw"},
@@ -664,8 +665,7 @@ namespace
 		  {"Gun up", "cg_gun_z"}}},
 	};
 
-	const Entry HUD_SETTINGS[] = {{"2D Elements (F3)", "cg_draw2D"}, {"Gun", "cg_drawGun"}, {"Names over players", "cg_drawFriendlyNames"},
-	                              {"Killfeed", "ui_hud_obituaries"}};
+	const Entry HUD_SETTINGS[] = {{"2D Elements (F3)", "cg_draw2D"}, {"Gun", "cg_drawGun"}, {"Names over players", "cg_drawFriendlyNames"}};
 
 	// The sun as a light, as IrisStudio's Sun section has it: colour, brightness, direction.
 	void draw_sun_light(const bool reset)
@@ -941,7 +941,44 @@ namespace
 		};
 
 		// the parts that have been matched to what they are
-		static const struct { const char* label; const char* part; } KNOWN[] = {{"Minimap", "wrapper_for_minimapHud"}};
+		static const struct { const char* label; const char* part; } KNOWN[] = {
+			{"Kill feed", "wrapper_for_obituary_rotation_id"},
+			{"Score popups (+100)", "wrapper_for_pointsPopup"},
+			{"Hitmarkers", "wrapper_for_damageFeedbackHud"},
+			{"Weapon and streaks", "wrapper_for_baseWeaponInfoHud"},
+			{"Minimap", "wrapper_for_minimapHud"},
+			{"Team scores", "wrapper_for_teamScores_rotation_id"},
+			{"Button hints", "wrapper_for_hintsContainerHudId"},
+			{"Game messages", "wrapper_for_gameMessageHudId"},
+			{"Medals and splashes", "wrapper_for_splashesHud"},
+		};
+
+		// at a click: only what a kill shows (the feed, the score, the hitmarker), or everything
+		if (ImGui::Button("Kills only"))
+		{
+			g_hud_hidden.clear();
+			for (const Part& part : parts)
+			{
+				// (the parts themselves are the third level down; what holds them stays)
+				const bool kept = part.name.find("obituary") != std::string::npos || part.name.find("pointsPopup") != std::string::npos ||
+				                  part.name.find("damageFeedback") != std::string::npos;
+				if (std::count(part.name.begin(), part.name.end(), '.') == 2 && !kept)
+				{
+					g_hud_hidden.insert(part.name);
+				}
+			}
+
+			send_hud_hidden();
+		}
+
+		ImGui::SetItemTooltip("Hides every part of the HUD but the kill feed, the score popups and the hitmarkers");
+		ImGui::SameLine();
+		if (ImGui::Button("Show everything"))
+		{
+			g_hud_hidden.clear();
+			send_hud_hidden();
+		}
+
 		for (const auto& known : KNOWN)
 		{
 			for (const Part& part : parts)
@@ -974,13 +1011,15 @@ namespace
 				bool shown = !g_hud_hidden.count(part.name);
 				const size_t dot = part.name.rfind('.');
 				ImGui::PushID(index++);
+				// (the box first, then the name: a long name used to run under the box)
 				ImGui::Indent(part.depth * ui_font_size() * 0.8f + 0.01f);
-				ui_row_label(dot == std::string::npos ? part.name.c_str() : part.name.c_str() + dot + 1);
 				if (ImGui::Checkbox("##shown", &shown))
 				{
 					toggle(part.name, shown);
 				}
 
+				ImGui::SameLine();
+				ImGui::TextUnformatted(dot == std::string::npos ? part.name.c_str() : part.name.c_str() + dot + 1);
 				ImGui::Unindent(part.depth * ui_font_size() * 0.8f + 0.01f);
 				ImGui::PopID();
 			}
@@ -1417,6 +1456,12 @@ void look_key_changed(const char* id, const float* values)
 	key_changed(id, values);
 }
 
+// A keyframe of the setting at the time the recording is at (the track made if there is none).
+void look_key_add(const char* id, const char* label, const int count, const float* values)
+{
+	put_key(id, label, count, values);
+}
+
 void look_key_remove(const char* id)
 {
 	remove_track(id);
@@ -1495,6 +1540,29 @@ void look_frame(const TheaterState& state)
 			else if (track.id == "sun_direction")
 			{
 				sun_set_direction(v[0], v[1]);
+			}
+			else if (track.id == "bone_offset" || track.id == "bone_turn")
+			{
+				// the bone camera's place and turn on its bone: only as the recording's time moves, so that
+				// with time standing still the camera can be flown to where the next point is wanted
+				static double applied[2] = {-1.0, -1.0};
+				const int which = track.id == "bone_offset" ? 0 : 1;
+				if (applied[which] != static_cast<double>(state.position_exact))
+				{
+					applied[which] = static_cast<double>(state.position_exact);
+					BoneCamera bone = camera_bone_state().camera;
+					memcpy(which == 0 ? bone.offset : bone.turn, v, sizeof(bone.offset));
+					camera_set_bone(bone);
+				}
+			}
+			else if (track.id == "camera_fov")
+			{
+				static double applied = -1.0;
+				if (applied != static_cast<double>(state.position_exact))
+				{
+					applied = static_cast<double>(state.position_exact);
+					camera_set_fov(v[0] < 5.0f ? 5.0f : v[0] > 160.0f ? 160.0f : v[0]);
+				}
 			}
 			else if (track.id.compare(0, 5, "light") == 0)
 			{

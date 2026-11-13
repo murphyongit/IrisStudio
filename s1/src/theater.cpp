@@ -37,7 +37,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.57 (recorder, playback, IrisStudio's editor)";
+	constexpr char VERSION[] = "0.58 (recorder, playback, IrisStudio's editor)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -371,6 +371,12 @@ namespace
 	void show(const char* text)
 	{
 		log_line("shown: %s", text);
+		// (during playback they came up in the kill feed: the editor has the same on its own panel)
+		if (g_play != Play::Idle)
+		{
+			return;
+		}
+
 		__try
 		{
 			if (connection_state() == CA_ACTIVE)

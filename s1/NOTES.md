@@ -129,3 +129,14 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
 - 0.57: no release; room = models ever asked for that are loaded now (g_asked_models) + planned, at most 17.
 - To really raise it: (a) make the game unload gear taken off its lists (find what its handler needs: flags 0xC0000000 on list numbers? 0x1400259A0?),
   and take a re-dressed player's own gear off the lists too; or (b) more/larger slots at map load. Neither done.
+
+## 0.58: HUD, effects list, timeline rows, bone camera points
+- HUD parts (LUI names): kill feed wrapper_for_obituary_rotation_id, +100 wrapper_for_pointsPopup, hitmarkers wrapper_for_damageFeedbackHud, weapon/streak
+  info wrapper_for_baseWeaponInfoHud, hints wrapper_for_hintsContainerHudId, messages wrapper_for_gameMessageHudId, medals wrapper_for_splashesHud.
+  "Kills only" hides every third-level part but the first three. show() no longer prints on the game's screen during playback (it landed in the kill feed).
+- Effects list: one line each, details on click, order combo, Copy + Paste (list button and the picture's right-click menu).
+- Timeline: Ctrl+wheel = row height (g_lane_scale). Orbit camera removed from the list.
+- Bone camera: tracks bone_offset, bone_turn, camera_fov (applied only as time moves); "Add a camera point here" keys all three.
+- Fog: only r_fog, r_fog_ev_adjust, r_sky_fog_* are settable; the g_*Fog*ReadOnly dvars are outputs. Real fog colour/density = the cg fog state set by
+  script (setExpFog / atmos fog): not found yet. Subdivision/tessellation dvars do nothing on MP models (rows removed).
+- Still open, asked for: unload gear (option 1), render passes (depth, green screen, world, weapon), gun vs ReShade depth, fog colour/density.
