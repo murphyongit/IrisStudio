@@ -45,3 +45,6 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
 - effects.cpp loads it with DB_LoadXAssets(0x140270F30) {name, allocFlags 1 (common), 0}, async, when asked from the Effects panel. Untested when written.
 - Gear transient files are zone\mp_<kind>_..._tr.ff (e.g. mp_hat_vl_583_tr.ff). .bat files cannot be sent in chat; device_commit_files of exe was denied,
   csv/bat updates were allowed afterwards. The shell rewrites ">nul" in commands: build such text in python.
+- 0.47 called DB_LoadXAssets from the calc-view hook: the main thread never came back (user force-closed). The function first waits for the database
+  thread (Sys_SyncDatabase 0x1403E2170, event at 0x147DCEC28; Sys_IsDatabaseReady 0x1403E1850) and later takes a write lock (0x143B749C8/CC).
+  0.48 sends S1x's own console command "loadzone s1iris_rain" through Cbuf instead (S1x has loadzone: console_commands.txt), once the loader is idle.

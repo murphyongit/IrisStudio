@@ -28,9 +28,25 @@ namespace
 	// game's kind built from them (zone\s1iris_rain.ff: Ascend's rain, mist and lightning, made with x64
 	// ZoneTool) is loaded on top of whatever map is being played (DB_LoadXAssets 0x140270F30: a name, the
 	// kind of file it is kept as, 1 being the game's common ones, which stay for the session).
-	constexpr std::uintptr_t DB_LOAD_XASSETS = 0x140270F30;
+	// Called from the drawing of a frame (0.47) it never came back: the game's loader and its drawing
+	// wait on each other there. S1x's own console command "loadzone" makes the same call from where the
+	// game runs its commands, between frames, so the load is asked for through that, and only once the
+	// game's loader has nothing in hand (Sys_IsDatabaseReady 0x1403E1850).
+	constexpr std::uintptr_t SYS_IS_DATABASE_READY = 0x1403E1850;
 	bool g_extra_wanted = false, g_extra_loaded = false;
-	ULONGLONG g_extra_at = 0;
+	ULONGLONG g_extra_at = 0, g_extra_asked = 0;
+
+	bool loader_idle()
+	{
+		__try
+		{
+			return reinterpret_cast<int (*)()>(SYS_IS_DATABASE_READY)() != 0;
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			return false;
+		}
+	}
 
 	std::string extra_path()
 	{
@@ -38,24 +54,6 @@ namespace
 		std::string folder = theater_folder();
 		const size_t slash = folder.find_last_of("\\/");
 		return (slash == std::string::npos ? std::string(".") : folder.substr(0, slash)) + "\\zone\\s1iris_rain.ff";
-	}
-
-	bool load_extra()
-	{
-		__try
-		{
-			static struct
-			{
-				const char* name;
-				int alloc_flags, free_flags;
-			} zone = {"s1iris_rain", 1, 0};
-			reinterpret_cast<void (*)(void*, unsigned, int)>(DB_LOAD_XASSETS)(&zone, 1, 0);
-			return true;
-		}
-		__except (EXCEPTION_EXECUTE_HANDLER)
-		{
-			return false;
-		}
 	}
 
 	std::mutex g_lock;
@@ -312,9 +310,25 @@ void effects_game_frame(const TheaterState& state)
 	// the extra effects, asked for: loaded once the match is under way, and listed a moment later
 	if (g_extra_wanted && !g_extra_loaded && state.settled)
 	{
-		g_extra_loaded = true;
-		g_extra_at = GetTickCount64();
-		theater_log(load_extra() ? "effects: s1iris_rain asked for from the game's files" : "effects: a fault loading s1iris_rain");
+		if (!g_extra_asked)
+		{
+			g_extra_asked = GetTickCount64();
+		}
+
+		if (loader_idle())
+		{
+			g_extra_loaded = true;
+			g_extra_at = GetTickCount64();
+			theater_log("effects: asking the game for s1iris_rain (loadzone)");
+			theater_command("loadzone s1iris_rain");
+		}
+		else if (GetTickCount64() - g_extra_asked > 10000)
+		{
+			// (the button comes back)
+			g_extra_wanted = false;
+			g_extra_asked = 0;
+			theater_log("effects: the game's loader was busy for 10 s; s1iris_rain not asked for");
+		}
 	}
 
 	if (g_extra_at && GetTickCount64() - g_extra_at > 3000)
