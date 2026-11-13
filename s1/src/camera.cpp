@@ -552,6 +552,117 @@ namespace
 		return true;
 	}
 
+	// A flashbang or a stun blends the screen with what it showed a moment ago, and whitens it
+	// (CG_DrawShellshockBlend, 0x1401D5420, called with the client as the scene is drawn): that is in the
+	// player's eyes, so it is left out while the camera is somewhere else.
+	constexpr uintptr_t CG_DRAW_SHELLSHOCK_BLEND = 0x1401D5420;
+	void (*g_original_shellshock_blend)(int) = nullptr;
+	void hooked_shellshock_blend(const int client)
+	{
+		if (g_overriding || g_body_set)
+		{
+			return;
+		}
+
+		g_original_shellshock_blend(client);
+	}
+
+	// The place in the world under a point of the picture. The game's own line check (G_TraceCapsule,
+	// 0x1402F93C0, as the scripts' physicstrace calls it: the result, from, to, a box (none), an entity to
+	// pass through (0x7FF: none) and what stops it (0x80A831: what stops a bullet, players left out); the
+	// result begins with how far along it got, 0 to 1, and the surface's normal).
+	constexpr uintptr_t G_TRACE_CAPSULE = 0x1402F93C0;
+	struct Pick
+	{
+		bool wanted = false;
+		float u = 0.5f, v = 0.5f;
+		int state = 0; // 0 not known yet, 1 found, -1 nothing there
+		float point[3] = {}, normal[3] = {0.0f, 0.0f, 1.0f};
+	} g_pick;
+
+	bool trace_world(const float* start, const float* end, float* fraction, float* normal)
+	{
+		__try
+		{
+			alignas(16) std::uint8_t result[512] = {};
+			static const float no_box[6] = {};
+			reinterpret_cast<void (*)(void*, const float*, const float*, const float*, std::uint16_t, int)>(G_TRACE_CAPSULE)(
+				result, start, end, no_box, 0x7FF, 0x80A831);
+			memcpy(fraction, result, sizeof(float));
+			memcpy(normal, result + 4, sizeof(float) * 3);
+			return true;
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			return false;
+		}
+	}
+
+	// (on the game's thread, the view being the one drawn)
+	void pick_now()
+	{
+		g_pick.wanted = false;
+		g_pick.state = -1;
+		const float tan_x = at<float>(REFDEF_TAN_X), tan_y = at<float>(REFDEF_TAN_Y);
+		const float* origin = &at<float>(REFDEF_ORIGIN);
+		const float* axis = &at<float>(REFDEF_AXIS); // forward, left, up
+		const float x = (1.0f - 2.0f * g_pick.u) * tan_x, y = (1.0f - 2.0f * g_pick.v) * tan_y;
+		float direction[3], start[3], end[3];
+		float length = 0.0f;
+		for (int i = 0; i < 3; ++i)
+		{
+			direction[i] = axis[i] + axis[3 + i] * x + axis[6 + i] * y;
+			length += direction[i] * direction[i];
+		}
+
+		length = std::sqrt(length);
+		if (length < 0.0001f)
+		{
+			return;
+		}
+
+		for (int i = 0; i < 3; ++i)
+		{
+			direction[i] /= length;
+			start[i] = origin[i];
+			end[i] = origin[i] + direction[i] * 30000.0f;
+		}
+
+		float fraction = 1.0f, normal[3] = {};
+		static bool told = false;
+		if (!trace_world(start, end, &fraction, normal))
+		{
+			if (!told)
+			{
+				told = true;
+				log("pick: a fault in the game's line check");
+			}
+
+			return;
+		}
+
+		if (!(fraction >= 0.0f && fraction < 0.9999f))
+		{
+			return;
+		}
+
+		const float normal_length = std::sqrt(normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]);
+		for (int i = 0; i < 3; ++i)
+		{
+			g_pick.point[i] = start[i] + (end[i] - start[i]) * fraction;
+			// (a normal that is not one: facing back along the line instead)
+			g_pick.normal[i] = normal_length > 0.9f && normal_length < 1.1f ? normal[i] / normal_length : -direction[i];
+		}
+
+		g_pick.state = 1;
+		if (!told)
+		{
+			told = true;
+			log("pick: %.0f %.0f %.0f (normal %.2f %.2f %.2f, %.0f units away)", g_pick.point[0], g_pick.point[1], g_pick.point[2], g_pick.normal[0],
+			    g_pick.normal[1], g_pick.normal[2], fraction * 30000.0f);
+		}
+	}
+
 	// The camera away from the player's eyes: the exo's effects are the ones on the body, not the ones in
 	// the player's face.
 	std::uint64_t hooked_play_exo_fx(const int client, const int entity, const int event, const int parameter, std::uint64_t first_person,
@@ -924,6 +1035,19 @@ namespace
 				g_view_angles[0] = std::atan2(-forward[2], std::sqrt(forward[0] * forward[0] + forward[1] * forward[1])) * TO_DEG;
 			}
 
+			if (g_pick.wanted)
+			{
+				if (theater_state().playing)
+				{
+					pick_now();
+				}
+				else
+				{
+					g_pick.wanted = false;
+					g_pick.state = -1;
+				}
+			}
+
 			if (theater_state().playing)
 			{
 				add_lights();
@@ -1027,6 +1151,44 @@ int scene_add_light()
 	return g_light_count++;
 }
 
+// The place under a point of the picture (0 to 1 across and down it) asked for; the answer comes a frame
+// later: 0 not yet, 1 found (and where, and the surface's normal), -1 nothing there.
+void camera_pick(const float u, const float v)
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	g_pick.u = u;
+	g_pick.v = v;
+	g_pick.state = 0;
+	g_pick.wanted = true;
+}
+
+int camera_picked(float point[3], float normal[3])
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	if (g_pick.state == 1)
+	{
+		memcpy(point, g_pick.point, sizeof(g_pick.point));
+		memcpy(normal, g_pick.normal, sizeof(g_pick.normal));
+	}
+
+	return g_pick.state;
+}
+
+int scene_add_light_at(const float origin[3])
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	if (g_light_count >= MAX_LIGHTS)
+	{
+		return -1;
+	}
+
+	SceneLight light;
+	memcpy(light.origin, origin, sizeof(light.origin));
+	memcpy(light.angles, g_view_angles, sizeof(light.angles));
+	g_lights[g_light_count] = light;
+	return g_light_count++;
+}
+
 void scene_move_light_here(const int index)
 {
 	std::lock_guard<std::mutex> lock(g_lock);
@@ -1111,6 +1273,13 @@ void camera_start()
 	    MH_EnableHook(reinterpret_cast<LPVOID>(CG_PLAY_EXO_FX)) != MH_OK)
 	{
 		log("camera: the exo's effects NOT hooked");
+	}
+
+	if (MH_CreateHook(reinterpret_cast<LPVOID>(CG_DRAW_SHELLSHOCK_BLEND), reinterpret_cast<LPVOID>(&hooked_shellshock_blend),
+	                  reinterpret_cast<LPVOID*>(&g_original_shellshock_blend)) != MH_OK ||
+	    MH_EnableHook(reinterpret_cast<LPVOID>(CG_DRAW_SHELLSHOCK_BLEND)) != MH_OK)
+	{
+		log("camera: the flashbang's screen NOT hooked");
 	}
 
 	if (MH_CreateHook(reinterpret_cast<LPVOID>(R_ADD_SPOT_LIGHT_TO_SCENE), reinterpret_cast<LPVOID>(&hooked_add_spot_light),

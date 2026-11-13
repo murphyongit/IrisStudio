@@ -56,3 +56,13 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
   (first kind kept in 0x141F9AF74, flag 0x141F9AF71; g_compressor 0x141E0B080). 0.49 does what s1-mod's fastfiles.cpp does: nop 0x140242DF7 (2 bytes),
   hook DB_ReadStreamFile 0x14027AA70 to set g_compressor 4, nop 0x1402427A5 (unsigned files). LZ4 body framing, if ever needed: u64 total size,
   u32 (block size 0x10000 : 24, type 4 : 8), then per block u32 packed size, u32 unpacked size, raw LZ4, padded to 4 (stock eng_ui.ff is one such block).
+
+## 0.50: right-click placement, flashbang
+- Line check: G_TraceCapsule 0x1402F93C0(trace_t*, start, end, Bounds*, u16 passEnt (0x7FF none), int mask) -> SV_SetupIgnoreEntParams 0x1404579A0, SV_Trace 0x140458140.
+  Found through the script builtin physicstrace (0x140310A40, mask 0x820011); bullettrace is 0x1403102B0 -> G_LocationalTrace 0x1402F7520, masks 0x280E831 / 0x80A831
+  (no characters). trace_t starts with fraction, then (assumed) normal[3]. Script builtin tables: 0x1409B5DE0 (0x163), 0x1409B7460 (0xBA), 0x1409B8660 (0x11),
+  0x1407FB260 (8), 16 bytes each {func, u16 name id, s16 type}; Scr_GetVector 0x1403F8EC0, Scr_GetNumParam 0x1403F8980.
+- camera.cpp pick_now() runs it in the render-scene hook from REFDEF (origin, axis, tan x/y) for the point of the picture clicked; ui.cpp "place" popup.
+- Flashbang/stun screen: CG_DrawShellshockBlend(client) 0x1401D5420 (called from R_RenderScene 0x1405CE650; blend time 0x1401C0020, flashed 0x1401BFE70,
+  blurred 0x1401BFDB0). Hooked: skipped while the camera is away from the player.
+- Still open: camos.

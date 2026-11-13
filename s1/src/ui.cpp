@@ -366,6 +366,141 @@ namespace
 		ImGui::EndMenuBar();
 	}
 
+	// the effects searched for, and the one last played: the picture's right-click menu offers them too
+	char g_fx_search[64] = "", g_fx_found[400][96], g_fx_last[96] = "";
+
+	// An effect put at a place, facing off the surface there.
+	void add_effect_at(const char* name, const float point[3], const float normal[3])
+	{
+		const int index = effects_add(name, point, theater_state().position_ms);
+		PlacedEffect placed[32];
+		const int count = effects_placed(placed, 32);
+		if (index >= 0 && index < count)
+		{
+			placed[index].angles[0] = std::atan2(-normal[2], std::sqrt(normal[0] * normal[0] + normal[1] * normal[1])) * 57.29578f;
+			placed[index].angles[1] = std::atan2(normal[1], normal[0]) * 57.29578f;
+			placed[index].angles[2] = 0.0f;
+			effects_set(index, placed[index]);
+		}
+
+		snprintf(g_fx_last, sizeof(g_fx_last), "%s", name);
+	}
+
+	// The menu a right click on the picture opens: things put at the place clicked.
+	void draw_place_menu()
+	{
+		static int found = 0;
+		static float point[3] = {}, normal[3] = {0.0f, 0.0f, 1.0f};
+		if (ImGui::IsWindowAppearing())
+		{
+			found = 0;
+		}
+
+		if (found == 0)
+		{
+			found = camera_picked(point, normal);
+		}
+
+		if (found == 0)
+		{
+			ImGui::TextDisabled("Finding the place...");
+			return;
+		}
+
+		if (found < 0)
+		{
+			ImGui::TextDisabled("Nothing there (the sky, or the recording is not playing).");
+			return;
+		}
+
+		ImGui::TextDisabled("%.0f   %.0f   %.0f", point[0], point[1], point[2]);
+		ImGui::Separator();
+		// (a light a little off the surface, so it lights it)
+		const float off[3] = {point[0] + normal[0] * 24.0f, point[1] + normal[1] * 24.0f, point[2] + normal[2] * 24.0f};
+		if (ImGui::MenuItem("Add a light here"))
+		{
+			scene_add_light_at(off);
+		}
+
+		SceneLight lights[16];
+		const int light_count = scene_lights(lights, 16);
+		if (light_count > 0 && ImGui::BeginMenu("Move a light here"))
+		{
+			for (int i = 0; i < light_count; ++i)
+			{
+				char label[32];
+				snprintf(label, sizeof(label), "Light %d", i + 1);
+				if (ImGui::MenuItem(label))
+				{
+					memcpy(lights[i].origin, off, sizeof(off));
+					scene_set_light(i, lights[i]);
+				}
+			}
+
+			ImGui::EndMenu();
+		}
+
+		ImGui::Separator();
+		if (g_fx_last[0])
+		{
+			char label[128];
+			snprintf(label, sizeof(label), "Play %s here", g_fx_last);
+			if (ImGui::MenuItem(label))
+			{
+				add_effect_at(g_fx_last, point, normal);
+			}
+		}
+
+		if (ImGui::BeginMenu("Play an effect here"))
+		{
+			ImGui::SetNextItemWidth(g_font_size * 22.0f);
+			ImGui::InputTextWithHint("##placeSearch", "search (explosion, spark, rain...)", g_fx_search, sizeof(g_fx_search));
+			const int count = effects_find(g_fx_search, g_fx_found, 400);
+			ImGui::BeginChild("placeResults", {g_font_size * 22.0f, g_font_size * 12.0f});
+			ImGuiListClipper clipper;
+			clipper.Begin(count);
+			bool chosen = false;
+			while (clipper.Step())
+			{
+				for (int f = clipper.DisplayStart; f < clipper.DisplayEnd; ++f)
+				{
+					if (ImGui::Selectable(g_fx_found[f]))
+					{
+						add_effect_at(g_fx_found[f], point, normal);
+						chosen = true;
+					}
+				}
+			}
+
+			ImGui::EndChild();
+			ImGui::EndMenu();
+			if (chosen)
+			{
+				ImGui::CloseCurrentPopup();
+			}
+		}
+
+		PlacedEffect placed[32];
+		const int placed_count = effects_placed(placed, 32);
+		if (placed_count > 0 && ImGui::BeginMenu("Move an effect here"))
+		{
+			for (int i = 0; i < placed_count; ++i)
+			{
+				ImGui::PushID(i);
+				if (ImGui::MenuItem(placed[i].name))
+				{
+					memcpy(placed[i].origin, point, sizeof(placed[i].origin));
+					placed[i].follow = false;
+					effects_set(i, placed[i]);
+				}
+
+				ImGui::PopID();
+			}
+
+			ImGui::EndMenu();
+		}
+	}
+
 	// The game's picture, as large as fits, under the camera's name.
 	void draw_view(const CameraState& camera, const ImVec2 size)
 	{
@@ -433,11 +568,39 @@ namespace
 			g_looking = false;
 		}
 
+		// a right click that is not a drag: the place under it, and what can be put there
+		static ImVec2 pressed_at = {};
+		static double pressed_when = 0.0;
+		static bool pressed = false;
+		if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+		{
+			pressed_at = io.MousePos;
+			pressed_when = ImGui::GetTime();
+			pressed = true;
+		}
+
+		if (pressed && ImGui::IsMouseReleased(ImGuiMouseButton_Right))
+		{
+			pressed = false;
+			// (told from a look by how short it was: while looking the game has the cursor, and it moves it)
+			if (ImGui::GetTime() - pressed_when < 0.25 && picture.x > 0.0f && picture.y > 0.0f)
+			{
+				camera_pick((pressed_at.x - at.x) / picture.x, (pressed_at.y - at.y) / picture.y);
+				ImGui::OpenPopup("place");
+			}
+		}
+
+		if (ImGui::BeginPopup("place"))
+		{
+			draw_place_menu();
+			ImGui::EndPopup();
+		}
+
 		if (flown && !g_looking)
 		{
 			const char* hint = camera.mode == CameraMode::Bone
 				? "Hold the right mouse button to turn  \xe2\x80\xa2  W A S D, Q, E move the camera on the bone"
-				: "Hold the right mouse button to look  \xe2\x80\xa2  W A S D to fly  \xe2\x80\xa2  K adds a campath node";
+				: "Hold the right mouse button to look  \xe2\x80\xa2  right click to place a light or an effect  \xe2\x80\xa2  W A S D to fly  \xe2\x80\xa2  K adds a campath node";
 			const ImVec2 hint_size = ImGui::CalcTextSize(hint);
 			draw->AddText({at.x + picture.x - hint_size.x - g_font_size, at.y + picture.y - hint_size.y - g_font_size * 0.5f}, u32(P.muted), hint);
 		}
@@ -1025,7 +1188,8 @@ namespace
 			if (section(ICON_WAND, "Effects", nullptr, false))
 			{
 				// any effect the game has loaded, played where the camera is, at a time of the recording
-				static char fx_search[64] = "", fx_found[400][96];
+				char* fx_search = g_fx_search;
+				auto& fx_found = g_fx_found;
 				const int extra = effects_extra_state();
 				if (extra == 1)
 				{
@@ -1042,7 +1206,7 @@ namespace
 				}
 
 				ImGui::SetNextItemWidth(-1.0f);
-				ImGui::InputTextWithHint("##fxSearch", ICON_SEARCH "  search the effects by name (explosion, spark, smoke...)", fx_search, sizeof(fx_search));
+				ImGui::InputTextWithHint("##fxSearch", ICON_SEARCH "  search the effects by name (explosion, spark, smoke...)", fx_search, sizeof(g_fx_search));
 				const int fx_count = effects_find(fx_search, fx_found, 400);
 				ImGui::BeginChild("fxResults", {0.0f, g_font_size * 10.0f}, ImGuiChildFlags_Border);
 				ImGuiListClipper fx_clipper;
@@ -1056,6 +1220,7 @@ namespace
 							float here[3];
 							camera_view_origin(here);
 							effects_add(fx_found[f], here, state.position_ms);
+							snprintf(g_fx_last, sizeof(g_fx_last), "%s", fx_found[f]);
 						}
 					}
 				}
