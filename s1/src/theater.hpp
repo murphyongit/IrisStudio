@@ -56,6 +56,9 @@ void theater_play(const char* file);
 bool theater_idle();
 // A console command for the game, run at the next frame's start.
 void theater_command(const char* text);
+// The HUD's script is to act on something it was just told: in playback the HUD's clock is the
+// recording's (it stands still while paused), and for half a second it is given real time.
+void theater_hud_wake();
 // The game's console is open: keys are being typed, not meant for the editor.
 bool theater_keys_blocked();
 HMODULE theater_module();

@@ -856,6 +856,7 @@ namespace
 
 		g_hud_touched = true;
 		theater_command(("set s1iris_hud_hide \"" + list + "\"").c_str());
+		theater_hud_wake();
 	}
 
 	void draw_hud(const bool reset)

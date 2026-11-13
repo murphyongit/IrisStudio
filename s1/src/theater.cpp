@@ -887,6 +887,7 @@ namespace
 		char flush[48];
 		snprintf(flush, sizeof(flush), "set s1iris_hud_flush %d", ++flushes);
 		theater_command(flush);
+		theater_hud_wake();
 		g_faults_noted = 0;
 		log_stream("before going back");
 		g_log_ticks = 12;
@@ -2040,6 +2041,71 @@ namespace
 		log_line("the game's %d settings are listed in theater\\dvars.txt", count);
 	}
 
+	// ---- the HUD's clock. The game's HUD and menus (LUI) are stepped by 0x1400D7480(client, root, ms, ms,
+	// flag, lua): its fourth argument is the real time since the root's last step (0x1400E5790 takes it
+	// from the system's clock, kept at +0xA8 of the root's block) and goes to the scripts as the step's
+	// "deltaTime": every timer and animation runs on it (the kill feed's lines fading, the score popups,
+	// the hit marker). In playback it is given the recording's clock instead, so the HUD stands still with
+	// a paused recording, runs slow in slow motion, and is stepped a frame's worth when a video is taken.
+	// Not while one of the game's menus has the keys (it would stand still with the recording), and not
+	// for a moment after the editor has told the HUD's script something (the script runs on a timer).
+	constexpr std::uintptr_t LUI_STEP = 0x1400D7480, KEY_CATCHERS = 0x1417E168C;
+	using lui_step_t = void (*)(int, void*, int, int, int, void*);
+	lui_step_t g_original_lui_step = nullptr;
+	std::atomic<ULONGLONG> g_hud_real_until{0};
+
+	void hooked_lui_step(const int client, void* root, const int other, const int real, const int flag, void* lua)
+	{
+		struct Root
+		{
+			void* root;
+			std::uint64_t clock;
+		};
+		static Root roots[6] = {};
+		static int told = 0;
+		int given = real;
+		if (g_play == Play::Playing)
+		{
+			Root* mine = nullptr;
+			for (Root& one : roots)
+			{
+				if (one.root == root || !one.root)
+				{
+					mine = &one;
+					break;
+				}
+			}
+
+			if (mine)
+			{
+				const std::uint64_t clock = g_clock;
+				const int catchers = *reinterpret_cast<const int*>(KEY_CATCHERS);
+				const bool known = mine->root == root;
+				const bool follows = known && (catchers & ~1) == 0 && GetTickCount64() >= g_hud_real_until;
+				if (follows)
+				{
+					const std::uint64_t passed = clock > mine->clock ? clock - mine->clock : 0;
+					given = static_cast<int>(passed > 60000 ? 60000 : passed);
+				}
+
+				if (told < 6 && (!known || (!follows && (catchers & ~1) != 0)))
+				{
+					++told;
+					log_line("hud clock: root %p %s (key catchers %X)", root, follows || !known ? "follows the recording's clock" : "is left on real time", catchers);
+				}
+
+				mine->root = root;
+				mine->clock = clock;
+			}
+		}
+		else if (roots[0].root)
+		{
+			memset(roots, 0, sizeof(roots));
+		}
+
+		g_original_lui_step(client, root, other, given, flag, lua);
+	}
+
 	bool hook(const uintptr_t address, void* detour, void* original, const char* name)
 	{
 		MH_STATUS status = MH_CreateHook(reinterpret_cast<LPVOID>(address), detour, static_cast<LPVOID*>(original));
@@ -2406,6 +2472,8 @@ namespace
 				const bool draw = hook(CG_DRAW_ACTIVE_FRAME, &hooked_draw_active_frame, &g_original_draw_active_frame, "the frame");
 				log_line("hook: the player's own view: recorded %s, played back %s, demo mode %s (F8 switches it while playing)",
 				         save ? "yes" : "NO", get ? "yes" : "NO", draw ? "yes" : "NO");
+				const bool hud_clock = hook(LUI_STEP, &hooked_lui_step, &g_original_lui_step, "the HUD's clock");
+				log_line("hook: the HUD's clock follows the recording %s", hud_clock ? "yes" : "NO");
 				const bool menus = hook(LUI_OMNVAR_UPDATE, &hooked_omnvar_update, &g_original_omnvar_update, "the team and class menus");
 				const bool minimap = hook(LUI_MINIMAP_DRAW, &hooked_minimap_draw, &g_original_minimap_draw, "the minimap") &&
 					hook(LUI_MINIMAP_DRAW_2, &hooked_minimap_draw_2, &g_original_minimap_draw_2, "the minimap's second part");
@@ -2747,6 +2815,11 @@ void theater_command(const char* text)
 {
 	std::lock_guard<std::mutex> lock(g_commands_lock);
 	g_commands.emplace_back(text);
+}
+
+void theater_hud_wake()
+{
+	g_hud_real_until = GetTickCount64() + 500;
 }
 
 // S1x's console has the keys while it is open (bit 1 of the game's key catchers, as s1-mod's

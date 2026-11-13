@@ -190,3 +190,9 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
   the originals, so unloading them leaves stale pointers that the game hands to DObj creation. The clean way is to change what the player wears at the
   costume level (hook the costume reader 0x14000C0D0(kind, customization) / the clientinfo models) so the game resolves, streams and drops by itself.
 - Presets: sections (HUD, Sun, Sky, each Look section, Other settings); a "hud_hide" line holds the HUD's hidden parts; load_preset(name, only).
+- The HUD's clock, found: LUI is stepped by 0x1400D7480(client, root, dtB, dtA, flag, lua) which sends the Lua step event with "deltaTime" (= dtA, or dtB
+  for a root whose byte +0x98 is set). Its caller 0x1400E5790 takes dtA from Sys_Milliseconds (0x1400E585B) against the root block's +0xA8 (block from
+  0x1400E4A60(root)); with its flag 0 both deltas are 0. Frame entry 0x1400E6810(client, flag) -> 0x1400E5690 -> 0x1400E5790; drawing is 0x1400E61C0 ->
+  0x1400DA6D0. 0.61 hooks 0x1400D7480: in playback dtA = the recording's clock (g_clock) since that root's last step (0 backwards, 60 s at most), unless
+  a menu has the keys (key catchers 0x1417E168C other than bit 1) or the editor just told the HUD's script something (theater_hud_wake, 0.5 s real).
+  The script's own 100 ms tick therefore stands still while paused: "quiet for 100 ticks" is now 10 s of the recording's time. Untested when written.
