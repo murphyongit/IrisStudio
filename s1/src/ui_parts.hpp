@@ -31,6 +31,8 @@
 #define ICON_FOLDER_OPEN "\xef\x81\xbc"
 #define ICON_ROTATE "\xef\x8b\xb1"
 #define ICON_PLUS "\x2b"
+#define ICON_CHEVRON_RIGHT "\xef\x81\x94"
+#define ICON_CHEVRON_DOWN "\xef\x81\xb8"
 
 // ui.cpp
 // A section's header (IrisStudio's): true while it is open. With reset, a "Reset" button at its right.

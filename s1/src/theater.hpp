@@ -13,6 +13,7 @@ struct TheaterState
 	float capture_fps = 0.0f;    // recording to video at this rate (0: not)
 	float speed = 1.0f;
 	std::uint32_t position_ms = 0, length_ms = 0;
+	std::uint32_t rewinds = 0;    // how many times playback has gone back (the game begins its match again each time)
 	double position_exact = 0.0;  // the position with the part of a millisecond playback keeps
 	char name[96] = {}, map[64] = {};
 };
@@ -148,6 +149,8 @@ void models_frame(const TheaterState& state);
 void models_start();
 void effects_start();
 // effects.cpp: effects of the game's played in the scene.
+constexpr int EFFECTS_MAX = 128;
+
 struct PlacedEffect
 {
 	bool on = true;
@@ -164,6 +167,8 @@ int effects_find(const char* text, char names[][96], int max);
 int effects_extra_state();
 void effects_load_extra();
 int effects_placed(PlacedEffect* out, int max);
+int effects_live(bool* out, int max);
+int effects_lasts(const char* name);
 int effects_add(const char* name, const float origin[3], std::uint32_t ms);
 void effects_set(int index, const PlacedEffect& placed);
 void effects_fire(int index);

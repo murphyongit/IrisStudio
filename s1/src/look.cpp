@@ -949,16 +949,20 @@ namespace
 		};
 
 		// the parts that have been matched to what they are
-		static const struct { const char* label; const char* part; } KNOWN[] = {
-			{"Kill feed", "wrapper_for_obituary_rotation_id"},
-			{"Score popups (+100)", "wrapper_for_pointsPopup"},
-			{"Hitmarkers", "wrapper_for_damageFeedbackHud"},
-			{"Weapon and streaks", "wrapper_for_baseWeaponInfoHud"},
-			{"Minimap", "wrapper_for_minimapHud"},
-			{"Team scores", "wrapper_for_teamScores_rotation_id"},
-			{"Button hints", "wrapper_for_hintsContainerHudId"},
-			{"Game messages", "wrapper_for_gameMessageHudId"},
-			{"Medals and splashes", "wrapper_for_splashesHud"},
+		// (a part named in full is not always there: it is offered all the same, and hidden whenever it comes)
+		static const struct { const char* label; const char* part; const char* full; } KNOWN[] = {
+			{"Kill feed", "wrapper_for_obituary_rotation_id", nullptr},
+			{"Score popups (+100)", "wrapper_for_pointsPopup", nullptr},
+			{"Hitmarkers", "wrapper_for_damageFeedbackHud", nullptr},
+			{"Weapon and streaks", "wrapper_for_baseWeaponInfoHud", nullptr},
+			{"Minimap", "wrapper_for_minimapHud", nullptr},
+			{"Team scores", "wrapper_for_teamScores_rotation_id", nullptr},
+			{"Button hints", "wrapper_for_hintsContainerHudId", nullptr},
+			{"Game messages", "wrapper_for_gameMessageHudId", nullptr},
+			{"Medals and splashes", "wrapper_for_splashesHud", nullptr},
+			// "ASSAULT DRONE READY! Press 4 to Activate": a part with no name of its own, put straight onto the
+			// HUD's "static" layer when a scorestreak is earned (an icon and two lines of text) and taken off after
+			{"Scorestreak ready popup", nullptr, "static.LUIElement"},
 		};
 
 		// at a click: only what a kill shows (the feed, the score, the hitmarker), or everything
@@ -976,6 +980,15 @@ namespace
 				}
 			}
 
+			// (and the parts that are only there now and then)
+			for (const auto& known : KNOWN)
+			{
+				if (known.full)
+				{
+					g_hud_hidden.insert(known.full);
+				}
+			}
+
 			send_hud_hidden();
 		}
 
@@ -989,6 +1002,20 @@ namespace
 
 		for (const auto& known : KNOWN)
 		{
+			if (known.full)
+			{
+				bool shown = !g_hud_hidden.count(known.full);
+				ui_row_label(known.label);
+				ImGui::PushID(known.full);
+				if (ImGui::Checkbox("##shown", &shown))
+				{
+					toggle(known.full, shown);
+				}
+
+				ImGui::PopID();
+				continue;
+			}
+
 			for (const Part& part : parts)
 			{
 				const size_t dot = part.name.rfind('.');

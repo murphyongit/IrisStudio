@@ -309,3 +309,35 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
   0x14029D6B0(system, list, command): the list has 8-byte entries, their number at +0x7000 (limit 0x300), each drawn by
   Glass_DrawPiece 0x14029D450; the number is set to 0 at the end. With the map not shown the hook sets it to 0 first.
   Limit warning function 0x1405E4050(kind, limit).
+
+## 0.68: effects as clips (in the game exactly while the time is in the clip), kinds in the timeline (untested when written)
+- User on 0.67: glass no longer mentioned (log: thousands of glass pieces held back a frame; 1 first-person model). Asked: scorestreak-ready
+  popup hidden; effects grouped by kind in the timeline and selectable as one; spawning made predictable; red boxes still there; stretching bugged.
+- Why effects "stopped spawning": a seek while paused, and every going back, plays the recording from the start again, which restarts the client
+  game and with it the FX system: everything placed was gone, and effects.cpp only played an effect on the time ENTERING its clip (g_inside),
+  so a seek inside a clip never played it again. Nothing ever took an effect away either (rain went on past its clip, and "Again every" piled
+  looping rain up).
+- FX_PlayOrientedEffect only queues a spawn command (0x1402AC050 = FX_InitSpawnCmd): no handle comes back. Taking away is by kind:
+  **FX_KillEffectDef 0x1402B1880(client, def)** = r8d -1 then **FX_KillEffectDefNewerThan 0x1402B1890(client, def, msec)**: appends {def, msec}
+  to a list of 64 a frame in the system's buffer ([system+0x148]: list at +0x102980 + (which*64 + n)*16, count +0x10B99C, which +0x10B980;
+  no bounds check; system flags [system+0x140] & 0x10). Game's uses: 0x1401C43BA (explosions newer than now - a window), CG_RewindKillcamEffects
+  0x1401A73B0: kill def, FX_RewindTo 0x1402B3FF0(client, time, x), then FX_PlayOrientedEffect with OLD begin times (so a begin time in the
+  past is the game's own way of putting an effect back as it was).
+- 0.68 model (effects.cpp): wanted = on, loaded, time in [at, at+length). Per placed effect Live{alive, def, rep, first_begin, last_begin, hold,
+  dirty}. Each settled frame (after 3 settled frames): not wanted but alive -> kill def newer than first_begin-1 (others of ours of that kind
+  begun no earlier are marked gone and begun again 2 frames later); wanted and not alive -> play with begin = game time of the clip's start
+  (at most 20 s ago). TheaterState.rewinds (counted in go_back_to) marks everything gone. Changed by the editor -> begun again 200 ms after
+  the last change. "Play it now" outside the clip shows it 2..10 s. Log lines "effects: ... begun/taken away", and once a kind what it is
+  made of (FxEffectDef +0x14/+0x18/+0x1C counts, +0x38 parts of 0x140: +0x08 looping every/times, +0x2C delay, +0x34 life, +0xB4 kind,
+  +0xB6 visuals, +0xD0 visual(s); material name first in a material).
+- Red boxes, most likely: zone\s1iris_rain.ff holds the 37 effects only (43 KB). Their materials (distort_rainfloorsheet_atlas_s30,
+  fx_water_dissipate_1_blend_atlas_z100_god_tip, fx_drops_add_atlas_flit, distort_rain_ripples_atlas_s20, fx_rain_ripple_add_atlas_flit,
+  cloud_rain_wavy_thin_add_atlas_outdr_flit, fx_drops_add_atlas_z120_flit_outdr, fx_wind_rain_add_fbatlas_z512 ...) are looked up by name
+  when the file loads; on a map that has not got one the game puts its default material there. The dump's images are 260-byte stubs
+  (streamed from mp_refraction's own image file), so adding the materials to the zone needs the image data too: NOT done.
+- HUD: the scorestreak-ready popup is a part with no id ("static.LUIElement" > LUIElement > LUIImage + 2 LUIText) added to the static layer
+  when earned. Lua: the layers' addElement wrapped (hidden as it is added) and a every-frame timer that only re-hides; Look > HUD row
+  "Scorestreak ready popup", included in "Kills only".
+- Timeline: rows scroll (wheel over the names, bar at the right); effects by kind (one row, one bar over all clips; opened out, a row each);
+  selection (click, Ctrl+click, right-click menu, Del); drags by the distance moved since the press (the old end-drag jumped: a short clip
+  is drawn at least 10 px wide, and the length was set to where the mouse was); a start handle too. Up to 128 effects (was 32).

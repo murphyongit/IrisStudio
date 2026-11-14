@@ -38,7 +38,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.67 (recorder, playback, IrisStudio's editor)";
+	constexpr char VERSION[] = "0.68 (recorder, playback, IrisStudio's editor)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -881,8 +881,11 @@ namespace
 
 	// Playback to a time of the recording before the one it is at: from the start again, the messages up to
 	// that time given as fast as the game takes them.
+	std::atomic<std::uint32_t> g_rewinds{0};
+
 	void go_back_to(const std::uint64_t ms)
 	{
+		++g_rewinds;
 		// (the HUD's script takes down the kill feed's lines and the popups left from later in the recording)
 		static int flushes = 0;
 		char flush[48];
@@ -2527,6 +2530,7 @@ TheaterState theater_state()
 	state.length_ms = g_length_ms;
 	state.position_exact = roll >= 0 ? static_cast<double>(roll) : static_cast<double>(g_clock.load()) + g_clock_fraction;
 	state.settled = g_settled && roll < 0;
+	state.rewinds = g_rewinds;
 	state.capture_fps = g_capture_fps;
 	strncpy_s(state.name, g_shown_name, _TRUNCATE);
 	strncpy_s(state.map, g_shown_map, _TRUNCATE);

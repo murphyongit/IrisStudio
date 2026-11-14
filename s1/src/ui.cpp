@@ -25,8 +25,12 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cctype>
+#include <cstdint>
 #include <cstring>
+#include <iterator>
 #include <mutex>
+#include <set>
+#include <utility>
 #include <vector>
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -369,12 +373,69 @@ namespace
 	// the effects searched for, and the one last played: the picture's right-click menu offers them too
 	char g_fx_search[64] = "", g_fx_found[400][96], g_fx_last[96] = "";
 
+	// The placed effects are shown by kind (all the rain together, all of one explosion together): which kinds
+	// are opened out in the timeline, and which effects are selected there (moved, stretched, removed as one).
+	std::set<std::string> g_fx_open_kinds;
+	std::set<int> g_fx_selected;
+
+	// The placed effects' places in the list, kind by kind, in the order the kinds were first placed.
+	std::vector<std::pair<std::string, std::vector<int>>> fx_kinds(const PlacedEffect* placed, const int count)
+	{
+		std::vector<std::pair<std::string, std::vector<int>>> kinds;
+		for (int i = 0; i < count; ++i)
+		{
+			bool found = false;
+			for (auto& kind : kinds)
+			{
+				if (kind.first == placed[i].name)
+				{
+					kind.second.push_back(i);
+					found = true;
+					break;
+				}
+			}
+
+			if (!found)
+			{
+				kinds.push_back({placed[i].name, {i}});
+			}
+		}
+
+		return kinds;
+	}
+
+	// How many rows the effects take in the timeline: one a kind, and one for each effect of a kind opened out.
+	int fx_timeline_rows()
+	{
+		static PlacedEffect placed[EFFECTS_MAX];
+		const int count = effects_placed(placed, EFFECTS_MAX);
+		int rows = 0;
+		for (const auto& kind : fx_kinds(placed, count))
+		{
+			rows += 1 + (g_fx_open_kinds.count(kind.first) ? static_cast<int>(kind.second.size()) : 0);
+		}
+
+		return rows;
+	}
+
+	// (the list's places change when one is removed)
+	void remove_effects(std::vector<int> indices)
+	{
+		std::sort(indices.begin(), indices.end());
+		for (auto index = indices.rbegin(); index != indices.rend(); ++index)
+		{
+			effects_remove(*index);
+		}
+
+		g_fx_selected.clear();
+	}
+
 	// An effect put at a place, facing off the surface there.
 	void add_effect_at(const char* name, const float point[3], const float normal[3])
 	{
 		const int index = effects_add(name, point, theater_state().position_ms);
-		PlacedEffect placed[32];
-		const int count = effects_placed(placed, 32);
+		PlacedEffect placed[EFFECTS_MAX];
+		const int count = effects_placed(placed, EFFECTS_MAX);
 		if (index >= 0 && index < count)
 		{
 			placed[index].angles[0] = std::atan2(-normal[2], std::sqrt(normal[0] * normal[0] + normal[1] * normal[1])) * 57.29578f;
@@ -393,8 +454,8 @@ namespace
 	void paste_effect_at(const float point[3])
 	{
 		const int index = effects_add(g_fx_clip.name, point, g_fx_clip.at_ms);
-		PlacedEffect placed[32];
-		const int count = effects_placed(placed, 32);
+		PlacedEffect placed[EFFECTS_MAX];
+		const int count = effects_placed(placed, EFFECTS_MAX);
 		if (index >= 0 && index < count)
 		{
 			PlacedEffect copy = g_fx_clip;
@@ -509,8 +570,8 @@ namespace
 			}
 		}
 
-		PlacedEffect placed[32];
-		const int placed_count = effects_placed(placed, 32);
+		PlacedEffect placed[EFFECTS_MAX];
+		const int placed_count = effects_placed(placed, EFFECTS_MAX);
 		if (placed_count > 0 && ImGui::BeginMenu("Move an effect here"))
 		{
 			for (int i = 0; i < placed_count; ++i)
@@ -1289,10 +1350,12 @@ namespace
 
 				ImGui::EndChild();
 				ImGui::TextDisabled(fx_count == 400 ? "More than 400: type more of the name. A click plays one where the camera is." : "A click plays one where the camera is and keeps it below.");
-				PlacedEffect placed[32];
-				const int placed_count = effects_placed(placed, 32);
-				int remove_fx = -1;
-				// the placed effects, a line each; a click on one opens its settings under it
+				static PlacedEffect placed[EFFECTS_MAX];
+				static bool live[EFFECTS_MAX];
+				const int placed_count = effects_placed(placed, EFFECTS_MAX);
+				effects_live(live, EFFECTS_MAX);
+				std::vector<int> remove_fx;
+				// the placed effects by kind, a line each inside; a click on one opens its settings under it
 				static int fx_open = -1, fx_order = 0;
 				if (placed_count > 0)
 				{
@@ -1301,7 +1364,7 @@ namespace
 					ImGui::TextDisabled("%d placed", placed_count);
 					ImGui::SameLine();
 					ImGui::SetNextItemWidth(g_font_size * 9.0f);
-					ImGui::Combo("##fxOrder", &fx_order, "As added\0By time\0By name\0");
+					ImGui::Combo("##fxOrder", &fx_order, "As added\0By time\0");
 					if (g_fx_copied)
 					{
 						ImGui::SameLine();
@@ -1314,140 +1377,226 @@ namespace
 
 						ImGui::SetItemTooltip("A copy of %s where the camera is.\nOr right click a place on the picture and choose Paste.", g_fx_clip.name);
 					}
+
+					ImGui::PushTextWrapPos(0.0f);
+					ImGui::TextDisabled("An effect is in the game while the time is inside its clip on the timeline, and is taken away outside it.");
+					ImGui::PopTextWrapPos();
 				}
 
-				int order[32];
-				for (int i = 0; i < placed_count; ++i)
+				int kind_number = 0;
+				for (const auto& kind : fx_kinds(placed, placed_count))
 				{
-					order[i] = i;
-				}
-
-				std::stable_sort(order, order + placed_count, [&](const int a, const int b) {
-					return fx_order == 1 ? placed[a].at_ms < placed[b].at_ms : fx_order == 2 ? strcmp(placed[a].name, placed[b].name) < 0 : a < b;
-				});
-				for (int k = 0; k < placed_count; ++k)
-				{
-					const int i = order[k];
-					PlacedEffect effect = placed[i];
-					bool changed = false;
-					ImGui::PushID(2000 + i);
-					changed = ImGui::Checkbox("##on", &effect.on) || changed;
-					ImGui::SameLine();
-					if (ImGui::SmallButton(ICON_PLAY))
+					std::vector<int> members = kind.second;
+					if (fx_order == 1)
 					{
-						effects_fire(i);
+						std::stable_sort(members.begin(), members.end(), [&](const int a, const int b) { return placed[a].at_ms < placed[b].at_ms; });
 					}
 
-					ImGui::SetItemTooltip("Play it now");
-					ImGui::SameLine();
+					int on_count = 0, live_count = 0;
+					for (const int i : members)
 					{
-						const char* slash = strrchr(effect.name, '/');
-						char at[32], line[160];
-						format_time(at, sizeof(at), effect.at_ms);
-						snprintf(line, sizeof(line), "%s   %s", slash ? slash + 1 : effect.name, at);
-						const float buttons = ImGui::CalcTextSize("Copy").x + ImGui::CalcTextSize(ICON_TRASH).x + ImGui::GetStyle().FramePadding.x * 4.0f +
-						                      ImGui::GetStyle().ItemSpacing.x * 2.0f;
-						if (ImGui::Selectable(line, fx_open == i, 0, {ImGui::GetContentRegionAvail().x - buttons, 0.0f}))
+						on_count += placed[i].on ? 1 : 0;
+						live_count += live[i] ? 1 : 0;
+					}
+
+					const char* kind_slash = strrchr(kind.first.c_str(), '/');
+					ImGui::PushID(4000 + kind_number++);
+					bool all_on = on_count == static_cast<int>(members.size());
+					if (ImGui::Checkbox("##allOn", &all_on))
+					{
+						for (const int i : members)
 						{
-							fx_open = fx_open == i ? -1 : i;
+							PlacedEffect changed = placed[i];
+							changed.on = all_on;
+							effects_set(i, changed);
+						}
+					}
+
+					ImGui::SetItemTooltip("All of this kind on or off");
+					ImGui::SameLine();
+					char header[200];
+					snprintf(header, sizeof(header), "%s (%d)%s###kind", kind_slash ? kind_slash + 1 : kind.first.c_str(), static_cast<int>(members.size()),
+					         live_count ? "   in the game now" : "");
+					// (one of a kind is shown opened out; several stay shut until asked for)
+					ImGui::SetNextItemOpen(members.size() == 1, ImGuiCond_Once);
+					const float trash_width = ImGui::CalcTextSize(ICON_TRASH).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+					const bool kind_open = ImGui::TreeNodeEx(header, ImGuiTreeNodeFlags_AllowOverlap | ImGuiTreeNodeFlags_SpanAvailWidth);
+					if (ImGui::IsItemClicked())
+					{
+						// (the timeline shows them selected)
+						g_fx_selected.clear();
+						g_fx_selected.insert(members.begin(), members.end());
+					}
+
+					ImGui::SetItemTooltip("%s\n%d placed, %d switched on", kind.first.c_str(), static_cast<int>(members.size()), on_count);
+					ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - trash_width);
+					if (ImGui::SmallButton(ICON_TRASH "##kindRemove"))
+					{
+						remove_fx = members;
+					}
+
+					ImGui::SetItemTooltip(members.size() > 1 ? "Remove all %d of these" : "Remove it", static_cast<int>(members.size()));
+					if (!kind_open)
+					{
+						ImGui::PopID();
+						continue;
+					}
+
+					for (const int i : members)
+					{
+						PlacedEffect effect = placed[i];
+						bool changed = false;
+						ImGui::PushID(2000 + i);
+						changed = ImGui::Checkbox("##on", &effect.on) || changed;
+						ImGui::SameLine();
+						if (ImGui::SmallButton(ICON_PLAY))
+						{
+							effects_fire(i);
 						}
 
-						ImGui::SetItemTooltip("%s\nClick: its settings", effect.name);
-					}
+						ImGui::SetItemTooltip("Play it now: from its start again if it is in the game, and otherwise for a few seconds to look at");
+						ImGui::SameLine();
+						{
+							char at[32], until[32], line[160];
+							format_time(at, sizeof(at), effect.at_ms);
+							format_time(until, sizeof(until), effect.at_ms + effect.length_ms);
+							snprintf(line, sizeof(line), "%s to %s%s", at, until, live[i] ? "   in the game now" : "");
+							const float buttons = ImGui::CalcTextSize("Copy").x + ImGui::CalcTextSize(ICON_TRASH).x + ImGui::GetStyle().FramePadding.x * 4.0f +
+							                      ImGui::GetStyle().ItemSpacing.x * 2.0f;
+							if (ImGui::Selectable(line, fx_open == i || g_fx_selected.count(i) != 0, 0, {ImGui::GetContentRegionAvail().x - buttons, 0.0f}))
+							{
+								fx_open = fx_open == i ? -1 : i;
+								g_fx_selected.clear();
+								g_fx_selected.insert(i);
+							}
 
-					ImGui::SameLine();
-					if (ImGui::SmallButton("Copy"))
-					{
-						g_fx_clip = effect;
-						g_fx_copied = true;
-					}
+							ImGui::SetItemTooltip("%s\nClick: its settings", effect.name);
+						}
 
-					ImGui::SetItemTooltip("Copy it: then right click places on the picture and choose Paste, or use Paste here");
-					ImGui::SameLine();
-					if (ImGui::SmallButton(ICON_TRASH))
-					{
-						remove_fx = i;
-					}
+						ImGui::SameLine();
+						if (ImGui::SmallButton("Copy"))
+						{
+							g_fx_clip = effect;
+							g_fx_copied = true;
+						}
 
-					if (fx_open != i)
-					{
+						ImGui::SetItemTooltip("Copy it: then right click places on the picture and choose Paste, or use Paste here");
+						ImGui::SameLine();
+						if (ImGui::SmallButton(ICON_TRASH))
+						{
+							remove_fx = {i};
+						}
+
+						if (fx_open != i)
+						{
+							if (changed)
+							{
+								effects_set(i, effect);
+							}
+
+							ImGui::PopID();
+							continue;
+						}
+
+						ImGui::Indent();
+						if (ImGui::SmallButton("Move to the camera"))
+						{
+							camera_view_origin(effect.origin);
+							changed = true;
+						}
+
+						float seconds = effect.at_ms / 1000.0f, again = effect.every_ms / 1000.0f;
+						row_label("Plays at");
+						ImGui::SetNextItemWidth(-ImGui::CalcTextSize("Now").x - ImGui::GetStyle().FramePadding.x * 2.0f - ImGui::GetStyle().ItemSpacing.x);
+						if (ImGui::DragFloat("##at", &seconds, 0.01f, 0.0f, state.length_ms / 1000.0f, "%.2f s"))
+						{
+							effect.at_ms = static_cast<std::uint32_t>(seconds * 1000.0f);
+							changed = true;
+						}
+
+						ImGui::SameLine();
+						if (ImGui::Button("Now"))
+						{
+							effect.at_ms = state.position_ms;
+							changed = true;
+						}
+
+						float lasts = effect.length_ms / 1000.0f;
+						row_label("Length");
+						if (ImGui::DragFloat("##length", &lasts, 0.01f, 0.1f, 600.0f, "%.2f s"))
+						{
+							effect.length_ms = static_cast<std::uint32_t>(lasts * 1000.0f);
+							changed = true;
+						}
+
+						ImGui::SetItemTooltip("Its clip on the timeline: the effect is in the game exactly while the recording's time is inside it,\nand is taken away when the time leaves it, wherever the time came from.");
+						{
+							// how long the effect lasts by itself, and playing it again and again for one that ends
+							const int lasts = effects_lasts(effect.name);
+							if (lasts == 0)
+							{
+								ImGui::TextDisabled("This effect goes on by itself for as long as its clip.");
+							}
+							else
+							{
+								if (lasts > 0)
+								{
+									ImGui::TextDisabled("This effect lasts %.2f s by itself.", lasts / 1000.0f);
+									if (effect.length_ms > static_cast<std::uint32_t>(lasts) && effect.every_ms == 0)
+									{
+										ImGui::SameLine();
+										if (ImGui::SmallButton("Repeat it through its clip"))
+										{
+											effect.every_ms = static_cast<std::uint32_t>(lasts < 50 ? 50 : lasts);
+											changed = true;
+										}
+									}
+								}
+
+								row_label("Again every");
+								if (ImGui::DragFloat("##every", &again, 0.01f, 0.0f, 60.0f, again > 0.0f ? "%.2f s" : "never"))
+								{
+									effect.every_ms = static_cast<std::uint32_t>(again * 1000.0f);
+									changed = true;
+								}
+
+								ImGui::SetItemTooltip("Played again this often while the time is in its clip (for effects that end by themselves)");
+							}
+						}
+
+						row_label("Follow the camera");
+						changed = ImGui::Checkbox("##follow", &effect.follow) || changed;
+						ImGui::SetItemTooltip("It is put where the camera is when it begins (rain or mist around the view), not at a place of its own");
+						if (effect.follow)
+						{
+							row_label("Above the camera");
+							changed = ImGui::DragFloat("##above", &effect.above, 1.0f, -2000.0f, 2000.0f, "%.0f") || changed;
+						}
+						else
+						{
+							row_label("Position");
+							changed = ImGui::DragFloat3("##origin", effect.origin, 1.0f, 0.0f, 0.0f, "%.0f") || changed;
+						}
+
+						row_label("Direction");
+						changed = ImGui::DragFloat3("##angles", effect.angles, 1.0f, -360.0f, 360.0f, "%.0f") || changed;
+						ImGui::SetItemTooltip("Up and down, around, roll: which way the effect goes (it starts going up)");
+						ImGui::Unindent();
 						if (changed)
 						{
 							effects_set(i, effect);
 						}
 
 						ImGui::PopID();
-						continue;
 					}
 
-					ImGui::Indent();
-					if (ImGui::SmallButton("Move to the camera"))
-					{
-						camera_view_origin(effect.origin);
-						changed = true;
-					}
-
-					float seconds = effect.at_ms / 1000.0f, again = effect.every_ms / 1000.0f;
-					row_label("Plays at");
-					ImGui::SetNextItemWidth(-ImGui::CalcTextSize("Now").x - ImGui::GetStyle().FramePadding.x * 2.0f - ImGui::GetStyle().ItemSpacing.x);
-					if (ImGui::DragFloat("##at", &seconds, 0.01f, 0.0f, state.length_ms / 1000.0f, "%.2f s"))
-					{
-						effect.at_ms = static_cast<std::uint32_t>(seconds * 1000.0f);
-						changed = true;
-					}
-
-					ImGui::SameLine();
-					if (ImGui::Button("Now"))
-					{
-						effect.at_ms = state.position_ms;
-						changed = true;
-					}
-
-					float lasts = effect.length_ms / 1000.0f;
-					row_label("Length");
-					if (ImGui::DragFloat("##length", &lasts, 0.01f, 0.1f, 600.0f, "%.2f s"))
-					{
-						effect.length_ms = static_cast<std::uint32_t>(lasts * 1000.0f);
-						changed = true;
-					}
-
-					ImGui::SetItemTooltip("Its clip on the timeline. With \"Again every\" set, it is played again and again only for this long.");
-					row_label("Again every");
-					if (ImGui::DragFloat("##every", &again, 0.01f, 0.0f, 60.0f, again > 0.0f ? "%.2f s" : "never"))
-					{
-						effect.every_ms = static_cast<std::uint32_t>(again * 1000.0f);
-						changed = true;
-					}
-
-					row_label("Follow the camera");
-					changed = ImGui::Checkbox("##follow", &effect.follow) || changed;
-					ImGui::SetItemTooltip("Each time it plays, it plays where the camera is then (rain or mist around the view). Use it with \"Again every\".");
-					if (effect.follow)
-					{
-						row_label("Above the camera");
-						changed = ImGui::DragFloat("##above", &effect.above, 1.0f, -2000.0f, 2000.0f, "%.0f") || changed;
-					}
-					else
-					{
-						row_label("Position");
-						changed = ImGui::DragFloat3("##origin", effect.origin, 1.0f, 0.0f, 0.0f, "%.0f") || changed;
-					}
-
-					row_label("Direction");
-					changed = ImGui::DragFloat3("##angles", effect.angles, 1.0f, -360.0f, 360.0f, "%.0f") || changed;
-					ImGui::SetItemTooltip("Up and down, around, roll: which way the effect goes (it starts going up)");
-					ImGui::Unindent();
-					if (changed)
-					{
-						effects_set(i, effect);
-					}
-
+					ImGui::TreePop();
 					ImGui::PopID();
 				}
 
-				if (remove_fx >= 0)
+				if (!remove_fx.empty())
 				{
-					effects_remove(remove_fx);
+					remove_effects(remove_fx);
 					fx_open = -1;
 				}
 			}
@@ -1849,6 +1998,8 @@ namespace
 		const float frame = ImGui::GetFrameHeight();
 		// how far in the timeline is zoomed (1: all of the recording), and the time at its left end
 		static float zoom = 1.0f, view_start = 0.0f;
+		// how far down the rows are scrolled (the wheel over the names), and how tall all of them were last frame
+		static float rows_scroll = 0.0f, rows_height = 0.0f;
 
 		// Freeze time: the demo's time stands still (the camera still flies)
 		ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(state.paused ? ImGuiCol_Header : ImGuiCol_Button));
@@ -1967,6 +2118,11 @@ namespace
 					g_lane_scale *= io.MouseWheel > 0.0f ? 1.15f : 1.0f / 1.15f;
 					g_lane_scale = g_lane_scale < 0.6f ? 0.6f : g_lane_scale > 4.0f ? 4.0f : g_lane_scale;
 				}
+				else if (io.MousePos.x < left)
+				{
+					// (over the names: the rows go up and down)
+					rows_scroll -= io.MouseWheel * frame * 2.5f;
+				}
 				else if (io.KeyShift)
 				{
 					view_start -= io.MouseWheel * before * 0.15f;
@@ -2078,7 +2234,17 @@ namespace
 		// the rows: Markers, Campath (as tall as Ctrl + the wheel has made them)
 		const float lane = std::floor(frame * g_lane_scale);
 		const float row = lane + style.ItemSpacing.y * 0.5f;
-		float y = ruler_bottom + style.ItemSpacing.y * 0.5f;
+		const float rows_top = ruler_bottom + style.ItemSpacing.y * 0.5f;
+		{
+			const float most = rows_height - (rows_bottom - rows_top);
+			rows_scroll = rows_scroll > most ? most : rows_scroll;
+			rows_scroll = rows_scroll < 0.0f ? 0.0f : rows_scroll;
+		}
+
+		float y = rows_top - rows_scroll;
+		// (a row is drawn and takes the mouse only where it shows under the ruler)
+		auto row_shows = [&](const float top) { return top + lane > rows_top && top < rows_bottom; };
+		ImGui::PushClipRect({origin.x, rows_top - 1.0f}, {origin.x + full, rows_bottom}, true);
 		draw->AddRectFilled({left, y}, {right, y + lane}, u32(P.surface));
 		draw->AddText({origin.x + g_font_size * 0.5f, y + style.FramePadding.y}, u32(P.muted), ICON_FLAG "  Markers");
 		y += row;
@@ -2112,9 +2278,9 @@ namespace
 		for (int t = 0; look_track(t, &track); ++t)
 		{
 			y += row;
-			if (y + lane > rows_bottom)
+			if (!row_shows(y))
 			{
-				break;
+				continue;
 			}
 
 			draw->AddRectFilled({left, y}, {right, y + lane}, u32(P.surface));
@@ -2168,109 +2334,402 @@ namespace
 			ImGui::PopID();
 		}
 
-		// the editor's effects: a clip each, from when it plays for as long as it is given; dragged, it
-		// plays earlier or later, and its right end makes it longer or shorter
+		// The editor's effects, by kind: a row for each kind with one bar over all of its clips (dragged, they all
+		// move; its ends dragged, they all begin or end sooner or later), and, opened out, a row for each effect.
+		// An effect is in the game exactly while the recording's time is inside its clip.
 		{
-			PlacedEffect placed[32];
-			const int placed_count = effects_placed(placed, 32);
-			static float grab_ms = 0.0f;
-			int remove_effect = -1;
-			for (int i = 0; i < placed_count; ++i)
+			static PlacedEffect placed[EFFECTS_MAX];
+			static bool live[EFFECTS_MAX];
+			const int placed_count = effects_placed(placed, EFFECTS_MAX);
+			effects_live(live, EFFECTS_MAX);
+			const ImGuiIO& io = ImGui::GetIO();
+			const float mouse_ms = ms_at(io.MousePos.x);
+			for (auto it = g_fx_selected.begin(); it != g_fx_selected.end();)
 			{
-				y += row;
-				if (y + lane > rows_bottom)
+				it = *it >= placed_count ? g_fx_selected.erase(it) : std::next(it);
+			}
+
+			// a drag under way: what is dragged (1 the clips, 2 their ends, 3 their starts), from where, and the
+			// clips as they were when it began
+			static int drag = 0;
+			static float drag_from = 0.0f;
+			static bool dragged = false;
+			static std::vector<std::pair<int, PlacedEffect>> drag_start;
+			std::vector<int> to_remove;
+			bool open_menu = false;
+			auto selected_all = [&](const std::vector<int>& which) {
+				for (const int i : which)
 				{
-					break;
+					if (!g_fx_selected.count(i))
+					{
+						return false;
+					}
 				}
 
-				PlacedEffect& effect = placed[i];
-				const char* slash = strrchr(effect.name, '/');
-				const char* shown = slash ? slash + 1 : effect.name;
-				draw->AddRectFilled({left, y}, {right, y + lane}, u32(P.surface));
-				ImGui::PushClipRect({origin.x, y}, {left - lane * 1.2f - style.ItemSpacing.x * 2.0f - 6.0f, y + lane}, true);
-				char name[128];
-				snprintf(name, sizeof(name), ICON_WAND "  %s", shown);
-				draw->AddText({origin.x + g_font_size * 0.5f, y + style.FramePadding.y}, u32(effect.on ? P.text : P.muted), name);
-				ImGui::PopClipRect();
-				ImGui::PushID(7000 + i);
-				ImGui::SetCursorScreenPos({left - lane * 1.2f - style.ItemSpacing.x - 6.0f, y});
-				if (ImGui::Button(ICON_TRASH "##removeEffect", {lane * 1.2f, lane}))
-				{
-					remove_effect = i;
-				}
+				return !which.empty();
+			};
 
-				ImGui::SetItemTooltip("Remove this effect");
-				ImGui::PopID();
-				float x0 = std::floor(x_of(static_cast<float>(effect.at_ms)));
-				float x1 = std::floor(x_of(static_cast<float>(effect.at_ms + effect.length_ms)));
+			// One bar on a row: its two ends and its middle take the mouse. "which" is what the bar stands for
+			// (one effect, or all of a kind).
+			auto bar = [&](const char* id, const std::vector<int>& which, const std::uint32_t from_ms, const std::uint32_t to_ms, const float top, const char* text,
+			               const bool on, const bool is_live, const bool whole_kind) {
+				float x0 = std::floor(x_of(static_cast<float>(from_ms))), x1 = std::floor(x_of(static_cast<float>(to_ms)));
 				if (x1 < left || x0 > right)
 				{
-					// (not in the part of the recording shown)
-					continue;
+					return;
 				}
 
 				x0 = x0 < left ? left : x0;
 				x1 = x1 < x0 + 10.0f ? x0 + 10.0f : x1 > right ? right : x1;
-				const float mouse_ms = ms_at(ImGui::GetIO().MousePos.x);
-				ImGui::PushID(5000 + i);
-				// the right end, then the clip itself
-				const float handle = 8.0f;
-				ImGui::SetCursorScreenPos({x1 - handle, y});
-				ImGui::InvisibleButton("##end", {handle * 2.0f, lane});
-				const bool end_over = ImGui::IsItemHovered(), end_held = ImGui::IsItemActive();
-				if (end_held)
+				const float grip = x1 - x0 >= 28.0f ? 7.0f : 4.0f;
+				const bool both_ends = x1 - x0 >= 28.0f;
+				ImGui::PushID(id);
+				int over = 0, pressed = 0;
+				bool double_click = false, right_click = false;
+				auto part = [&](const char* name, const float from, const float to, const int kind) {
+					ImGui::SetCursorScreenPos({from, top});
+					ImGui::InvisibleButton(name, {to - from < 2.0f ? 2.0f : to - from, lane});
+					if (ImGui::IsItemHovered())
+					{
+						over = kind;
+						double_click = double_click || ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+						right_click = right_click || ImGui::IsMouseClicked(ImGuiMouseButton_Right);
+					}
+
+					if (ImGui::IsItemActivated())
+					{
+						pressed = kind;
+					}
+				};
+				part("##end", x1 - grip, x1 + grip, 2);
+				if (both_ends)
 				{
-					const float longer = mouse_ms - static_cast<float>(effect.at_ms);
-					effect.length_ms = static_cast<std::uint32_t>(longer < 100.0f ? 100.0f : longer);
-					effects_set(i, effect);
+					part("##start", x0 - grip, x0 + grip, 3);
 				}
 
-				ImGui::SetCursorScreenPos({x0, y});
-				ImGui::InvisibleButton("##clip", {(x1 - handle - x0) < 4.0f ? 4.0f : x1 - handle - x0, lane});
-				const bool over = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
-				if (ImGui::IsItemActivated())
+				part("##clip", both_ends ? x0 + grip : x0, x1 - grip, 1);
+				if (pressed || right_click)
 				{
-					grab_ms = mouse_ms - static_cast<float>(effect.at_ms);
+					// what is pressed becomes what is selected (with Ctrl: is added to it), unless it already is
+					if (io.KeyCtrl && pressed)
+					{
+						g_fx_selected.insert(which.begin(), which.end());
+					}
+					else if (!selected_all(which))
+					{
+						g_fx_selected.clear();
+						g_fx_selected.insert(which.begin(), which.end());
+					}
 				}
 
-				if (held && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 2.0f))
+				if (pressed)
 				{
-					const float at_ms = mouse_ms - grab_ms;
-					effect.at_ms = static_cast<std::uint32_t>(at_ms < 0.0f ? 0.0f : at_ms > length ? length : at_ms);
-					effects_set(i, effect);
-				}
-				else if (ImGui::IsItemDeactivated() && !ImGui::IsMouseDragging(ImGuiMouseButton_Left, 2.0f) && over)
-				{
-					theater_seek(effect.at_ms);
+					drag = pressed;
+					drag_from = mouse_ms;
+					dragged = false;
+					drag_start.clear();
+					for (const int i : g_fx_selected)
+					{
+						drag_start.push_back({i, placed[i]});
+					}
 				}
 
-				if (end_over || end_held)
+				if (double_click)
+				{
+					theater_seek(from_ms);
+				}
+
+				if (right_click)
+				{
+					open_menu = true;
+				}
+
+				if (over == 2 || over == 3)
 				{
 					ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
 				}
 
-				if (over || held || end_over || end_held)
+				if (over && !drag)
 				{
 					char at[32], until[32];
-					format_time(at, sizeof(at), effect.at_ms);
-					format_time(until, sizeof(until), effect.at_ms + effect.length_ms);
-					ImGui::SetTooltip("%s\n%s to %s\nDrag: earlier or later.  Drag its right end: longer or shorter.  Click: go here.", effect.name, at, until);
+					format_time(at, sizeof(at), from_ms);
+					format_time(until, sizeof(until), to_ms);
+					ImGui::SetTooltip("%s\n%s to %s%s\nDrag: earlier or later.  Drag an end: begins or ends sooner or later.\nCtrl + click: select more.  "
+					                  "Double click: go to its start.  Right click: more.",
+					                  text, at, until, is_live ? "  (in the game now)" : "");
 				}
 
 				ImGui::PopID();
-				const unsigned fill = effect.on ? P.warn : P.muted;
-				draw->AddRectFilled({x0, y + 2.0f}, {x1, y + lane - 2.0f}, u32(fill, over || held ? 0.55f : 0.35f), 3.0f);
-				draw->AddRect({x0, y + 2.0f}, {x1, y + lane - 2.0f}, u32(fill), 3.0f);
-				draw->AddRectFilled({x1 - 3.0f, y + 2.0f}, {x1, y + lane - 2.0f}, u32(fill));
-				ImGui::PushClipRect({x0 + 4.0f, y}, {x1 - 4.0f, y + lane}, true);
-				draw->AddText({x0 + 6.0f, y + style.FramePadding.y}, u32(P.text), shown);
+				const bool chosen = selected_all(which);
+				const unsigned fill = on ? P.warn : P.muted;
+				const float inset = whole_kind ? 2.0f : 3.0f;
+				draw->AddRectFilled({x0, top + inset}, {x1, top + lane - inset}, u32(fill, is_live ? 0.60f : over ? 0.42f : 0.28f), 3.0f);
+				draw->AddRect({x0, top + inset}, {x1, top + lane - inset}, u32(chosen ? P.text : fill), 3.0f, 0, chosen ? 2.0f : 1.0f);
+				draw->AddRectFilled({x1 - 3.0f, top + inset}, {x1, top + lane - inset}, u32(chosen ? P.text : fill));
+				if (both_ends)
+				{
+					draw->AddRectFilled({x0, top + inset}, {x0 + 3.0f, top + lane - inset}, u32(chosen ? P.text : fill));
+				}
+
+				ImGui::PushClipRect({x0 + 5.0f, top}, {x1 - 5.0f, top + lane}, true);
+				draw->AddText({x0 + 7.0f, top + style.FramePadding.y}, u32(P.text), text);
 				ImGui::PopClipRect();
+			};
+
+			const auto kinds = fx_kinds(placed, placed_count);
+			int kind_number = 0;
+			for (const auto& kind : kinds)
+			{
+				const std::vector<int>& members = kind.second;
+				const bool opened = g_fx_open_kinds.count(kind.first) != 0;
+				const char* slash = strrchr(kind.first.c_str(), '/');
+				const char* shown_name = slash ? slash + 1 : kind.first.c_str();
+				y += row;
+				if (row_shows(y))
+				{
+					std::uint32_t from = UINT32_MAX, to = 0;
+					bool any_on = false, any_live = false;
+					for (const int i : members)
+					{
+						from = (std::min)(from, placed[i].at_ms);
+						to = (std::max)(to, placed[i].at_ms + placed[i].length_ms);
+						any_on = any_on || placed[i].on;
+						any_live = any_live || live[i];
+					}
+
+					draw->AddRectFilled({left, y}, {right, y + lane}, u32(P.surface));
+					ImGui::PushID(9000 + kind_number);
+					// the name: a click opens the kind out or shuts it
+					const float name_right = left - lane * 1.2f - style.ItemSpacing.x * 2.0f - 6.0f;
+					ImGui::SetCursorScreenPos({origin.x, y});
+					if (ImGui::InvisibleButton("##kind", {(std::max)(4.0f, name_right - origin.x), lane}))
+					{
+						if (opened)
+						{
+							g_fx_open_kinds.erase(kind.first);
+						}
+						else
+						{
+							g_fx_open_kinds.insert(kind.first);
+						}
+					}
+
+					ImGui::SetItemTooltip("%s\n%d placed. Click: show %s.", kind.first.c_str(), static_cast<int>(members.size()),
+					                      opened ? "them as one row again" : "a row for each");
+					ImGui::PushClipRect({origin.x, y}, {name_right, y + lane}, true);
+					char name[160];
+					snprintf(name, sizeof(name), "%s  " ICON_WAND "  %s (%d)", opened ? ICON_CHEVRON_DOWN : ICON_CHEVRON_RIGHT, shown_name, static_cast<int>(members.size()));
+					draw->AddText({origin.x + g_font_size * 0.5f, y + style.FramePadding.y}, u32(any_on ? P.text : P.muted), name);
+					ImGui::PopClipRect();
+					ImGui::SetCursorScreenPos({left - lane * 1.2f - style.ItemSpacing.x - 6.0f, y});
+					if (ImGui::Button(ICON_TRASH "##removeKind", {lane * 1.2f, lane}))
+					{
+						to_remove = members;
+					}
+
+					ImGui::SetItemTooltip(members.size() > 1 ? "Remove all %d of these" : "Remove this effect", static_cast<int>(members.size()));
+					// where each of its clips is, faintly, under the one bar that stands for them all
+					if (members.size() > 1)
+					{
+						for (const int i : members)
+						{
+							const float c0 = (std::max)(left, std::floor(x_of(static_cast<float>(placed[i].at_ms))));
+							const float c1 = (std::min)(right, std::floor(x_of(static_cast<float>(placed[i].at_ms + placed[i].length_ms))));
+							if (c1 > c0)
+							{
+								draw->AddRectFilled({c0, y + lane - 4.0f}, {c1, y + lane - 2.0f}, u32(placed[i].on ? P.warn : P.muted, 0.8f));
+							}
+						}
+					}
+
+					char text[160];
+					snprintf(text, sizeof(text), members.size() > 1 ? "%s  x%d" : "%s", shown_name, static_cast<int>(members.size()));
+					bar("##all", members, from, to, y, text, any_on, any_live, true);
+					ImGui::PopID();
+				}
+
+				++kind_number;
+				if (!opened)
+				{
+					continue;
+				}
+
+				for (const int i : members)
+				{
+					y += row;
+					if (!row_shows(y))
+					{
+						continue;
+					}
+
+					const PlacedEffect& effect = placed[i];
+					draw->AddRectFilled({left, y}, {right, y + lane}, u32(P.surface, 0.6f));
+					ImGui::PushID(7000 + i);
+					ImGui::PushClipRect({origin.x, y}, {left - lane * 1.2f - style.ItemSpacing.x * 2.0f - 6.0f, y + lane}, true);
+					char name[128], at[32];
+					format_time(at, sizeof(at), effect.at_ms);
+					snprintf(name, sizeof(name), "%s   %s", shown_name, at);
+					draw->AddText({origin.x + g_font_size * 2.2f, y + style.FramePadding.y}, u32(effect.on ? (live[i] ? P.text : P.muted) : P.muted, effect.on ? 1.0f : 0.6f), name);
+					ImGui::PopClipRect();
+					ImGui::SetCursorScreenPos({left - lane * 1.2f - style.ItemSpacing.x - 6.0f, y});
+					if (ImGui::Button(ICON_TRASH "##removeEffect", {lane * 1.2f, lane}))
+					{
+						to_remove = {i};
+					}
+
+					ImGui::SetItemTooltip("Remove this effect");
+					bar("##one", {i}, effect.at_ms, effect.at_ms + effect.length_ms, y, shown_name, effect.on, live[i], false);
+					ImGui::PopID();
+				}
 			}
 
-			if (remove_effect >= 0)
+			// the drag: every selected clip by as much as the mouse has gone since it was pressed
+			if (drag && ImGui::IsMouseDown(ImGuiMouseButton_Left))
 			{
-				effects_remove(remove_effect);
+				float by = mouse_ms - drag_from;
+				dragged = dragged || ImGui::IsMouseDragging(ImGuiMouseButton_Left, 3.0f);
+				if (dragged)
+				{
+					if (drag == 1)
+					{
+						// (none of them before the recording's start)
+						for (const auto& start : drag_start)
+						{
+							by = (std::max)(by, -static_cast<float>(start.second.at_ms));
+						}
+					}
+
+					for (const auto& start : drag_start)
+					{
+						if (start.first >= placed_count)
+						{
+							continue;
+						}
+
+						const PlacedEffect& was = start.second;
+						// (what the Scene tab changed meanwhile is kept: only the times are the drag's)
+						PlacedEffect current = placed[start.first];
+						const float was_at = static_cast<float>(was.at_ms), was_long = static_cast<float>(was.length_ms);
+						if (drag == 1)
+						{
+							current.at_ms = static_cast<std::uint32_t>((std::min)(length, (std::max)(0.0f, was_at + by)));
+						}
+						else if (drag == 2)
+						{
+							current.length_ms = static_cast<std::uint32_t>((std::max)(100.0f, was_long + by));
+						}
+						else
+						{
+							const float at = (std::min)(was_at + was_long - 100.0f, (std::max)(0.0f, was_at + by));
+							current.at_ms = static_cast<std::uint32_t>(at);
+							current.length_ms = static_cast<std::uint32_t>(was_at + was_long - at);
+						}
+
+						if (current.at_ms != placed[start.first].at_ms || current.length_ms != placed[start.first].length_ms)
+						{
+							effects_set(start.first, current);
+						}
+					}
+
+					ImGui::SetMouseCursor(drag == 1 ? ImGuiMouseCursor_Hand : ImGuiMouseCursor_ResizeEW);
+				}
 			}
+			else
+			{
+				drag = 0;
+			}
+
+			if (open_menu)
+			{
+				ImGui::OpenPopup("##fxMenu");
+			}
+
+			if (ImGui::BeginPopup("##fxMenu"))
+			{
+				const int count = static_cast<int>(g_fx_selected.size());
+				ImGui::TextDisabled(count == 1 ? "1 effect" : "%d effects", count);
+				ImGui::Separator();
+				if (ImGui::MenuItem("Go to where the first begins"))
+				{
+					std::uint32_t first = UINT32_MAX;
+					for (const int i : g_fx_selected)
+					{
+						first = (std::min)(first, placed[i].at_ms);
+					}
+
+					if (first != UINT32_MAX)
+					{
+						theater_seek(first);
+					}
+				}
+
+				const bool on = ImGui::MenuItem("Switch on"), off = ImGui::MenuItem("Switch off");
+				if (on || off)
+				{
+					for (const int i : g_fx_selected)
+					{
+						PlacedEffect changed = placed[i];
+						changed.on = on;
+						effects_set(i, changed);
+					}
+				}
+
+				if (ImGui::MenuItem("Select every one of this kind"))
+				{
+					const std::set<int> chosen = g_fx_selected;
+					for (int i = 0; i < placed_count; ++i)
+					{
+						for (const int c : chosen)
+						{
+							if (strcmp(placed[i].name, placed[c].name) == 0)
+							{
+								g_fx_selected.insert(i);
+								break;
+							}
+						}
+					}
+				}
+
+				ImGui::Separator();
+				if (ImGui::MenuItem(ICON_TRASH "  Remove", "Del"))
+				{
+					to_remove.assign(g_fx_selected.begin(), g_fx_selected.end());
+				}
+
+				ImGui::EndPopup();
+			}
+
+			if (!io.WantTextInput && !g_fx_selected.empty() && ImGui::IsKeyPressed(ImGuiKey_Delete, false) &&
+			    ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem))
+			{
+				to_remove.assign(g_fx_selected.begin(), g_fx_selected.end());
+			}
+
+			if (!to_remove.empty())
+			{
+				drag = 0;
+				remove_effects(to_remove);
+			}
+		}
+
+		ImGui::PopClipRect();
+		rows_height = (y + row + rows_scroll) - rows_top;
+		// (more rows than there is room for: a bar at the right edge shows where the rows shown are among them)
+		if (rows_height > rows_bottom - rows_top + 1.0f)
+		{
+			const float room = rows_bottom - rows_top, track_x = origin.x + full - 4.0f;
+			const float thumb = (std::max)(12.0f, room * room / rows_height), travel = room - thumb;
+			const float most = rows_height - room;
+			const float thumb_y = rows_top + (most > 0.0f ? rows_scroll / most : 0.0f) * travel;
+			ImGui::SetCursorScreenPos({track_x - 4.0f, rows_top});
+			ImGui::InvisibleButton("##rowsScroll", {8.0f, room});
+			if (ImGui::IsItemActive() && travel > 0.0f)
+			{
+				rows_scroll = (ImGui::GetIO().MousePos.y - rows_top - thumb * 0.5f) / travel * most;
+			}
+
+			draw->AddRectFilled({track_x, rows_top}, {track_x + 4.0f, rows_bottom}, u32(P.border, 0.5f), 2.0f);
+			draw->AddRectFilled({track_x, thumb_y}, {track_x + 4.0f, thumb_y + thumb}, u32(ImGui::IsItemHovered() || ImGui::IsItemActive() ? P.text : P.muted), 2.0f);
 		}
 
 		if (clear >= 0)
@@ -2311,8 +2770,7 @@ namespace
 		draw_menu_bar(state, io.DisplaySize.x);
 		const ImVec2 room = ImGui::GetContentRegionAvail();
 		// (the timeline grows by a row for each setting with keyframes past the four it has room for)
-		PlacedEffect all_effects[32];
-		const int timeline_rows = look_track_count() + effects_placed(all_effects, 32);
+		const int timeline_rows = look_track_count() + fx_timeline_rows();
 		const int more_rows = timeline_rows > 4 ? timeline_rows - 4 : 0;
 		const float grown = std::floor(g_font_size * 14.0f) + static_cast<float>(more_rows) * (ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y * 0.5f);
 		// the panel's width and the timeline's height are the user's once the lines between are dragged

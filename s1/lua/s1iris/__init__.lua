@@ -178,9 +178,58 @@ local function tick(hud)
 	end
 end
 
+-- Hidden at once, and kept hidden: the HUD's own code shows a part again whenever it changes, and a popup
+-- (a scorestreak made ready, say) is a new part each time, on screen before the slower tick has seen it.
+local function hide(element)
+	pcall(function()
+		element:registerAnimationState("s1iris_hidden", {alpha = 0})
+		element:animateToState("s1iris_hidden")
+	end)
+end
+
+-- every frame: only the hiding
+local function fast(hud)
+	local wanted = hidden_names()
+	if next(wanted) == nil then
+		return
+	end
+	for _, part in ipairs(parts(hud)) do
+		if wanted[part.name] then
+			hide(part.element)
+			hidden_now[part.name] = true
+		end
+	end
+end
+
+-- What is added straight onto one of the HUD's layers ("static", "shakeable") while its name is among the
+-- hidden ones never shows at all: the layer's own way of taking a new part is wrapped.
+local function watch(layer, name)
+	local ok, add = pcall(function() return layer.addElement end)
+	if not ok or type(add) ~= "function" then
+		return
+	end
+	pcall(function()
+		layer.addElement = function(self, child, ...)
+			local result = add(self, child, ...)
+			pcall(function()
+				local id = child.id
+				if type(id) == "string" and id ~= "" and id ~= "s1iris_ticker" and hidden_names()[name .. "." .. clean(id)] then
+					hide(child)
+				end
+			end)
+			return result
+		end
+	end)
+end
+
 local function attach(hud)
 	told = ""
 	hidden_now = {}
+	for _, part in ipairs(parts(hud)) do
+		if part.depth == 0 then
+			watch(part.element, part.name)
+		end
+	end
 	local ticker = LUI.UIElement.new({
 		leftAnchor = true,
 		topAnchor = true,
@@ -193,6 +242,10 @@ local function attach(hud)
 	ticker:addElement(LUI.UITimer.new(100, "s1iris_tick"))
 	ticker:registerEventHandler("s1iris_tick", function()
 		pcall(tick, hud)
+	end)
+	ticker:addElement(LUI.UITimer.new(1, "s1iris_fast"))
+	ticker:registerEventHandler("s1iris_fast", function()
+		pcall(fast, hud)
 	end)
 	hud:addElement(ticker)
 end
