@@ -55,6 +55,17 @@ namespace
 	// handle, bone, ...), which gives nothing back when the bone is not found. Held back for the players'
 	// models while they are not drawn (their jets and muzzle flashes would hang in the air).
 	constexpr std::uintptr_t FX_PLAY_BOLTED = 0x1402AC420;
+	// (0.65) What was still drawn on the colour: the loose models (crates, turrets, panels: 0x1405CA7A0, called
+	// for each in the same command as the animated models, 0x140579B90) and the moving pieces of the map
+	// (0x1405C7FD0), which are held back with the map; and effects, which all begin in 0x1402AC050 (its
+	// thirteenth argument the handle of the model the effect is fixed to, 0xFFF for none): held back unless
+	// they are on what the pass shows.
+	constexpr std::uintptr_t LOOSE_MODEL_CAMERA = 0x1405CA7A0, BRUSH_CAMERA = 0x1405C7FD0, FX_SPAWN = 0x1402AC050;
+	// The game's own clearing of what it draws to: 0x1405D9510(holder of the drawing context, which (4 the
+	// picture, 1 and 2 the depth and stencil), colour, depth, stencil): it asks the context what is set and
+	// clears that. The depth buffer is found here: the contexts the game draws with did not go through the
+	// methods hooked in 0.62 to 0.64 (nothing was ever seen there).
+	constexpr std::uintptr_t GAME_CLEAR = 0x1405D9510;
 	constexpr std::uintptr_t COM_GET_CLIENT_DOBJ = 0x1403D2BA0, CHARACTERS = 0x141620568;
 	constexpr int CHARACTER_COUNT = 42, CHARACTER_SIZE = 0xCC0, FIRST_PERSON_HANDLE = 2048, VIEW_HANDLES = 4;
 
@@ -109,6 +120,17 @@ namespace
 	command_t g_original_world[5] = {};
 	using bolted_t = void* (*)(int, void*, int, int, int, int, int, int);
 	bolted_t g_original_bolted = nullptr;
+	using word_t = std::uintptr_t;
+	using loose_t = void (*)(word_t, word_t, word_t, word_t, word_t, word_t, word_t, word_t, word_t, word_t);
+	using brush_t = void (*)(word_t, word_t, word_t, word_t, word_t, word_t, word_t, word_t);
+	using spawn_t = void* (*)(word_t, word_t, word_t, word_t, word_t, word_t, word_t, word_t, word_t, word_t, word_t, word_t, word_t, word_t, word_t, word_t, word_t,
+	                          word_t, word_t, word_t, word_t, word_t, word_t, word_t, word_t, word_t);
+	using game_clear_t = void (*)(void**, unsigned char, const float*, float, unsigned char);
+	loose_t g_original_loose = nullptr;
+	brush_t g_original_brush = nullptr;
+	spawn_t g_original_spawn = nullptr;
+	game_clear_t g_original_game_clear = nullptr;
+	thread_local int t_bolted_to = -1;  // (the handle an effect being played is fixed to, while the game plays it)
 	std::atomic<int> g_effects_held{0};
 	dobj_t g_original_dobj = nullptr;
 	std::atomic<int> g_world_held{0};
@@ -177,26 +199,62 @@ namespace
 
 	void* hooked_bolted(const int client, void* effect, const int time, const int handle, const int bone, const int a6, const int a7, const int a8)
 	{
-		if (g_playing && handle >= 0 && handle < FIRST_PERSON_HANDLE && (g_hide_characters || g_only_view))
+		const int before = t_bolted_to;
+		t_bolted_to = handle;
+		void* made = g_original_bolted(client, effect, time, handle, bone, a6, a7, a8);
+		t_bolted_to = before;
+		return made;
+	}
+
+	void hooked_loose(word_t a, word_t b, word_t c, word_t d, word_t e, word_t f, word_t g, word_t h, word_t i, word_t j)
+	{
+		if (g_hide_world)
 		{
-			bool held = g_only_view.load();
-			if (!held)
+			g_held_back.fetch_add(1, std::memory_order_relaxed);
+			return;
+		}
+
+		g_original_loose(a, b, c, d, e, f, g, h, i, j);
+	}
+
+	void hooked_brush(word_t a, word_t b, word_t c, word_t d, word_t e, word_t f, word_t g, word_t h)
+	{
+		if (g_hide_world)
+		{
+			g_held_back.fetch_add(1, std::memory_order_relaxed);
+			return;
+		}
+
+		g_original_brush(a, b, c, d, e, f, g, h);
+	}
+
+	// An effect begun: not while what it is on is not shown (and, on a colour, not unless it is on what is shown).
+	void* hooked_spawn(word_t a, word_t b, word_t c, word_t d, word_t e, word_t f, word_t g, word_t h, word_t i, word_t j, word_t k, word_t l, word_t handle, word_t n,
+	                   word_t o, word_t p, word_t q, word_t r, word_t s2, word_t t, word_t u, word_t v, word_t w, word_t x, word_t y, word_t z)
+	{
+		if (g_playing && (g_hide_characters || g_only_view || g_only_characters))
+		{
+			const int given = static_cast<int>(handle & 0xFFFF);
+			const int on = t_bolted_to >= 0 ? t_bolted_to : given != 0xFFF ? given : -1;
+			const bool view = on >= FIRST_PERSON_HANDLE && on < FIRST_PERSON_HANDLE + VIEW_HANDLES;
+			bool character = false;
+			if (on >= 0 && on < FIRST_PERSON_HANDLE)
 			{
-				void* model = client_dobj(handle);
+				void* model = client_dobj(on);
 				for (const auto& one : g_characters)
 				{
-					held = held || (model && one.load(std::memory_order_relaxed) == model);
+					character = character || (model && one.load(std::memory_order_relaxed) == model);
 				}
 			}
 
-			if (held)
+			if ((g_only_view && !view) || (g_only_characters && !character) || (g_hide_characters && character))
 			{
 				g_effects_held.fetch_add(1, std::memory_order_relaxed);
 				return nullptr;
 			}
 		}
 
-		return g_original_bolted(client, effect, time, handle, bone, a6, a7, a8);
+		return g_original_spawn(a, b, c, d, e, f, g, h, i, j, k, l, handle, n, o, p, q, r, s2, t, u, v, w, x, y, z);
 	}
 
 	void* client_dobj(const int handle)
@@ -291,7 +349,7 @@ namespace
 		// (made: the map has no fog of the game's own, and one is made of the plain kind: start, half-way
 		// distance, colour, how thick it gets at most (+0x04) and how bright (+0x24))
 		bool made = false;
-		float most = 1.0f;
+		float most = 1.0f, bright = 1.0f;
 		bool colour_on = false, colour2_on = false, start_on = false, half_on = false;
 		float colour[3] = {0.6f, 0.65f, 0.7f}, colour2[3] = {1.0f, 0.9f, 0.7f};
 		float start = 0.0f, half = 2000.0f;
@@ -340,7 +398,7 @@ namespace
 			memcpy(set + 0x00, &wish.start, 4);
 			memcpy(set + 0x80, &half, 4);
 			memcpy(set + 0x04, &wish.most, 4);
-			memcpy(set + 0x24, &one, 4);
+			memcpy(set + 0x24, &wish.bright, 4);
 			memcpy(set + 0x14, &one, 4);
 			put_colour(set + 0x7C, wish.colour);
 			set[0x7C + 3] = 255;
@@ -701,6 +759,29 @@ namespace
 		g_original_deferred_targets_more(context, count, targets, view, first, outputs, views, counts);
 	}
 
+	void hooked_game_clear(void** holder, const unsigned char which, const float* colour, const float depth, const unsigned char stencil)
+	{
+		if (g_depth && (which & 1) && holder && *holder && !t_own_drawing)
+		{
+			auto* context = static_cast<ID3D11DeviceContext*>(*holder);
+			ID3D11RenderTargetView* target = nullptr;
+			ID3D11DepthStencilView* view = nullptr;
+			context->OMGetRenderTargets(1, &target, &view);
+			if (view)
+			{
+				seen_depth(context, view, true, depth);
+				view->Release();
+			}
+
+			if (target)
+			{
+				target->Release();
+			}
+		}
+
+		g_original_game_clear(holder, which, colour, depth, stencil);
+	}
+
 	bool hook_method(void* method, void* detour, void* original)
 	{
 		return MH_CreateHook(method, detour, static_cast<LPVOID*>(original)) == MH_OK && MH_EnableHook(method) == MH_OK;
@@ -915,6 +996,14 @@ void passes_start()
 	const bool w3 = hook(WORLD_COMMANDS[3], reinterpret_cast<void*>(static_cast<command_t>(&hooked_world<3>)), &g_original_world[3]);
 	const bool w4 = hook(WORLD_COMMANDS[4], reinterpret_cast<void*>(static_cast<command_t>(&hooked_world<4>)), &g_original_world[4]);
 	const bool bolted = hook(FX_PLAY_BOLTED, reinterpret_cast<void*>(&hooked_bolted), &g_original_bolted);
+	const bool loose = hook(LOOSE_MODEL_CAMERA, reinterpret_cast<void*>(&hooked_loose), &g_original_loose);
+	const bool brush = hook(BRUSH_CAMERA, reinterpret_cast<void*>(&hooked_brush), &g_original_brush);
+	const bool spawn = hook(FX_SPAWN, reinterpret_cast<void*>(&hooked_spawn), &g_original_spawn);
+	const bool clear = hook(GAME_CLEAR, reinterpret_cast<void*>(&hooked_game_clear), &g_original_game_clear);
+	char more[160];
+	snprintf(more, sizeof(more), "hook: passes: loose models %s, moving map pieces %s, effects begun %s, the game's clearing %s", loose ? "held" : "NOT held",
+	         brush ? "held" : "NOT held", spawn ? "held" : "NOT held", clear ? "held" : "NOT held");
+	theater_log(more);
 	const bool models = hook(DOBJ_CAMERA, &hooked_dobj, &g_original_dobj);
 	char text[200];
 	snprintf(text, sizeof(text), "hook: passes: the map's surfaces %s/%s/%s, its static models %s/%s/%s, the models' drawing %s, effects on models %s", glow ? "held" : "NOT",
@@ -1010,9 +1099,9 @@ void passes_game_frame(const TheaterState& state)
 		}
 
 		char text[520];
-		snprintf(text, sizeof(text), "fog: %s; going to set %d; the game's own: %s, start %g, half %g, colours %.2f %.2f %.2f / %.2f %.2f %.2f, numbers%s; asked: made %d (start %g half %g most %g), colour %d, second %d, start %d, half %d%s",
+		snprintf(text, sizeof(text), "fog: %s; going to set %d; the game's own: %s, start %g, half %g, colours %.2f %.2f %.2f / %.2f %.2f %.2f, numbers%s; asked: made %d (start %g half %g most %g bright %g), colour %d, second %d, start %d, half %d%s",
 		         stepped ? "read" : "NOT read (a fault)", going_to, shown.atmos ? "atmosphere kind" : "plain kind", shown.start, shown.half, shown.colour[0], shown.colour[1],
-		         shown.colour[2], shown.colour2[0], shown.colour2[1], shown.colour2[2], numbers.c_str(), wish.made ? 1 : 0, wish.start, wish.half, wish.most, wish.colour_on ? 1 : 0,
+		         shown.colour[2], shown.colour2[0], shown.colour2[1], shown.colour2[2], numbers.c_str(), wish.made ? 1 : 0, wish.start, wish.half, wish.most, wish.bright, wish.colour_on ? 1 : 0,
 		         wish.colour2_on ? 1 : 0, wish.start_on ? 1 : 0, wish.half_on ? 1 : 0, asked.c_str());
 		theater_log(text);
 	}
@@ -1256,6 +1345,12 @@ void passes_draw_ui(const bool busy)
 			if (ImGui::Selectable(ELEMENT_NAMES[i], i == elements))
 			{
 				g_elements = i;
+				if (i != elements)
+				{
+					// (effects that are playing were begun under the last pass's rules: the recording is gone
+					// back in to where it is, which begins them again under this one's)
+					theater_rebuild();
+				}
 			}
 		}
 
@@ -1489,6 +1584,10 @@ void passes_draw_fog()
 		ui_row_label("Thickest");
 		ImGui::SetNextItemWidth(-FLT_MIN);
 		changed = ImGui::SliderFloat("##fogMadeMost", &wish.most, 0.0f, 1.0f, "%.2f") || changed;
+		ui_row_label("Brightness");
+		ImGui::SetNextItemWidth(-FLT_MIN);
+		changed = ImGui::SliderFloat("##fogMadeBright", &wish.bright, 0.0f, 20.0f, "%.2f") || changed;
+		ImGui::SetItemTooltip("0.64 made the fog with this at 1 and it came out black on a dark map: raise it until the colour shows.");
 		ImGui::EndDisabled();
 		if (changed)
 		{

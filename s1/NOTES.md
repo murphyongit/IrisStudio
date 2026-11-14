@@ -260,3 +260,17 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
   intensity, +0x14 scale): guesses from the classic argument order.
 - Depth: also hooks OMSetRenderTargetsAndUnorderedAccessViews (slot 34) and depth-only binds; by itself only a buffer of the picture's size is shown.
 - ui_reset_menu(id): right-click "Reset to default" on a row (every Look setting through control(), the Passes rows).
+
+## 0.65 (untested when written)
+- User on 0.64: reset works; depth shows nothing; colour passes better but loose items and effects still show; made fog works by distance but is black;
+  random outfits work (log: no "over and over", free places up to shirt 9 / hat 8: own gear is leaving memory).
+- Depth: NOTHING ever came through the hooked context methods (slots 33/34/53, immediate + a deferred context's vtable) though the game calls them by
+  vtable: clear at 0x1405D95E4 in 0x1405D9510(holder, which, colour, depth, stencil) (context = *holder; it OMGetRenderTargets (slot 89) then clears),
+  also 0x1405FAFCB; OMSetRenderTargets at 0x1405D4B2F/0x1405D4B3F (fn 0x1405D4A70), 0x1405DB6F2, 0x1405DBFF1. So the game's contexts have another
+  vtable than the two hooked. 0.65 hooks 0x1405D9510 itself and asks the context for its DSV.
+- cmd 0x15 handler 0x140579B90: scene DObjs (0xB0 each) -> 0x1405C8BB0; scene models (0x88 each) and a second list -> 0x1405CA7A0 (10 args);
+  brush models (0x50 each) -> 0x1405C7FD0 (8 args). Both held back with the map.
+- FX: every play function gets the system from 0x1402B2490(client) and spawns through 0x1402AC050 (26 args: def at stack +0x40, time +0x48, origin
+  +0x50, axis +0x58, dobj handle +0x60 (0xFFF none), bone +0x68 (0x7FF none)); effects are 0xB0 bytes (def +0, time +0x40). hooked_spawn holds back
+  by what the effect is fixed to; choosing a pass by hand calls theater_rebuild() so running effects begin again under the pass's rules.
+- Made fog: +0x24 now a "Brightness" slider (1 gave black on a night map).
