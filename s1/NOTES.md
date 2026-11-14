@@ -285,3 +285,27 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
 - 0x1405C8840(entry, n, out, end, e) -> new out: the second DObj surface lister (callers in 0x1405A91F0, reached from 0x1405CBBC0): same rule applied.
 - On a colour: fx_draw 0, fx_flare 0, r_drawWater 0 unless "Keep effects" (then the spawn filter of 0.65). Glass panes are not handled yet.
 - Characters for the passes: 42 player records + 8 + 24 body records (handle from each).
+
+## 0.67
+
+- **Why a shot player flashed in the gun-only pass:** the table of models by handle (0x147DA8660) has 2050 words, handles
+  0..2049. The dword right after it (0x147DA9664) is the place of the model made last (where the search for a free
+  place starts, 0x1403D2BF0). passes.cpp asked for handles 2048..2051, so "handle 2050" was always the newest model:
+  a body just made counted as the first person's and was drawn until some other model was made. Now only 2048, 2049.
+- **R_AddDObjToScene is 0x1405C9620** (model, pose, entity number, flags, ...; thunk 0x1405C9610). A model with one
+  part and no skeleton work goes in as a loose scene model (0x88 entry at 0x14F92D020: +8 the part, +0x10 the model),
+  the rest as scene models proper (0xB0 at 0x14F916008, count 0x14F915FFC, limit 0x200).
+- **Worker commands, by the game's own names** (table of names 0x1409E7420, same order as the jump table):
+  0 physics 0x1403A1AF0, 1 cell dyn brush 0x14057B180, 2 cell dyn model 0x140583460, 3 cell scene ent 0x140583B50,
+  4 dpvs ent 0x140583600, 5 bound ent 0x1405B4270, 6 spot shadow ent 0x1405D7CB0, 7/8 trace 0x1403A8D50,
+  9 fx pass 0 0x1402BAF20, A fx pass 2 0x1402B3010, B glass 0x1402A0700, C fx pass 4 0x1402B3210, D fx pass 5 0x1402B3360,
+  E cell static 0x140585420, F umbra static 0x140062320, 10 add bsp 0x140569EB0, 11 add staticmodel 0x14056B110,
+  12 add bsp sun 0x14056A2F0, 13 add staticmodel sun 0x14056D940, 14 skin model 0x1405B57A0, 15 add scene ent 0x140579B90,
+  16 gen drawsurfs 0x1405CBD30, 17 cell glass 0x14029B240, 18 glass light 0x14029CCD0, 19 glass verts 0x14029C1A0,
+  1A mark verts 0x1402A5510, 1B dyn mark verts 0x1402A5410, 1C fx trans verts 0x140288F20, 1D reactive motion 0x14056FFD0,
+  1E fx shadow verts 0x140288E50, 1F fx verts 0x140288FA0, 20 compute cmds 0x140058100, 21 stream tabulation 0x14027F8A0,
+  22 draw 0x1405870D0, 23 lui gc.
+- **Glass:** "glass verts" 0x14029C1A0(command) keeps [command+0x38] and [command+0x60] and goes to Glass_GenerateVerts
+  0x14029D6B0(system, list, command): the list has 8-byte entries, their number at +0x7000 (limit 0x300), each drawn by
+  Glass_DrawPiece 0x14029D450; the number is set to 0 at the end. With the map not shown the hook sets it to 0 first.
+  Limit warning function 0x1405E4050(kind, limit).

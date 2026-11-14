@@ -71,7 +71,13 @@ namespace
 	// the floor were still drawn in "only the world" because only the first 42 were looked at)
 	constexpr std::uintptr_t CHARACTERS_MORE = 0x141649350, CHARACTERS_BODIES = 0x14164F950;
 	constexpr int PLAYER_RECORDS = 42, MORE_RECORDS = 8, BODY_RECORDS = 24;
-	constexpr int CHARACTER_COUNT = PLAYER_RECORDS + MORE_RECORDS + BODY_RECORDS, CHARACTER_SIZE = 0xCC0, FIRST_PERSON_HANDLE = 2048, VIEW_HANDLES = 4;
+	constexpr int CHARACTER_COUNT = PLAYER_RECORDS + MORE_RECORDS + BODY_RECORDS, CHARACTER_SIZE = 0xCC0, FIRST_PERSON_HANDLE = 2048, VIEW_HANDLES = 2;
+	// (0.67: the game's table of models by handle has 2050 places, 0..2049. Asking for 2050 read the number kept right
+	// after it, which is the place of the model made last: so whichever model was newest counted as the first person's,
+	// and a player just shot (whose body is a new model) was drawn in the gun-only pass until another model was made.)
+	// The command that lists the glass to draw (worker command 0x19, "glass verts"): its list is at [command + 0x60],
+	// the number of pieces in it at +0x7000 of that.
+	constexpr std::uintptr_t GLASS_COMMAND = 0x14029C1A0;
 
 	enum Elements
 	{
@@ -160,6 +166,27 @@ namespace
 		}
 
 		g_original_world[N](a);
+	}
+
+	// The map's glass (windows that can break, and their pieces) is drawn by a system of its own: with the map not
+	// shown, the list of pieces to draw is emptied before the game makes their surfaces.
+	using glass_t = void (*)(unsigned char*);
+	glass_t g_original_glass = nullptr;
+	std::atomic<int> g_glass_held{0};
+
+	void hooked_glass(unsigned char* command)
+	{
+		if (g_hide_world && command)
+		{
+			unsigned char* list = *reinterpret_cast<unsigned char**>(command + 0x60);
+			if (list)
+			{
+				g_glass_held.fetch_add(*reinterpret_cast<int*>(list + 0x7000), std::memory_order_relaxed);
+				*reinterpret_cast<std::uint64_t*>(list + 0x7000) = 0;
+			}
+		}
+
+		g_original_glass(command);
 	}
 
 	// Whether a scene entry's model is not to be drawn in the pass that is on.
@@ -1075,7 +1102,9 @@ void passes_start()
 	const bool spawn = hook(FX_SPAWN, reinterpret_cast<void*>(&hooked_spawn), &g_original_spawn);
 	const bool clear = hook(GAME_CLEAR, reinterpret_cast<void*>(&hooked_game_clear), &g_original_game_clear);
 	const bool other = hook(0x1405C8840, reinterpret_cast<void*>(&hooked_dobj_other), &g_original_dobj_other);
+	const bool glass = hook(GLASS_COMMAND, reinterpret_cast<void*>(&hooked_glass), &g_original_glass);
 	theater_log(other ? "hook: passes: the models' other drawing held" : "hook: passes: the models' other drawing NOT held");
+	theater_log(glass ? "hook: passes: the map's glass held" : "hook: passes: the map's glass NOT held");
 	char more[160];
 	snprintf(more, sizeof(more), "hook: passes: loose models %s, moving map pieces %s, effects begun %s, the game's clearing %s", loose ? "held" : "NOT held",
 	         brush ? "held" : "NOT held", spawn ? "held" : "NOT held", clear ? "held" : "NOT held");
@@ -1129,9 +1158,11 @@ void passes_game_frame(const TheaterState& state)
 
 		++told;
 		told_at = now;
-		char text[200];
-		snprintf(text, sizeof(text), "passes: showing \"%s\": %d characters' models, %d first-person models (flags %X), %d models, %d map steps, %d effects held back",
-		         ELEMENT_NAMES[elements], characters, views, g_view_flags.load(), g_held_back.exchange(0), g_world_held.exchange(0), g_effects_held.exchange(0));
+		char text[240];
+		snprintf(text, sizeof(text),
+		         "passes: showing \"%s\": %d characters' models, %d first-person models (flags %X), %d models, %d map steps, %d effects, %d glass pieces held back",
+		         ELEMENT_NAMES[elements], characters, views, g_view_flags.load(), g_held_back.exchange(0), g_world_held.exchange(0), g_effects_held.exchange(0),
+		         g_glass_held.exchange(0));
 		theater_log(text);
 	}
 
