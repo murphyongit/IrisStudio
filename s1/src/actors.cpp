@@ -19,8 +19,8 @@
 //    far the animation has carried the figure by then (a walk walks, a death falls back).
 //  - A model is drawn by R_AddDObjToScene (0x1405C9610: the model, its pose, the entity's number, flags, where
 //    it is lit from, 0.0, 0), the pose being a client entity (0x288 bytes each from 0x141655F60: the origin at
-//    +0x20, each of its three numbers kept XORed with the inverse of the low half of where the origin is kept;
-//    angles +0x44; its number a word +0x144; its kind a byte +0x150). Actors take the entities 1984 and up,
+//    +0x20, each of its three numbers kept XORed with the 32 bits at 0x150D160B9; angles +0x44; its number a
+//    word +0x144; its kind a byte +0x150). Actors take the entities 1984 and up,
 //    which no match uses, as their handles and poses.
 //  - Going back in the recording starts the client game again, which lets go of every model (Com_InitDObj) but
 //    not of the trees' states: the actors' are freed before (actors_release), XAnimFreeInfo 0x1404E5CC0.
@@ -52,6 +52,10 @@ namespace
 	constexpr std::uintptr_t CG_DOBJ_GET_WORLD_TAG_MATRIX = 0x140190D00;
 	constexpr size_t CENTITY_SIZE = 0x288, CENTITY_ORIGIN = 0x20, CENTITY_ANGLES = 0x44, CENTITY_NUMBER = 0x144, CENTITY_KIND = 0x150;
 	constexpr size_t INFO_SIZE = 0x48;
+	// The number a pose's origin is kept XORed with (each of its three numbers, as 32 bits): the game reads and
+	// writes a pose's origin only through a routine that does this (0x150C1D673, as CG_General calls it with the
+	// entity's +0x20 and 12 bytes: byte i of what it copies is XORed with byte (i & 3) of this).
+	constexpr std::uintptr_t ORIGIN_KEY = 0x150D160B9;
 	constexpr int ASSET_XANIM = 5, MAX_ANIMATIONS = 32768;
 	// (the entities' numbers go to 2045; a match's own stay far below these)
 	constexpr int FIRST_HANDLE = 1984, PREVIEW_HANDLE = 1983, PREVIEW = ACTORS_MAX;
@@ -379,7 +383,7 @@ namespace
 		{
 			unsigned char* entity = entity_at(handle);
 			auto* kept = reinterpret_cast<std::uint32_t*>(entity + CENTITY_ORIGIN);
-			const std::uint32_t key = ~static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(kept));
+			const std::uint32_t key = *reinterpret_cast<const std::uint32_t*>(ORIGIN_KEY);
 			for (int i = 0; i < 3; ++i)
 			{
 				std::uint32_t bits;

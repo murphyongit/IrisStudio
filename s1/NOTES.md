@@ -358,7 +358,8 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
   +0x28 time, +0x2C old time, +0x30 cycle count). Entry (16 bytes from anims+8): word children count, word parent, +8 parts | (word flags, word first child).
   DObjSetTree 0x1404DECD0(obj, tree): [obj+0] = tree. DObjGetTree 0x1404DDFB0. XAnimParts: +0xE frames, +0x10 flags (1 loops), +0x30 framerate.
 - **CG_General is around 0x1401910C0**: CG_PreProcess_GetDObj 0x1401928E0(…, entnum, eType, model, 0); cgs.gameModels 0x141646E18; pose = the centity
-  itself (0x288 from 0x141655F60): origin +0x20 stored as bits ^ ~low32(&origin) (decoder 0x1401911C0), angles +0x44, number word +0x144, eType byte
+  itself (0x288 from 0x141655F60): origin +0x20 stored XORed, each 32 bits with the dword at 0x150D160B9 (0x67B0F0DA in the dump; the copy routine
+  0x150C1D673(out, in, 12) traced through its obfuscation: out[i] = in[i] ^ byte (i&3) of it; 0x1401911C0 is NOT it), angles +0x44, number word +0x144, eType byte
   +0x150, model index +0x154; R_AddDObjToScene thunk 0x1405C9610(obj, pose, entnum, renderFlags, lightingOrigin, 0.0f, 0); render flags from 0x1401914E0.
   CG_MAKE_DOBJ 0x1401A2BF0(models, count, tree, handle, client, entnum) also resets 12 bytes at 0x141799F60[(client*2048+entnum)*12].
 - Console names: Com_Restart does XAnimShutdown/XAnimInit/DObjInit; CL_InitCGame does Com_InitDObj (so a rewind frees every client DObj but NOT the
