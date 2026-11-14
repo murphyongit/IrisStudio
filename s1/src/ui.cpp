@@ -2355,6 +2355,8 @@ namespace
 			static float drag_from = 0.0f;
 			static bool dragged = false;
 			static std::vector<std::pair<int, PlacedEffect>> drag_start;
+			// (what was pressed, when it was already among several selected: let go of without a drag, it alone stays selected)
+			static std::vector<int> pressed_which;
 			std::vector<int> to_remove;
 			bool open_menu = false;
 			auto selected_all = [&](const std::vector<int>& which) {
@@ -2424,6 +2426,7 @@ namespace
 
 				if (pressed)
 				{
+					pressed_which = io.KeyCtrl ? std::vector<int>() : which;
 					drag = pressed;
 					drag_from = mouse_ms;
 					dragged = false;
@@ -2636,6 +2639,12 @@ namespace
 			}
 			else
 			{
+				if (drag && !dragged && !pressed_which.empty())
+				{
+					g_fx_selected.clear();
+					g_fx_selected.insert(pressed_which.begin(), pressed_which.end());
+				}
+
 				drag = 0;
 			}
 
