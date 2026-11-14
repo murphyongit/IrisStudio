@@ -341,3 +341,31 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
 - Timeline: rows scroll (wheel over the names, bar at the right); effects by kind (one row, one bar over all clips; opened out, a row each);
   selection (click, Ctrl+click, right-click menu, Del); drags by the distance moved since the press (the old end-drag jumped: a short clip
   is drawn at least 10 px wide, and the length was set to where the mouse was); a start handle too. Up to 128 effects (was 32).
+
+## 0.69: actors, handles on the picture (untested when written: built blind, from the disassembly)
+- User (away from the PC): wants actors like T5 Iris (right click > add actor, outfits like the swapper, named actor1.., animations
+  stitched with "Then" and blended, a death-animation library with a small bone view), x/y/z arrows under every effect and actor to slide
+  them on the picture (only while the mouse is over it, right button up), and turning them.
+- T5's way (t5/src/Actors.cpp) ported: own DObj + own XAnim tree, weights/times set each frame, R_AddDObjToScene with a client entity as pose.
+- **XAnim on PC** (cluster 0x1404E3000..0x1404E9000): XAnimCreateAnims 0x1404E5000(name, count, alloc) = alloc(count*16+8), [0]=count;
+  XAnimBlend 0x1404E3540(anims, index, name, firstChild, numChildren, flags, byte); XAnimCreate 0x1404E4FC0(anims, index, name) (DB_FindXAssetHeader
+  0x14026F0F0(5, name, 1)); XAnimCreateFromParts 0x1404E5020(anims, index, parts); XAnimCreateTree 0x1404E5150(anims, alloc) = alloc(16): [0] anims,
+  word [8] root info index; XAnimFreeTree 0x1404E5E70(tree, free); XAnimFreeInfo 0x1404E5CC0(tree, info, 0); XAnimCreateSimpleTree 0x1404E50E0(name),
+  SimpleBlendTree 0x1404E5040, free 0x1404E5E40 / 0x1404E5E10; XAnimPlaySimpleTreeAnim 0x1404E7350, ...BlendTreeAnim 0x1404E70F0;
+  **XAnimSetGoalWeight 0x1404E8420(obj, index, weight, goalTime, rate, notifyName, notifyType, restart)** (weights under 0.001 are 0);
+  XAnimGetInfoIndex_r 0x1404E6390(tree, index, rootInfo); XAnimRestart 0x1404E7BE0; XAnimSetGoalWeightInternal 0x1404E87E0; XAnimAllocInfo-with-parents
+  0x1404E32D0(obj, index, 0); XAnimGetAbsDelta 0x1404E5EB0(anims, index, rot[4], trans[3], time). Infos: 0x48 bytes from 0x14B5B9E00 (+2 notify index,
+  +0x28 time, +0x2C old time, +0x30 cycle count). Entry (16 bytes from anims+8): word children count, word parent, +8 parts | (word flags, word first child).
+  DObjSetTree 0x1404DECD0(obj, tree): [obj+0] = tree. DObjGetTree 0x1404DDFB0. XAnimParts: +0xE frames, +0x10 flags (1 loops), +0x30 framerate.
+- **CG_General is around 0x1401910C0**: CG_PreProcess_GetDObj 0x1401928E0(…, entnum, eType, model, 0); cgs.gameModels 0x141646E18; pose = the centity
+  itself (0x288 from 0x141655F60): origin +0x20 stored as bits ^ ~low32(&origin) (decoder 0x1401911C0), angles +0x44, number word +0x144, eType byte
+  +0x150, model index +0x154; R_AddDObjToScene thunk 0x1405C9610(obj, pose, entnum, renderFlags, lightingOrigin, 0.0f, 0); render flags from 0x1401914E0.
+  CG_MAKE_DOBJ 0x1401A2BF0(models, count, tree, handle, client, entnum) also resets 12 bytes at 0x141799F60[(client*2048+entnum)*12].
+- Console names: Com_Restart does XAnimShutdown/XAnimInit/DObjInit; CL_InitCGame does Com_InitDObj (so a rewind frees every client DObj but NOT the
+  XAnim infos): actors_release() runs in go_back_to before that.
+- actors.cpp: handles 1984.. (preview 1983); outfit = a player's last model list kept by NAME (models_outfit_of / models_make_actor in models.cpp, which
+  goes through CG_MAKE_DOBJ and so through hooked_create: swaps, sets, random outfit work by handle; models_randomize_one). Clips: at, length, speed,
+  blend, loop; the last clip begun plays, the one before blends out; root motion from XAnimGetAbsDelta summed over the clips begun. Preview figure for
+  the library's bone view (CG_DObjGetWorldTagMatrix on 22 bones, not added to the scene). passes.cpp counts actors' models as characters.
+- ui.cpp: Scene > Actors, animation library (modal) with bone view, actor rows in the timeline, handles on the picture (draw_handles: arrows / rings,
+  R or the Slide/Turn button), camera_view() gives the view for projecting.

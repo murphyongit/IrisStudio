@@ -141,6 +141,64 @@ int models_find(const char* text, int group, int slot, char names[][64], int max
 int models_sets(char names[][32], int max);
 int models_apply_set(int entity, const char* name);
 int models_randomize(std::uint64_t entities);
+int models_randomize_one(int entity);
+// An outfit, as the list the game makes a model from: each part's model and materials by name, and the rest of
+// its entry as the game had it.
+struct ModelsOutfit
+{
+	int count = 0;
+	char names[32][64] = {};
+	char over[32][64] = {}, base[32][64] = {};
+	unsigned char entries[32][0x20] = {};
+};
+bool models_outfit_of(int entity, ModelsOutfit* out);
+void* models_make_actor(int handle, const ModelsOutfit& outfit, void* tree, char missing[64]);
+void models_drop(int entity);
+
+// ---- actors (actors.cpp): figures the editor puts into the match, dressed as a player and played by clips
+constexpr int ACTORS_MAX = 16, ACTOR_CLIPS_MAX = 24, ACTOR_BONES = 22;
+struct ActorClip
+{
+	char anim[64] = "";
+	std::uint32_t at_ms = 0;         // when it begins, and for how long it runs (then it holds its last pose)
+	std::uint32_t length_ms = 2000;
+	float speed = 1.0f;
+	std::uint32_t blend_ms = 250;    // how long it takes to blend in over the clip before it
+	int loop = -1;                   // goes round and round: -1 as the animation itself says, 0 no, 1 yes
+};
+struct Actor
+{
+	int handle = 0;                  // the entity its model is made under (the editor's Models list goes by it)
+	char name[32] = "";
+	bool on = true;
+	float origin[3] = {};
+	float yaw = 0.0f;
+	bool moves = true;               // carried along by its animations (a walk walks)
+	bool stays = true;               // holds its last pose after its last clip (else it goes)
+	int clip_count = 0;
+	ActorClip clips[ACTOR_CLIPS_MAX];
+};
+struct ActorNow
+{
+	bool made = false, shown = false, broken = false;
+	int clip = -1;                   // the clip playing
+	float origin[3] = {};            // where it stands now (its animations may have carried it)
+	float yaw = 0.0f;
+	char waiting[96] = "";           // what it is waiting for (a model or animation not in memory)
+};
+int actors_list(Actor* out, int max);
+bool actors_now(int index, ActorNow* out);
+int actors_handles(int* out, int max);
+int actors_add(const float origin[3], float yaw, int dressed_as, std::uint32_t ms);
+void actors_set(int index, const Actor& actor);
+bool actors_dress(int index, int dressed_as);
+void actors_remove(int index);
+int actors_animations(const char* text, int group, char names[][64], int max);
+float actors_animation_length(const char* name, bool* loops);
+void actors_preview(const char* animation, int dressed_as_actor);
+bool actors_preview_bones(float out[ACTOR_BONES][3], bool has[ACTOR_BONES], float* fraction);
+void actors_release();
+void actors_scene_frame(const TheaterState& state);
 void models_status(char out[200]);
 void models_allow_loading(bool on);
 bool models_loading_allowed();
@@ -176,6 +234,7 @@ void effects_remove(int index);
 void effects_game_frame(const TheaterState& state);
 // Where the picture is taken from this frame.
 void camera_view_origin(float out[3]);
+void camera_view(float origin[3], float axis[9], float tan[2]);
 int scene_lights(SceneLight* out, int max);
 void scene_set_light(int index, const SceneLight& light);
 int scene_add_light();

@@ -361,6 +361,7 @@ namespace
 	SceneLight g_lights[MAX_LIGHTS];
 	int g_light_count = 0;
 	float g_view_now[3] = {}, g_view_angles[3] = {};  // where the picture is taken from this frame, and which way it looks
+	float g_view_axis[9] = {1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f}, g_view_tan[2] = {1.0f, 0.5625f};  // forward, left, up; half the view's width and height at 1
 	using add_spot_light_t = void (*)(const float*, const float*, const float*, float, float, float, float, float, float, const void*, const SpotBlock*);
 	add_spot_light_t g_original_add_spot_light = nullptr;
 	SpotBlock g_game_spot = {0.5f, 0.4f, 400.0f, 1.0f, 400.0f, 1, 1.0f, 1.0f, 0.0f, {0.0f, -1.0f}, 1, {}};
@@ -1031,6 +1032,9 @@ namespace
 			}
 
 			memcpy(g_view_now, &at<float>(REFDEF_ORIGIN), sizeof(g_view_now));
+			memcpy(g_view_axis, &at<float>(REFDEF_AXIS), sizeof(g_view_axis));
+			g_view_tan[0] = at<float>(REFDEF_TAN_X);
+			g_view_tan[1] = at<float>(REFDEF_TAN_Y);
 			{
 				const float* forward = &at<float>(REFDEF_AXIS);
 				g_view_angles[1] = std::atan2(forward[1], forward[0]) * TO_DEG;
@@ -1054,6 +1058,12 @@ namespace
 			{
 				add_lights();
 			}
+		}
+
+		if (refdef == reinterpret_cast<void*>(REFDEF))
+		{
+			// (the editor's actors go into the scene with the match's own models)
+			actors_scene_frame(theater_state());
 		}
 
 		g_original_render_scene(client, refdef, a3, a4, a5, a6, a7, a8);
@@ -1114,6 +1124,17 @@ void camera_view_origin(float out[3])
 {
 	std::lock_guard<std::mutex> lock(g_lock);
 	memcpy(out, g_view_now, sizeof(g_view_now));
+}
+
+// The view the picture was last taken with: from where, its axes (forward, left, up) and half its width and
+// height at a distance of 1 (to find where a place in the match is on the picture).
+void camera_view(float origin[3], float axis[9], float tan[2])
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	memcpy(origin, g_view_now, sizeof(g_view_now));
+	memcpy(axis, g_view_axis, sizeof(g_view_axis));
+	tan[0] = g_view_tan[0];
+	tan[1] = g_view_tan[1];
 }
 
 int scene_lights(SceneLight* out, const int max)

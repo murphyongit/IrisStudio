@@ -121,7 +121,8 @@ namespace
 	char g_tag[32] = "";
 
 	// the models of the players (and their bodies) and of the first person, as of this frame
-	std::atomic<void*> g_characters[CHARACTER_COUNT];
+	// (after the players', the editor's actors')
+	std::atomic<void*> g_characters[CHARACTER_COUNT + ACTORS_MAX];
 	std::atomic<void*> g_views[VIEW_HANDLES];
 	std::atomic<int> g_held_back{0};
 	std::atomic<unsigned> g_view_flags{0};
@@ -1133,6 +1134,13 @@ void passes_game_frame(const TheaterState& state)
 		{
 			int handle = -1;
 			g_characters[i] = character_handle(i, &handle) ? client_dobj(handle) : nullptr;
+		}
+
+		int actors[ACTORS_MAX];
+		const int actor_count = actors_handles(actors, ACTORS_MAX);
+		for (int i = 0; i < ACTORS_MAX; ++i)
+		{
+			g_characters[CHARACTER_COUNT + i] = i < actor_count ? client_dobj(actors[i]) : nullptr;
 		}
 
 		for (int i = 0; i < VIEW_HANDLES; ++i)

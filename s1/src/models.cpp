@@ -2630,7 +2630,25 @@ int models_apply_set(const int entity, const char* name)
 
 // A set chosen at random for each of the entities (a bit each), within what the game's memory has room
 // for: once that is used up, the rest get sets made of parts that are already there.
+namespace
+{
+	int randomize(const std::uint64_t entities, const int one);
+}
+
 int models_randomize(const std::uint64_t entities)
+{
+	return randomize(entities, -1);
+}
+
+// The same for one entity of any number (an actor's).
+int models_randomize_one(const int entity)
+{
+	return randomize(0, entity);
+}
+
+namespace
+{
+int randomize(const std::uint64_t entities, const int one)
 {
 	std::lock_guard<std::mutex> lock(g_lock);
 	read_gear_tables();
@@ -2653,6 +2671,11 @@ int models_randomize(const std::uint64_t entities)
 		{
 			order.push_back(entity);
 		}
+	}
+
+	if (one >= 0 && g_seen.count(one))
+	{
+		order.push_back(one);
 	}
 
 	std::shuffle(order.begin(), order.end(), random);
@@ -2704,6 +2727,144 @@ int models_randomize(const std::uint64_t entities)
 	note("models: %d random outfits, %d parts to load; free places by kind before:%s", queued, fresh, room_text(room).c_str());
 	snprintf(g_status, sizeof(g_status), queued ? "%d random outfits on their way (%d parts to load)..." : "No set fits these players from what is loaded.", queued, fresh);
 	return queued;
+}
+}
+
+namespace
+{
+	void* make_guarded(const unsigned char* bytes, const unsigned short count, void* tree, const int handle)
+	{
+		__try
+		{
+			return reinterpret_cast<void* (*)(const unsigned char*, unsigned short, void*, int, int, int)>(CG_MAKE_DOBJ)(bytes, count, tree, handle, 0, handle);
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			return nullptr;
+		}
+	}
+}
+
+// ---- actors (actors.cpp): a model made by the editor, of an outfit taken from a player's.
+// What the game last made an entity's model from, kept by name: the models and materials are found again
+// by their names when the outfit is used (gear nobody wears is let go of, and a pointer kept would go bad).
+bool models_outfit_of(const int entity, ModelsOutfit* out)
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	const auto last = g_last.find(entity);
+	if (last == g_last.end() || last->second.count == 0 || last->second.count > 32 || last->second.bytes.size() < last->second.count * size_t(0x20))
+	{
+		return false;
+	}
+
+	*out = ModelsOutfit();
+	for (unsigned short i = 0; i < last->second.count; ++i)
+	{
+		const unsigned char* entry = last->second.bytes.data() + i * size_t(0x20);
+		const void* const* fields = reinterpret_cast<const void* const*>(entry);
+		const char* name = name_of(fields[0]);
+		if (!name)
+		{
+			if (i == 0)
+			{
+				return false;
+			}
+
+			continue;
+		}
+
+		const int at = out->count++;
+		memcpy(out->entries[at], entry, 0x20);
+		strncpy_s(out->names[at], name, _TRUNCATE);
+		const char* over = name_of(fields[2]);
+		const char* base = name_of(fields[3]);
+		strncpy_s(out->over[at], over ? over : "", _TRUNCATE);
+		strncpy_s(out->base[at], base ? base : "", _TRUNCATE);
+	}
+
+	return out->count > 0;
+}
+
+// (on the game's thread) An actor's model made from an outfit, with an animation tree of the editor's, under a
+// handle of its own. The game's own maker is used, so the editor's changes for that handle (other parts, sets,
+// camouflage) go on it like on a player's. Null: a part of it is not in memory (what is missing is named).
+void* models_make_actor(const int handle, const ModelsOutfit& outfit, void* tree, char missing[64])
+{
+	unsigned char bytes[32 * 0x20];
+	unsigned short count = 0;
+	missing[0] = 0;
+	{
+		std::lock_guard<std::mutex> lock(g_lock);
+		list_loaded();
+		if (GetTickCount64() - g_materials_at > 3000)
+		{
+			list_materials();
+		}
+
+		for (int i = 0; i < outfit.count && i < 32; ++i)
+		{
+			const auto loaded = g_loaded.find(outfit.names[i]);
+			if (loaded == g_loaded.end() || !name_of(loaded->second))
+			{
+				if (!missing[0])
+				{
+					strncpy_s(missing, 64, outfit.names[i], _TRUNCATE);
+				}
+
+				if (i == 0)
+				{
+					// (the body: the rest hang on it)
+					return nullptr;
+				}
+
+				continue;
+			}
+
+			unsigned char* entry = bytes + count * size_t(0x20);
+			memcpy(entry, outfit.entries[i], 0x20);
+			void** fields = reinterpret_cast<void**>(entry);
+			fields[0] = loaded->second;
+			const auto over = outfit.over[i][0] ? g_materials.find(outfit.over[i]) : g_materials.end();
+			const auto base = outfit.base[i][0] ? g_materials.find(outfit.base[i]) : g_materials.end();
+			fields[2] = over != g_materials.end() ? over->second : nullptr;
+			fields[3] = base != g_materials.end() ? base->second : nullptr;
+			if (!fields[2] || !fields[3])
+			{
+				fields[2] = nullptr;
+				entry[0xD] = 0;
+			}
+
+			++count;
+		}
+	}
+
+	if (count == 0)
+	{
+		return nullptr;
+	}
+
+	void* made = make_guarded(bytes, count, tree, handle);
+	if (!made)
+	{
+		strncpy_s(missing, 64, "(a fault making it)", _TRUNCATE);
+	}
+
+	return made;
+}
+
+// An actor is gone: what the editor kept for its handle goes with it.
+void models_drop(const int entity)
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	g_extra_dirty = GetTickCount64();
+	g_swaps.erase(entity);
+	g_adds.erase(entity);
+	g_skins.erase(entity);
+	g_camos.erase(entity);
+	g_seen.erase(entity);
+	g_last.erase(entity);
+	g_built.erase(entity);
+	g_changed.erase(entity);
 }
 
 namespace

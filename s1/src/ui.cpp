@@ -430,6 +430,595 @@ namespace
 		g_fx_selected.clear();
 	}
 
+	// ---- actors: which one's settings are open in the Scene tab, which of its clips is chosen, and the entity
+	// the Models list is showing (an actor's handle can be put there from the Actors list)
+	int g_actor_open = -1, g_actor_clip = -1;
+	int g_models_entity = -1;
+	// the animation library: for which actor and which of its clips (-1: a new one after its last, "Then")
+	struct Library
+	{
+		bool open = false;
+		int actor = -1, clip = -1;
+		char search[48] = "";
+		int group = 0;
+		char chosen[64] = "";
+	};
+	Library g_library;
+
+	bool is_actor_handle(const int entity, char name[32] = nullptr)
+	{
+		static Actor actors[ACTORS_MAX];
+		const int count = actors_list(actors, ACTORS_MAX);
+		for (int i = 0; i < count; ++i)
+		{
+			if (actors[i].handle == entity)
+			{
+				if (name)
+				{
+					strncpy_s(name, 32, actors[i].name, _TRUNCATE);
+				}
+
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	// An actor put at a place, facing the camera, dressed as the player nearest the camera (or any player whose
+	// model the game has made).
+	int add_actor_at(const float point[3])
+	{
+		const BoneState players = camera_bone_state();
+		float eye[3];
+		camera_view_origin(eye);
+		const float yaw = std::atan2(eye[1] - point[1], eye[0] - point[0]) * 57.29578f;
+		const TheaterState state = theater_state();
+		int index = players.nearest >= 0 ? actors_add(point, yaw, players.nearest, state.position_ms) : -1;
+		for (int e = 0; index < 0 && e < 64; ++e)
+		{
+			if (players.entities & (1ull << e))
+			{
+				index = actors_add(point, yaw, e, state.position_ms);
+			}
+		}
+
+		if (index < 0)
+		{
+			ui_log("No actor added: an actor is dressed as a player, and no player's model is in the match right now (or all %d actors are in use).", ACTORS_MAX);
+		}
+		else
+		{
+			g_actor_open = index;
+			g_actor_clip = 0;
+		}
+
+		return index;
+	}
+
+	// A clip for an animation after an actor's last ("Then"), or the animation of one of its clips changed.
+	void use_animation(const int actor_index, const int clip_index, const char* animation)
+	{
+		static Actor actors[ACTORS_MAX];
+		const int count = actors_list(actors, ACTORS_MAX);
+		if (actor_index < 0 || actor_index >= count)
+		{
+			return;
+		}
+
+		Actor& actor = actors[actor_index];
+		bool loops = false;
+		const float length = actors_animation_length(animation, &loops);
+		// (as long as the animation; one that goes round, twice round and two seconds at the least)
+		const std::uint32_t runs = static_cast<std::uint32_t>((loops ? (std::max)(2.0f, length * 2.0f) : (std::max)(0.2f, length)) * 1000.0f);
+		if (clip_index >= 0 && clip_index < actor.clip_count)
+		{
+			strncpy_s(actor.clips[clip_index].anim, animation, _TRUNCATE);
+			actor.clips[clip_index].length_ms = runs;
+			actor.clips[clip_index].loop = -1;
+			g_actor_clip = clip_index;
+		}
+		else if (actor.clip_count < ACTOR_CLIPS_MAX)
+		{
+			ActorClip clip;
+			strncpy_s(clip.anim, animation, _TRUNCATE);
+			clip.length_ms = runs;
+			// where the last one ends (the recording's time now for the first)
+			std::uint32_t end = theater_state().position_ms;
+			for (int c = 0; c < actor.clip_count; ++c)
+			{
+				end = c == 0 ? actor.clips[c].at_ms + actor.clips[c].length_ms : (std::max)(end, actor.clips[c].at_ms + actor.clips[c].length_ms);
+			}
+
+			clip.at_ms = end;
+			g_actor_clip = actor.clip_count;
+			actor.clips[actor.clip_count++] = clip;
+		}
+
+		actors_set(actor_index, actor);
+	}
+
+	// The small bone view: the figure's bones as lines, seen a little from the side.
+	void draw_bone_view(const ImVec2 size)
+	{
+		const ImVec2 corner = ImGui::GetCursorScreenPos();
+		ImDrawList* draw = ImGui::GetWindowDrawList();
+		ImGui::Dummy(size);
+		draw->AddRectFilled(corner, {corner.x + size.x, corner.y + size.y}, u32(P.surface), 4.0f);
+		draw->AddRect(corner, {corner.x + size.x, corner.y + size.y}, u32(P.border), 4.0f);
+		float bones[ACTOR_BONES][3];
+		bool has[ACTOR_BONES];
+		float fraction = 0.0f;
+		if (!actors_preview_bones(bones, has, &fraction))
+		{
+			const char* text = theater_state().playing ? "Getting it ready..." : "Play a recording to see it";
+			const ImVec2 text_size = ImGui::CalcTextSize(text);
+			draw->AddText({corner.x + (size.x - text_size.x) * 0.5f, corner.y + (size.y - text_size.y) * 0.5f}, u32(P.muted), text);
+			return;
+		}
+
+		// (a figure is about 72 high; room for one fallen over, too)
+		const float scale = (size.y - 28.0f) / 96.0f;
+		const float turn = 0.6f, c = std::cos(turn), sn = std::sin(turn);
+		const ImVec2 feet = {corner.x + size.x * 0.5f, corner.y + size.y - 18.0f};
+		auto at = [&](const float* bone) {
+			const float side = bone[0] * sn + bone[1] * c, depth = bone[0] * c - bone[1] * sn;
+			return ImVec2(feet.x - side * scale, feet.y - (bone[2] + depth * 0.18f) * scale);
+		};
+		static const int LINKS[][2] = {{0, 1}, {1, 2}, {2, 3}, {3, 4}, {4, 5}, {3, 6}, {6, 7}, {7, 8}, {8, 9}, {3, 10}, {10, 11}, {11, 12}, {12, 13},
+		                               {0, 14}, {14, 15}, {15, 16}, {16, 17}, {0, 18}, {18, 19}, {19, 20}, {20, 21}};
+		ImGui::PushClipRect(corner, {corner.x + size.x, corner.y + size.y}, true);
+		draw->AddLine({corner.x + 10.0f, feet.y}, {corner.x + size.x - 10.0f, feet.y}, u32(P.border), 1.0f);
+		for (const auto& link : LINKS)
+		{
+			if (has[link[0]] && has[link[1]])
+			{
+				// (the left side a little fainter, to tell the sides apart)
+				const bool left_side = (link[1] >= 6 && link[1] <= 9) || (link[1] >= 14 && link[1] <= 17);
+				draw->AddLine(at(bones[link[0]]), at(bones[link[1]]), u32(P.text, left_side ? 0.55f : 1.0f), 2.5f);
+			}
+		}
+
+		if (has[5])
+		{
+			draw->AddCircleFilled(at(bones[5]), 5.0f * (std::max)(1.0f, scale), u32(P.accent));
+		}
+
+		draw->AddRectFilled({corner.x + 8.0f, corner.y + size.y - 8.0f}, {corner.x + 8.0f + (size.x - 16.0f) * fraction, corner.y + size.y - 5.0f}, u32(P.accent), 1.5f);
+		ImGui::PopClipRect();
+	}
+
+	// The animation library: the animations the game has loaded, by group and by a text in their names; the one
+	// under the mouse (or chosen with a click) plays in the small bone view; a double click or "Use it" takes it.
+	void draw_library()
+	{
+		if (g_library.open)
+		{
+			g_library.open = false;
+			ImGui::OpenPopup("Animations");
+		}
+
+		ImGui::SetNextWindowSize({g_font_size * 46.0f, g_font_size * 30.0f}, ImGuiCond_Appearing);
+		bool keep = true;
+		if (!ImGui::BeginPopupModal("Animations", &keep, ImGuiWindowFlags_NoSavedSettings))
+		{
+			return;
+		}
+
+		static char names[3000][64];
+		static int count = 0, shown_group = -1;
+		static char shown_search[48] = "\x01";
+		static char playing[64] = "";
+		ImGui::SetNextItemWidth(g_font_size * 11.0f);
+		ImGui::Combo("##group", &g_library.group, "Player's body\0Deaths\0Standing\0Crouching\0Prone\0Moving\0Everything loaded\0");
+		ImGui::SameLine();
+		ImGui::SetNextItemWidth(g_font_size * 14.0f);
+		ImGui::InputTextWithHint("##search", ICON_SEARCH "  a text in its name", g_library.search, sizeof(g_library.search));
+		if (shown_group != g_library.group || strcmp(shown_search, g_library.search) != 0 || ImGui::IsWindowAppearing())
+		{
+			shown_group = g_library.group;
+			snprintf(shown_search, sizeof(shown_search), "%s", g_library.search);
+			count = actors_animations(g_library.search, g_library.group, names, 3000);
+		}
+
+		ImGui::SameLine();
+		ImGui::TextDisabled("%d", count);
+		const float view_width = g_font_size * 17.0f;
+		bool use = false;
+		ImGui::BeginChild("##list", {ImGui::GetContentRegionAvail().x - view_width - ImGui::GetStyle().ItemSpacing.x, -ImGui::GetFrameHeightWithSpacing() * 1.2f},
+		                  ImGuiChildFlags_Border);
+		const char* hovered = nullptr;
+		ImGuiListClipper clipper;
+		clipper.Begin(count);
+		while (clipper.Step())
+		{
+			for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i)
+			{
+				if (ImGui::Selectable(names[i], strcmp(names[i], g_library.chosen) == 0, ImGuiSelectableFlags_AllowDoubleClick))
+				{
+					snprintf(g_library.chosen, sizeof(g_library.chosen), "%s", names[i]);
+					use = use || ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+				}
+
+				if (ImGui::IsItemHovered())
+				{
+					hovered = names[i];
+				}
+			}
+		}
+
+		if (count == 0)
+		{
+			ImGui::TextDisabled(theater_state().playing ? "No animation of this group has that in its name." : "Play a recording: the animations are the ones its match has loaded.");
+		}
+
+		ImGui::EndChild();
+		ImGui::SameLine();
+		ImGui::BeginGroup();
+		// (what plays: the one under the mouse, else the one chosen)
+		const char* wanted = hovered ? hovered : g_library.chosen;
+		if (strcmp(playing, wanted) != 0)
+		{
+			snprintf(playing, sizeof(playing), "%s", wanted);
+		}
+
+		actors_preview(playing, g_library.actor);
+		draw_bone_view({view_width, g_font_size * 20.0f});
+		if (playing[0])
+		{
+			bool loops = false;
+			const float length = actors_animation_length(playing, &loops);
+			ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + view_width);
+			ImGui::TextUnformatted(playing);
+			ImGui::TextDisabled("%.2f s%s", length, loops ? ", goes round and round" : "");
+			ImGui::PopTextWrapPos();
+		}
+		else
+		{
+			ImGui::TextDisabled("Point at an animation to see it.");
+		}
+
+		ImGui::EndGroup();
+		ImGui::BeginDisabled(!g_library.chosen[0]);
+		use = ImGui::Button(g_library.clip < 0 ? "Then play it" : "Use it") || use;
+		ImGui::EndDisabled();
+		ImGui::SameLine();
+		const bool cancel = ImGui::Button("Cancel");
+		ImGui::SameLine();
+		ImGui::TextDisabled(g_library.clip < 0 ? "It is added after the actor's last animation, and blends in from it." : "Double click: use it.");
+		if (use && g_library.chosen[0])
+		{
+			use_animation(g_library.actor, g_library.clip, g_library.chosen);
+		}
+
+		if (use || cancel || !keep)
+		{
+			actors_preview("", -1);
+			playing[0] = 0;
+			ImGui::CloseCurrentPopup();
+		}
+
+		ImGui::EndPopup();
+	}
+
+	// Where a place in the match is on the picture (false: behind the camera).
+	struct ViewMap
+	{
+		float origin[3], axis[9], tan[2];
+		ImVec2 at, size;
+	};
+
+	bool on_picture(const ViewMap& view, const float point[3], ImVec2* out)
+	{
+		const float d[3] = {point[0] - view.origin[0], point[1] - view.origin[1], point[2] - view.origin[2]};
+		const float forward = d[0] * view.axis[0] + d[1] * view.axis[1] + d[2] * view.axis[2];
+		if (forward < 4.0f)
+		{
+			return false;
+		}
+
+		const float left = d[0] * view.axis[3] + d[1] * view.axis[4] + d[2] * view.axis[5];
+		const float up = d[0] * view.axis[6] + d[1] * view.axis[7] + d[2] * view.axis[8];
+		out->x = view.at.x + view.size.x * (0.5f - 0.5f * (left / forward) / view.tan[0]);
+		out->y = view.at.y + view.size.y * (0.5f - 0.5f * (up / forward) / view.tan[1]);
+		return true;
+	}
+
+	float distance_to_segment(const ImVec2 p, const ImVec2 a, const ImVec2 b)
+	{
+		const float vx = b.x - a.x, vy = b.y - a.y, wx = p.x - a.x, wy = p.y - a.y;
+		const float length = vx * vx + vy * vy;
+		float t = length > 0.0001f ? (wx * vx + wy * vy) / length : 0.0f;
+		t = t < 0.0f ? 0.0f : t > 1.0f ? 1.0f : t;
+		const float dx = a.x + vx * t - p.x, dy = a.y + vy * t - p.y;
+		return std::sqrt(dx * dx + dy * dy);
+	}
+
+	// The handles on what the editor has put into the match (its effects and actors): three arrows to slide it
+	// along the match's axes (red x, green y, blue z up), or, in the turning mode, three rings to turn it about
+	// them. Shown while the mouse is over the picture and the right button is not held. True while one is held.
+	bool g_handles_turn = false;
+	bool draw_handles(const ImVec2 at, const ImVec2 size, const bool hovered)
+	{
+		struct Thing
+		{
+			int kind;  // 0 an effect, 1 an actor
+			int index;
+			float origin[3];   // where its handle is
+			float angles[3];   // up/down, around, roll
+			const char* name;
+		};
+		// a drag under way
+		static bool held = false;
+		static int held_kind = 0, held_index = 0, held_axis = 0;
+		static bool held_turn = false;
+		static float held_origin[3] = {}, held_angles[3] = {};
+		static float held_angle = 0.0f;
+		static PlacedEffect effects[EFFECTS_MAX];
+		static Actor actors[ACTORS_MAX];
+		const ImGuiIO& io = ImGui::GetIO();
+		if (held && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
+		{
+			held = false;
+		}
+
+		if ((!hovered && !held) || ImGui::IsMouseDown(ImGuiMouseButton_Right) || size.x < 8.0f || !theater_state().playing)
+		{
+			return held;
+		}
+
+		ViewMap view;
+		camera_view(view.origin, view.axis, view.tan);
+		view.at = at;
+		view.size = size;
+		if (view.tan[0] < 0.01f || view.tan[1] < 0.01f)
+		{
+			return held;
+		}
+
+		std::vector<Thing> things;
+		const int effect_count = effects_placed(effects, EFFECTS_MAX);
+		for (int i = 0; i < effect_count; ++i)
+		{
+			if (!effects[i].follow)
+			{
+				Thing thing = {0, i, {}, {}, effects[i].name};
+				memcpy(thing.origin, effects[i].origin, sizeof(thing.origin));
+				memcpy(thing.angles, effects[i].angles, sizeof(thing.angles));
+				things.push_back(thing);
+			}
+		}
+
+		const int actor_count = actors_list(actors, ACTORS_MAX);
+		for (int i = 0; i < actor_count; ++i)
+		{
+			// (where it stands now: its animations may have carried it from where it was put)
+			ActorNow standing;
+			Thing thing = {1, i, {}, {0.0f, actors[i].yaw, 0.0f}, actors[i].name};
+			memcpy(thing.origin, actors[i].origin, sizeof(thing.origin));
+			if (actors_now(i, &standing) && standing.shown)
+			{
+				memcpy(thing.origin, standing.origin, sizeof(thing.origin));
+			}
+
+			things.push_back(thing);
+		}
+
+		ImDrawList* draw = ImGui::GetWindowDrawList();
+		static const unsigned COLOURS[3] = {0xFF5050E6u, 0xFF50C850u, 0xFFE68C50u};  // (ABGR) red, green, blue
+		static const float AXES[3][3] = {{1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f, 1.0f}};
+		int over_thing = -1, over_axis = -1;
+		float over_distance = 9.0f;
+		ImGui::PushClipRect(at, {at.x + size.x, at.y + size.y}, true);
+		for (size_t t = 0; t < things.size(); ++t)
+		{
+			const Thing& thing = things[t];
+			ImVec2 centre;
+			if (!on_picture(view, thing.origin, &centre))
+			{
+				continue;
+			}
+
+			// (as long on the picture whatever the distance: about a tenth of its height)
+			const float d[3] = {thing.origin[0] - view.origin[0], thing.origin[1] - view.origin[1], thing.origin[2] - view.origin[2]};
+			const float away = d[0] * view.axis[0] + d[1] * view.axis[1] + d[2] * view.axis[2];
+			const float reach = away * view.tan[1] * 0.22f;
+			const bool this_held = held && held_kind == thing.kind && held_index == thing.index;
+			if (held && !this_held)
+			{
+				continue;
+			}
+
+			const bool turning = this_held ? held_turn : g_handles_turn;
+			for (int a = 0; a < 3; ++a)
+			{
+				// (an actor only turns about the upright)
+				if (turning && thing.kind == 1 && a != 2)
+				{
+					continue;
+				}
+
+				const bool lit = this_held && held_axis == a;
+				if (!turning)
+				{
+					const float tip_at[3] = {thing.origin[0] + AXES[a][0] * reach, thing.origin[1] + AXES[a][1] * reach, thing.origin[2] + AXES[a][2] * reach};
+					ImVec2 tip;
+					if (!on_picture(view, tip_at, &tip))
+					{
+						continue;
+					}
+
+					const float near_it = distance_to_segment(io.MousePos, centre, tip);
+					if (!held && near_it < over_distance)
+					{
+						over_distance = near_it;
+						over_thing = static_cast<int>(t);
+						over_axis = a;
+					}
+
+					draw->AddLine(centre, tip, COLOURS[a], lit ? 4.0f : 2.5f);
+					// the arrow's head
+					const float vx = tip.x - centre.x, vy = tip.y - centre.y, length = std::sqrt(vx * vx + vy * vy);
+					if (length > 6.0f)
+					{
+						const float ux = vx / length, uy = vy / length;
+						draw->AddTriangleFilled(tip, {tip.x - ux * 9.0f - uy * 4.5f, tip.y - uy * 9.0f + ux * 4.5f}, {tip.x - ux * 9.0f + uy * 4.5f, tip.y - uy * 9.0f - ux * 4.5f},
+						                        COLOURS[a]);
+					}
+				}
+				else
+				{
+					// a ring about the axis
+					const float* u = AXES[(a + 1) % 3];
+					const float* v = AXES[(a + 2) % 3];
+					ImVec2 ring[33];
+					bool whole = true;
+					for (int k = 0; k <= 32 && whole; ++k)
+					{
+						const float angle = k * (6.2831853f / 32.0f), cu = std::cos(angle) * reach * 0.8f, cv = std::sin(angle) * reach * 0.8f;
+						const float on_ring[3] = {thing.origin[0] + u[0] * cu + v[0] * cv, thing.origin[1] + u[1] * cu + v[1] * cv, thing.origin[2] + u[2] * cu + v[2] * cv};
+						whole = on_picture(view, on_ring, &ring[k]);
+					}
+
+					if (!whole)
+					{
+						continue;
+					}
+
+					for (int k = 0; k < 32; ++k)
+					{
+						const float near_it = distance_to_segment(io.MousePos, ring[k], ring[k + 1]);
+						if (!held && near_it < over_distance)
+						{
+							over_distance = near_it;
+							over_thing = static_cast<int>(t);
+							over_axis = a;
+						}
+					}
+
+					draw->AddPolyline(ring, 33, COLOURS[a], 0, lit ? 4.0f : 2.5f);
+				}
+			}
+
+			draw->AddCircleFilled(centre, 4.0f, u32(P.text));
+			if (this_held || (!held && over_thing == static_cast<int>(t)))
+			{
+				const char* slash = strrchr(thing.name, '/');
+				draw->AddText({centre.x + 8.0f, centre.y + 6.0f}, u32(P.text), slash ? slash + 1 : thing.name);
+			}
+		}
+
+		ImGui::PopClipRect();
+		if (!held && over_thing >= 0)
+		{
+			ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+			if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+			{
+				const Thing& thing = things[static_cast<size_t>(over_thing)];
+				held = true;
+				held_kind = thing.kind;
+				held_index = thing.index;
+				held_axis = over_axis;
+				held_turn = g_handles_turn;
+				// (an actor is slid from where it was put, not from where its animations have carried it)
+				if (thing.kind == 1)
+				{
+					memcpy(held_origin, actors[thing.index].origin, sizeof(held_origin));
+					g_actor_open = thing.index;
+				}
+				else
+				{
+					memcpy(held_origin, thing.origin, sizeof(held_origin));
+				}
+
+				memcpy(held_angles, thing.angles, sizeof(held_angles));
+				ImVec2 centre;
+				on_picture(view, thing.origin, &centre);
+				held_angle = std::atan2(io.MousePos.y - centre.y, io.MousePos.x - centre.x);
+			}
+		}
+
+		if (held)
+		{
+			// what is held, as it is now
+			const Thing* thing = nullptr;
+			for (const Thing& each : things)
+			{
+				if (each.kind == held_kind && each.index == held_index)
+				{
+					thing = &each;
+				}
+			}
+
+			ImVec2 centre;
+			if (!thing || !on_picture(view, thing->origin, &centre))
+			{
+				held = false;
+				return false;
+			}
+
+			float origin[3], angles[3];
+			memcpy(origin, held_origin, sizeof(origin));
+			memcpy(angles, held_angles, sizeof(angles));
+			if (!held_turn)
+			{
+				// along the axis by as much as the mouse has gone along the arrow on the picture
+				const float d[3] = {thing->origin[0] - view.origin[0], thing->origin[1] - view.origin[1], thing->origin[2] - view.origin[2]};
+				const float away = d[0] * view.axis[0] + d[1] * view.axis[1] + d[2] * view.axis[2];
+				const float reach = away * view.tan[1] * 0.22f;
+				const float tip_at[3] = {thing->origin[0] + AXES[held_axis][0] * reach, thing->origin[1] + AXES[held_axis][1] * reach,
+				                         thing->origin[2] + AXES[held_axis][2] * reach};
+				ImVec2 tip;
+				if (on_picture(view, tip_at, &tip))
+				{
+					const float vx = tip.x - centre.x, vy = tip.y - centre.y, length = vx * vx + vy * vy;
+					if (length > 4.0f)
+					{
+						// (the arrow's length changes as the thing moves: taken a frame at a time)
+						const float step = ((io.MouseDelta.x) * vx + (io.MouseDelta.y) * vy) / length * reach;
+						for (int k = 0; k < 3; ++k)
+						{
+							held_origin[k] += AXES[held_axis][k] * step;
+							origin[k] = held_origin[k];
+						}
+					}
+				}
+			}
+			else
+			{
+				// about the axis by the angle the mouse has gone round the thing on the picture
+				const float angle = std::atan2(io.MousePos.y - centre.y, io.MousePos.x - centre.x);
+				float by = (angle - held_angle) * 57.29578f;
+				by = by > 180.0f ? by - 360.0f : by < -180.0f ? by + 360.0f : by;
+				held_angle = angle;
+				// (the way round as seen: the other way when the axis points away from the camera)
+				const float toward = AXES[held_axis][0] * view.axis[0] + AXES[held_axis][1] * view.axis[1] + AXES[held_axis][2] * view.axis[2];
+				by = toward > 0.0f ? by : -by;
+				// (the game's angles: up/down about y, around about z, roll about x)
+				const int which = held_axis == 2 ? 1 : held_axis == 1 ? 0 : 2;
+				held_angles[which] = std::remainder(held_angles[which] + by, 360.0f);
+				memcpy(angles, held_angles, sizeof(angles));
+			}
+
+			if (held_kind == 0 && held_index < effect_count)
+			{
+				PlacedEffect changed = effects[held_index];
+				memcpy(changed.origin, origin, sizeof(changed.origin));
+				memcpy(changed.angles, angles, sizeof(changed.angles));
+				effects_set(held_index, changed);
+			}
+			else if (held_kind == 1 && held_index < actor_count)
+			{
+				Actor changed = actors[held_index];
+				memcpy(changed.origin, origin, sizeof(changed.origin));
+				changed.yaw = angles[1];
+				actors_set(held_index, changed);
+			}
+		}
+
+		return held;
+	}
+
 	// An effect put at a place, facing off the surface there.
 	void add_effect_at(const char* name, const float point[3], const float normal[3])
 	{
@@ -500,6 +1089,13 @@ namespace
 		{
 			scene_add_light_at(off);
 		}
+
+		if (ImGui::MenuItem(ICON_PERSON "  Add an actor here"))
+		{
+			add_actor_at(point);
+		}
+
+		ImGui::SetItemTooltip("A figure of the editor's own, dressed as the player nearest the camera: its outfit and its animations are set in the Scene tab");
 
 		SceneLight lights[16];
 		const int light_count = scene_lights(lights, 16);
@@ -624,6 +1220,14 @@ namespace
 			ImGui::EndCombo();
 		}
 
+		// the handles on the editor's effects and actors: slide them, or turn them
+		ImGui::SameLine();
+		if (ImGui::Button(g_handles_turn ? ICON_ROTATE "  Turn" : "Slide"))
+		{
+			g_handles_turn = !g_handles_turn;
+		}
+
+		ImGui::SetItemTooltip("What the handles on your effects and actors do when dragged: slide along an axis, or turn about one.\nThe handles show while the mouse is over the picture. R switches between the two.");
 		const ImVec2 room = ImGui::GetContentRegionAvail();
 		const ImVec2 corner = ImGui::GetCursorScreenPos();
 		const ImGuiIO& io = ImGui::GetIO();
@@ -660,6 +1264,12 @@ namespace
 			g_looking = false;
 		}
 
+		const bool handle_held = draw_handles(at, picture, hovered);
+		if (hovered && !handle_held && !ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_R, false))
+		{
+			g_handles_turn = !g_handles_turn;
+		}
+
 		// a right click that is not a drag: the place under it, and what can be put there
 		static ImVec2 pressed_at = {};
 		static double pressed_when = 0.0;
@@ -692,7 +1302,7 @@ namespace
 		{
 			const char* hint = camera.mode == CameraMode::Bone
 				? "Hold the right mouse button to turn  \xe2\x80\xa2  W A S D, Q, E move the camera on the bone"
-				: "Hold the right mouse button to look  \xe2\x80\xa2  right click to place a light or an effect  \xe2\x80\xa2  W A S D to fly  \xe2\x80\xa2  K adds a campath node";
+				: "Hold the right mouse button to look  \xe2\x80\xa2  right click to place a light, an effect or an actor  \xe2\x80\xa2  W A S D to fly  \xe2\x80\xa2  K adds a campath node";
 			const ImVec2 hint_size = ImGui::CalcTextSize(hint);
 			draw->AddText({at.x + picture.x - hint_size.x - g_font_size, at.y + picture.y - hint_size.y - g_font_size * 0.5f}, u32(P.muted), hint);
 		}
@@ -1601,24 +2211,276 @@ namespace
 				}
 			}
 
+			if (section(ICON_PERSON, "Actors"))
+			{
+				// figures of the editor's own: dressed as a player, played by animations one after another
+				static Actor actors[ACTORS_MAX];
+				const int actor_count = actors_list(actors, ACTORS_MAX);
+				const BoneState players = camera_bone_state();
+				if (ImGui::Button(ICON_PLUS "  Add an actor"))
+				{
+					// where the camera is, on the ground under it as far as the editor can tell: at its feet
+					float here[3];
+					camera_view_origin(here);
+					here[2] -= 60.0f;
+					add_actor_at(here);
+				}
+
+				ImGui::SetItemTooltip("An actor where the camera is. Or right click a place on the picture and choose \"Add an actor here\".\nIt is dressed as the player nearest the camera; its outfit is changed like a player's, under Models.");
+				ImGui::SameLine();
+				ImGui::TextDisabled("%d of %d", actor_count, ACTORS_MAX);
+				if (actor_count == 0)
+				{
+					ImGui::PushTextWrapPos(0.0f);
+					ImGui::TextDisabled("An actor stands where you put it and plays the animations you give it, one after another (\"Then\"), "
+					                    "blending from each into the next. Drag its arrows on the picture to slide it, its clips on the timeline to time them.");
+					ImGui::PopTextWrapPos();
+				}
+
+				int remove_actor = -1;
+				for (int i = 0; i < actor_count; ++i)
+				{
+					Actor actor = actors[i];
+					ActorNow standing;
+					const bool have_now = actors_now(i, &standing);
+					bool changed = false;
+					ImGui::PushID(6000 + i);
+					changed = ImGui::Checkbox("##on", &actor.on) || changed;
+					ImGui::SameLine();
+					{
+						char line[160];
+						snprintf(line, sizeof(line), "%s   %d animation%s%s###actor", actor.name, actor.clip_count, actor.clip_count == 1 ? "" : "s",
+						         have_now && standing.broken ? "   (a fault: change it to try again)" : have_now && standing.shown ? "   in the match now"
+						         : have_now && standing.waiting[0] ? "   waiting" : "");
+						const float buttons = ImGui::CalcTextSize(ICON_TRASH).x + ImGui::GetStyle().FramePadding.x * 2.0f + ImGui::GetStyle().ItemSpacing.x;
+						if (ImGui::Selectable(line, g_actor_open == i, 0, {ImGui::GetContentRegionAvail().x - buttons, 0.0f}))
+						{
+							g_actor_open = g_actor_open == i ? -1 : i;
+							g_actor_clip = -1;
+						}
+					}
+
+					ImGui::SameLine();
+					if (ImGui::SmallButton(ICON_TRASH))
+					{
+						remove_actor = i;
+					}
+
+					ImGui::SetItemTooltip("Remove this actor");
+					if (g_actor_open != i)
+					{
+						if (changed)
+						{
+							actors_set(i, actor);
+						}
+
+						ImGui::PopID();
+						continue;
+					}
+
+					ImGui::Indent();
+					if (have_now && standing.waiting[0] && !standing.shown)
+					{
+						ImGui::PushTextWrapPos(0.0f);
+						ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(u32(P.warn)), "Not in the match yet: %s is not in memory.", standing.waiting);
+						ImGui::PopTextWrapPos();
+					}
+
+					row_label("Name");
+					changed = ImGui::InputText("##name", actor.name, sizeof(actor.name)) || changed;
+					row_label("Position");
+					changed = ImGui::DragFloat3("##origin", actor.origin, 1.0f, 0.0f, 0.0f, "%.0f") || changed;
+					ImGui::SetItemTooltip("Where it stands when its first animation begins. Or drag its arrows on the picture.");
+					row_label("Facing");
+					changed = ImGui::DragFloat("##yaw", &actor.yaw, 1.0f, -360.0f, 360.0f, "%.0f") || changed;
+					row_label("Dressed as");
+					if (ImGui::BeginCombo("##dressed", "A player's outfit..."))
+					{
+						for (int e = 0; e < 64; ++e)
+						{
+							if (players.entities & (1ull << e))
+							{
+								char name[48];
+								snprintf(name, sizeof(name), e == players.nearest ? "Player %d (nearest the camera)" : "Player %d", e);
+								if (ImGui::Selectable(name) && !actors_dress(i, e))
+								{
+									ui_log("That player's model has not been made yet in this part of the recording: go back a little and try again.");
+								}
+							}
+						}
+
+						ImGui::EndCombo();
+					}
+
+					ImGui::SetItemTooltip("Dress it as a player in the match is dressed now");
+					ImGui::SameLine();
+					if (ImGui::SmallButton("Change its outfit"))
+					{
+						g_models_entity = actor.handle;
+					}
+
+					ImGui::SetItemTooltip("Shows this actor under Models below: its parts, the gear sets and a random outfit work on it as on a player");
+					row_label("Carried by its animations");
+					changed = ImGui::Checkbox("##moves", &actor.moves) || changed;
+					ImGui::SetItemTooltip("A walk walks it forward, a death throws it back: each animation carries on from where the one before left it");
+					row_label("Stays after the last");
+					changed = ImGui::Checkbox("##stays", &actor.stays) || changed;
+					ImGui::SetItemTooltip("On: it holds its last pose to the end of the recording (a body stays down). Off: it goes when its last animation is over.");
+					ImGui::SeparatorText("Animations");
+					int remove_clip = -1;
+					for (int c = 0; c < actor.clip_count; ++c)
+					{
+						ActorClip& clip = actor.clips[c];
+						ImGui::PushID(c);
+						char at[32], line[160];
+						format_time(at, sizeof(at), clip.at_ms);
+						snprintf(line, sizeof(line), "%s%s   %s, %.1f s###clip", c == 0 ? "" : "then  ", clip.anim, at, clip.length_ms / 1000.0f);
+						const float buttons = ImGui::CalcTextSize(ICON_TRASH).x + ImGui::GetStyle().FramePadding.x * 2.0f + ImGui::GetStyle().ItemSpacing.x;
+						if (ImGui::Selectable(line, g_actor_clip == c, 0, {ImGui::GetContentRegionAvail().x - buttons, 0.0f}))
+						{
+							g_actor_clip = g_actor_clip == c ? -1 : c;
+						}
+
+						if (have_now && standing.shown && standing.clip == c)
+						{
+							ImGui::SameLine(0.0f, 0.0f);
+							ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(u32(P.accent)), "  " ICON_PLAY);
+						}
+
+						ImGui::SameLine();
+						if (ImGui::SmallButton(ICON_TRASH))
+						{
+							remove_clip = c;
+						}
+
+						if (g_actor_clip == c)
+						{
+							ImGui::Indent();
+							row_label("Animation");
+							if (ImGui::Button("Choose another..."))
+							{
+								g_library.open = true;
+								g_library.actor = i;
+								g_library.clip = c;
+								snprintf(g_library.chosen, sizeof(g_library.chosen), "%s", clip.anim);
+							}
+
+							float starts = clip.at_ms / 1000.0f, runs = clip.length_ms / 1000.0f, blend = clip.blend_ms / 1000.0f;
+							row_label("Begins at");
+							if (ImGui::DragFloat("##at", &starts, 0.02f, 0.0f, state.length_ms / 1000.0f, "%.2f s"))
+							{
+								clip.at_ms = static_cast<std::uint32_t>((std::max)(0.0f, starts) * 1000.0f);
+								changed = true;
+							}
+
+							row_label("Runs for");
+							if (ImGui::DragFloat("##runs", &runs, 0.02f, 0.1f, 3600.0f, "%.2f s"))
+							{
+								clip.length_ms = static_cast<std::uint32_t>((std::max)(0.1f, runs) * 1000.0f);
+								changed = true;
+							}
+
+							{
+								bool loops = false;
+								const float length = actors_animation_length(clip.anim, &loops);
+								ImGui::SetItemTooltip("The animation itself is %.2f s long%s. Past its end it %s; then the next one blends in.", length, loops ? " and goes round" : "",
+								                      (clip.loop < 0 ? loops : clip.loop != 0) ? "goes round again" : "holds its last pose");
+							}
+
+							row_label("Speed");
+							changed = ImGui::DragFloat("##speed", &clip.speed, 0.01f, 0.05f, 4.0f, "%.2fx") || changed;
+							row_label("Blends in over");
+							if (ImGui::DragFloat("##blend", &blend, 0.01f, 0.0f, 3.0f, "%.2f s"))
+							{
+								clip.blend_ms = static_cast<std::uint32_t>((std::max)(0.0f, blend) * 1000.0f);
+								changed = true;
+							}
+
+							ImGui::SetItemTooltip("How long it takes to take over from the animation before it");
+							row_label("Goes round");
+							int round = clip.loop + 1;
+							if (ImGui::Combo("##loop", &round, "As the animation says\0No: holds its last pose\0Yes: again and again\0"))
+							{
+								clip.loop = round - 1;
+								changed = true;
+							}
+
+							ImGui::Unindent();
+						}
+
+						ImGui::PopID();
+					}
+
+					if (remove_clip >= 0)
+					{
+						for (int c = remove_clip; c + 1 < actor.clip_count; ++c)
+						{
+							actor.clips[c] = actor.clips[c + 1];
+						}
+
+						--actor.clip_count;
+						g_actor_clip = -1;
+						changed = true;
+					}
+
+					ImGui::BeginDisabled(actor.clip_count >= ACTOR_CLIPS_MAX);
+					if (ImGui::Button(actor.clip_count ? "Then..." : "Choose an animation..."))
+					{
+						g_library.open = true;
+						g_library.actor = i;
+						g_library.clip = -1;
+						g_library.chosen[0] = 0;
+					}
+
+					ImGui::EndDisabled();
+					ImGui::SetItemTooltip("Another animation after the last: it begins where that one ends and blends in from it.\nSo: stand, then walk, then die.");
+					ImGui::Unindent();
+					if (changed)
+					{
+						actors_set(i, actor);
+					}
+
+					ImGui::PopID();
+				}
+
+				if (remove_actor >= 0)
+				{
+					actors_remove(remove_actor);
+					g_actor_open = -1;
+					g_actor_clip = -1;
+				}
+
+			}
+
 			if (section(ICON_PERSON, "Models"))
 			{
 				// a player's outfit and weapon, part by part, each drawn as another model or left out
 				static const char* const SLOT_LABELS[] = {"Top", "Headgear", "Head", "Pants", "Gloves", "Boots", "Kneepads", "Loadout gear", "Eyewear", "Exo"};
-				static int entity = -1, target_slot = -1, group = 0;
+				int& entity = g_models_entity;
+				static int target_slot = -1, group = 0;
 				static char target[64] = "", search[48] = "", set_id[32] = "";
 				static bool only_this_kind = true;
 				const BoneState players = camera_bone_state();
 				// (2048 is the first person's arms and gun: the game makes them like an entity's model)
 				constexpr int FIRST_PERSON = 2048;
-				if (entity != FIRST_PERSON && (entity < 0 || !(players.entities & (1ull << entity))))
+				char actor_name[32] = "";
+				const bool an_actor = entity >= 64 && entity != FIRST_PERSON && is_actor_handle(entity, actor_name);
+				if (entity != FIRST_PERSON && !an_actor && (entity < 0 || entity >= 64 || !(players.entities & (1ull << entity))))
 				{
 					entity = players.nearest;
 				}
 
 				char label[48];
-				snprintf(label, sizeof(label), entity == FIRST_PERSON ? "First person (arms and gun)" : entity < 0 ? "None in view"
-					: entity == players.nearest ? "Player %d (nearest the camera)" : "Player %d", entity);
+				if (an_actor)
+				{
+					snprintf(label, sizeof(label), "%s", actor_name);
+				}
+				else
+				{
+					snprintf(label, sizeof(label), entity == FIRST_PERSON ? "First person (arms and gun)" : entity < 0 ? "None in view"
+						: entity == players.nearest ? "Player %d (nearest the camera)" : "Player %d", entity);
+				}
+
 				row_label("Player");
 				if (ImGui::BeginCombo("##modelEntity", label))
 				{
@@ -1638,6 +2500,20 @@ namespace
 							if (ImGui::Selectable(name, e == entity))
 							{
 								entity = e;
+								target[0] = 0;
+								target_slot = -1;
+							}
+						}
+					}
+
+					{
+						static Actor listed[ACTORS_MAX];
+						const int listed_count = actors_list(listed, ACTORS_MAX);
+						for (int a = 0; a < listed_count; ++a)
+						{
+							if (ImGui::Selectable(listed[a].name, listed[a].handle == entity))
+							{
+								entity = listed[a].handle;
 								target[0] = 0;
 								target_slot = -1;
 							}
@@ -1705,7 +2581,14 @@ namespace
 					ImGui::SetItemTooltip("The game's own sets of gear, loot included: every part at once (the face stays)");
 					if (ImGui::Button("Random outfit"))
 					{
-						models_randomize(entity >= 0 && entity < 64 ? 1ull << entity : 0);
+						if (entity >= 64)
+						{
+							models_randomize_one(entity);
+						}
+						else
+						{
+							models_randomize(entity >= 0 ? 1ull << entity : 0);
+						}
 					}
 
 					ImGui::SetItemTooltip("One of the game's sets, picked at random, for this player");
@@ -2721,8 +3604,238 @@ namespace
 			}
 		}
 
+		// The editor's actors: a row each, with its animations as bars one after another. Dragged, a bar begins
+		// earlier or later; its ends dragged, it begins or stops sooner or later. A right click: "Then...".
+		{
+			static Actor actors[ACTORS_MAX];
+			const int actor_count = actors_list(actors, ACTORS_MAX);
+			const ImGuiIO& io = ImGui::GetIO();
+			const float mouse_ms = ms_at(io.MousePos.x);
+			static int drag = 0, drag_actor = -1, drag_clip = -1, menu_actor = -1, menu_clip = -1;
+			static float drag_from = 0.0f;
+			static ActorClip drag_start;
+			static bool dragged = false;
+			int remove_actor = -1;
+			bool open_menu = false;
+			for (int i = 0; i < actor_count; ++i)
+			{
+				y += row;
+				if (!row_shows(y))
+				{
+					continue;
+				}
+
+				const Actor& actor = actors[i];
+				ActorNow standing;
+				const bool in_match = actors_now(i, &standing) && standing.shown;
+				draw->AddRectFilled({left, y}, {right, y + lane}, u32(P.surface));
+				ImGui::PushID(11000 + i);
+				const float name_right = left - lane * 1.2f - style.ItemSpacing.x * 2.0f - 6.0f;
+				ImGui::SetCursorScreenPos({origin.x, y});
+				if (ImGui::InvisibleButton("##actor", {(std::max)(4.0f, name_right - origin.x), lane}))
+				{
+					g_actor_open = i;
+					g_actor_clip = -1;
+				}
+
+				ImGui::SetItemTooltip("%s: its settings are under Actors in the Scene tab", actor.name);
+				ImGui::PushClipRect({origin.x, y}, {name_right, y + lane}, true);
+				char name[64];
+				snprintf(name, sizeof(name), ICON_PERSON "  %s", actor.name);
+				draw->AddText({origin.x + g_font_size * 0.5f, y + style.FramePadding.y}, u32(actor.on ? (in_match ? P.text : P.muted) : P.muted, actor.on ? 1.0f : 0.6f), name);
+				ImGui::PopClipRect();
+				ImGui::SetCursorScreenPos({left - lane * 1.2f - style.ItemSpacing.x - 6.0f, y});
+				if (ImGui::Button(ICON_TRASH "##removeActor", {lane * 1.2f, lane}))
+				{
+					remove_actor = i;
+				}
+
+				ImGui::SetItemTooltip("Remove this actor");
+				for (int c = 0; c < actor.clip_count; ++c)
+				{
+					const ActorClip& clip = actor.clips[c];
+					float x0 = std::floor(x_of(static_cast<float>(clip.at_ms))), x1 = std::floor(x_of(static_cast<float>(clip.at_ms + clip.length_ms)));
+					if (x1 < left || x0 > right)
+					{
+						continue;
+					}
+
+					x0 = x0 < left ? left : x0;
+					x1 = x1 < x0 + 10.0f ? x0 + 10.0f : x1 > right ? right : x1;
+					const bool both_ends = x1 - x0 >= 28.0f;
+					const float grip = both_ends ? 7.0f : 4.0f;
+					ImGui::PushID(c);
+					int over = 0, pressed = 0;
+					bool double_click = false, right_click = false;
+					auto part = [&](const char* id, const float from, const float to, const int kind) {
+						ImGui::SetCursorScreenPos({from, y});
+						ImGui::InvisibleButton(id, {to - from < 2.0f ? 2.0f : to - from, lane});
+						if (ImGui::IsItemHovered())
+						{
+							over = kind;
+							double_click = double_click || ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+							right_click = right_click || ImGui::IsMouseClicked(ImGuiMouseButton_Right);
+						}
+
+						if (ImGui::IsItemActivated())
+						{
+							pressed = kind;
+						}
+					};
+					part("##end", x1 - grip, x1 + grip, 2);
+					if (both_ends)
+					{
+						part("##start", x0 - grip, x0 + grip, 3);
+					}
+
+					part("##clip", both_ends ? x0 + grip : x0, x1 - grip, 1);
+					ImGui::PopID();
+					if (pressed)
+					{
+						drag = pressed;
+						drag_actor = i;
+						drag_clip = c;
+						drag_from = mouse_ms;
+						drag_start = clip;
+						dragged = false;
+						g_actor_open = i;
+						g_actor_clip = c;
+					}
+
+					if (double_click)
+					{
+						theater_seek(clip.at_ms);
+					}
+
+					if (right_click)
+					{
+						open_menu = true;
+						menu_actor = i;
+						menu_clip = c;
+						g_actor_open = i;
+						g_actor_clip = c;
+					}
+
+					if (over == 2 || over == 3)
+					{
+						ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+					}
+
+					if (over && !drag)
+					{
+						char at[32];
+						format_time(at, sizeof(at), clip.at_ms);
+						ImGui::SetTooltip("%s\n%s, for %.2f s\nDrag: earlier or later.  Drag an end: begins or stops sooner or later.\nDouble click: go to its start.  "
+						                  "Right click: \"Then...\" and more.",
+						                  clip.anim, at, clip.length_ms / 1000.0f);
+					}
+
+					const bool chosen = g_actor_open == i && g_actor_clip == c;
+					const bool playing = in_match && standing.clip == c;
+					const unsigned fill = actor.on ? P.accent : P.muted;
+					draw->AddRectFilled({x0, y + 3.0f}, {x1, y + lane - 3.0f}, u32(fill, playing ? 0.65f : over ? 0.45f : 0.30f), 3.0f);
+					draw->AddRect({x0, y + 3.0f}, {x1, y + lane - 3.0f}, u32(chosen ? P.text : fill), 3.0f, 0, chosen ? 2.0f : 1.0f);
+					ImGui::PushClipRect({x0 + 5.0f, y}, {x1 - 5.0f, y + lane}, true);
+					// (a player's body animations all begin "pb_")
+					draw->AddText({x0 + 7.0f, y + style.FramePadding.y}, u32(P.text), strncmp(clip.anim, "pb_", 3) == 0 ? clip.anim + 3 : clip.anim);
+					ImGui::PopClipRect();
+				}
+
+				ImGui::PopID();
+			}
+
+			if (drag && ImGui::IsMouseDown(ImGuiMouseButton_Left) && drag_actor < actor_count && drag_clip < actors[drag_actor].clip_count)
+			{
+				const float by = mouse_ms - drag_from;
+				dragged = dragged || ImGui::IsMouseDragging(ImGuiMouseButton_Left, 3.0f);
+				if (dragged)
+				{
+					Actor changed = actors[drag_actor];
+					ActorClip& clip = changed.clips[drag_clip];
+					const float was_at = static_cast<float>(drag_start.at_ms), was_long = static_cast<float>(drag_start.length_ms);
+					if (drag == 1)
+					{
+						clip.at_ms = static_cast<std::uint32_t>((std::min)(length, (std::max)(0.0f, was_at + by)));
+					}
+					else if (drag == 2)
+					{
+						clip.length_ms = static_cast<std::uint32_t>((std::max)(100.0f, was_long + by));
+					}
+					else
+					{
+						const float at = (std::min)(was_at + was_long - 100.0f, (std::max)(0.0f, was_at + by));
+						clip.at_ms = static_cast<std::uint32_t>(at);
+						clip.length_ms = static_cast<std::uint32_t>(was_at + was_long - at);
+					}
+
+					actors_set(drag_actor, changed);
+					ImGui::SetMouseCursor(drag == 1 ? ImGuiMouseCursor_Hand : ImGuiMouseCursor_ResizeEW);
+				}
+			}
+			else
+			{
+				drag = 0;
+			}
+
+			if (open_menu)
+			{
+				ImGui::OpenPopup("##actorClipMenu");
+			}
+
+			if (ImGui::BeginPopup("##actorClipMenu"))
+			{
+				const bool valid = menu_actor >= 0 && menu_actor < actor_count && menu_clip >= 0 && menu_clip < actors[menu_actor].clip_count;
+				if (valid)
+				{
+					ImGui::TextDisabled("%s: %s", actors[menu_actor].name, actors[menu_actor].clips[menu_clip].anim);
+					ImGui::Separator();
+					if (ImGui::MenuItem("Then...", nullptr, false, actors[menu_actor].clip_count < ACTOR_CLIPS_MAX))
+					{
+						g_library.open = true;
+						g_library.actor = menu_actor;
+						g_library.clip = -1;
+						g_library.chosen[0] = 0;
+					}
+
+					if (ImGui::MenuItem("Choose another animation..."))
+					{
+						g_library.open = true;
+						g_library.actor = menu_actor;
+						g_library.clip = menu_clip;
+						snprintf(g_library.chosen, sizeof(g_library.chosen), "%s", actors[menu_actor].clips[menu_clip].anim);
+					}
+
+					ImGui::Separator();
+					if (ImGui::MenuItem(ICON_TRASH "  Remove this animation"))
+					{
+						Actor changed = actors[menu_actor];
+						for (int c = menu_clip; c + 1 < changed.clip_count; ++c)
+						{
+							changed.clips[c] = changed.clips[c + 1];
+						}
+
+						--changed.clip_count;
+						actors_set(menu_actor, changed);
+						g_actor_clip = -1;
+					}
+				}
+
+				ImGui::EndPopup();
+			}
+
+			if (remove_actor >= 0)
+			{
+				drag = 0;
+				actors_remove(remove_actor);
+				g_actor_open = -1;
+				g_actor_clip = -1;
+			}
+		}
+
 		ImGui::PopClipRect();
 		rows_height = (y + row + rows_scroll) - rows_top;
+		// (the animation library opens over the editor from the Scene tab or from an actor's row here)
+		draw_library();
 		// (more rows than there is room for: a bar at the right edge shows where the rows shown are among them)
 		if (rows_height > rows_bottom - rows_top + 1.0f)
 		{
@@ -2779,7 +3892,8 @@ namespace
 		draw_menu_bar(state, io.DisplaySize.x);
 		const ImVec2 room = ImGui::GetContentRegionAvail();
 		// (the timeline grows by a row for each setting with keyframes past the four it has room for)
-		const int timeline_rows = look_track_count() + fx_timeline_rows();
+		static Actor row_actors[ACTORS_MAX];
+		const int timeline_rows = look_track_count() + fx_timeline_rows() + actors_list(row_actors, ACTORS_MAX);
 		const int more_rows = timeline_rows > 4 ? timeline_rows - 4 : 0;
 		const float grown = std::floor(g_font_size * 14.0f) + static_cast<float>(more_rows) * (ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y * 0.5f);
 		// the panel's width and the timeline's height are the user's once the lines between are dragged
