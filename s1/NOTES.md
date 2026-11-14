@@ -274,3 +274,14 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
   +0x50, axis +0x58, dobj handle +0x60 (0xFFF none), bone +0x68 (0x7FF none)); effects are 0xB0 bytes (def +0, time +0x40). hooked_spawn holds back
   by what the effect is fixed to; choosing a pass by hand calls theater_rebuild() so running effects begin again under the pass's rules.
 - Made fog: +0x24 now a "Brightness" slider (1 gave black on a night map).
+
+## 0.66 (untested when written)
+- User on 0.65: "As depth" WORKS (found through the game's own clear 0x1405D9510). Colour passes better; still drew rain, puddles, some lights, glass
+  panes, smoke; gun-only drew a shot player for a moment; only-the-world drew bodies; made fog had colour but was inside out.
+- FOG, solved: the frame's fog (set 6, +0x3A8, copied each frame to [0x14D932680] + 0x540FBC) is read by 0x1405FB553: shader gets 0, 1 - (+0x04)
+  (so +0x04 IS max opacity), -(+0x80), (+0x80) x (+0x00), colour bytes/255 linearised (0x140588E70) x 0x14059EBF0(+0x24, exposure); sun: angles
+  +0x0C/+0x10 (degrees), direction +0x18, colour +0x84, intensity +0x28, scale +0x14. So +0x80 is the DENSITY (ln2 / half-way distance), not the
+  distance: writing the distance gave exp(+huge) near the camera. Set 5 (+0x30C, times +0x380/+0x384) is a second fog blended over the current one.
+- 0x1405C8840(entry, n, out, end, e) -> new out: the second DObj surface lister (callers in 0x1405A91F0, reached from 0x1405CBBC0): same rule applied.
+- On a colour: fx_draw 0, fx_flare 0, r_drawWater 0 unless "Keep effects" (then the spawn filter of 0.65). Glass panes are not handled yet.
+- Characters for the passes: 42 player records + 8 + 24 body records (handle from each).

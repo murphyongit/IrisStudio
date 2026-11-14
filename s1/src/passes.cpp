@@ -67,7 +67,11 @@ namespace
 	// methods hooked in 0.62 to 0.64 (nothing was ever seen there).
 	constexpr std::uintptr_t GAME_CLEAR = 0x1405D9510;
 	constexpr std::uintptr_t COM_GET_CLIENT_DOBJ = 0x1403D2BA0, CHARACTERS = 0x141620568;
-	constexpr int CHARACTER_COUNT = 42, CHARACTER_SIZE = 0xCC0, FIRST_PERSON_HANDLE = 2048, VIEW_HANDLES = 4;
+	// (0.66: the records go on in two more runs, 8 from 0x141649350 and the bodies' from 0x14164F950: bodies on
+	// the floor were still drawn in "only the world" because only the first 42 were looked at)
+	constexpr std::uintptr_t CHARACTERS_MORE = 0x141649350, CHARACTERS_BODIES = 0x14164F950;
+	constexpr int PLAYER_RECORDS = 42, MORE_RECORDS = 8, BODY_RECORDS = 24;
+	constexpr int CHARACTER_COUNT = PLAYER_RECORDS + MORE_RECORDS + BODY_RECORDS, CHARACTER_SIZE = 0xCC0, FIRST_PERSON_HANDLE = 2048, VIEW_HANDLES = 4;
 
 	enum Elements
 	{
@@ -105,6 +109,9 @@ namespace
 	std::atomic<bool> g_playing{false};
 	bool g_ticked[PASS_COUNT] = {};
 	float g_colour[3] = {0.0f, 1.0f, 0.0f};
+	// (on a colour: effects are not drawn at all unless this is on, when those on what is shown are kept)
+	std::atomic<bool> g_keep_effects{false};
+	int g_applied_effects = -1;
 	char g_tag[32] = "";
 
 	// the models of the players (and their bodies) and of the first person, as of this frame
@@ -153,6 +160,49 @@ namespace
 		}
 
 		g_original_world[N](a);
+	}
+
+	// Whether a scene entry's model is not to be drawn in the pass that is on.
+	bool model_held(const unsigned char* entry)
+	{
+		void* model = entry ? *reinterpret_cast<void* const*>(entry + 0x98) : nullptr;
+		if (!model || !g_playing || !(g_only_view || g_only_characters || g_hide_characters))
+		{
+			return false;
+		}
+
+		bool view = false, character = false;
+		for (const auto& one : g_views)
+		{
+			view = view || one.load(std::memory_order_relaxed) == model;
+		}
+
+		if (!view)
+		{
+			for (const auto& one : g_characters)
+			{
+				character = character || one.load(std::memory_order_relaxed) == model;
+			}
+		}
+
+		return (g_only_view && !view) || (g_only_characters && !character) || (g_hide_characters && character);
+	}
+
+	// (0.66) The other way a model's surfaces are listed: 0x1405C8840(entry, n, where to write, the end, ...),
+	// which gives back where it stopped writing (the start, for an entry with no model). A player shot in the
+	// gun-only pass was drawn for a moment by it, and the shadows of players not drawn come from it.
+	using dobj_other_t = void* (*)(unsigned char*, int, void*, void*, void*);
+	dobj_other_t g_original_dobj_other = nullptr;
+
+	void* hooked_dobj_other(unsigned char* entry, const int n, void* out, void* end, void* e)
+	{
+		if (model_held(entry))
+		{
+			g_held_back.fetch_add(1, std::memory_order_relaxed);
+			return out;
+		}
+
+		return g_original_dobj_other(entry, n, out, end, e);
 	}
 
 	void hooked_dobj(void* a, void* b, unsigned char* entry, const int d, const int e, void* f, void* g, const int h)
@@ -273,9 +323,14 @@ namespace
 	{
 		__try
 		{
-			const auto* at = reinterpret_cast<const int*>(CHARACTERS + static_cast<std::uintptr_t>(index) * CHARACTER_SIZE);
+			const std::uintptr_t record = index < PLAYER_RECORDS                  ? CHARACTERS + static_cast<std::uintptr_t>(index) * CHARACTER_SIZE
+			                              : index < PLAYER_RECORDS + MORE_RECORDS ? CHARACTERS_MORE + static_cast<std::uintptr_t>(index - PLAYER_RECORDS) * CHARACTER_SIZE
+			                                                                      : CHARACTERS_BODIES +
+			                                                                            static_cast<std::uintptr_t>(index - PLAYER_RECORDS - MORE_RECORDS) * CHARACTER_SIZE;
+			const auto* at = reinterpret_cast<const int*>(record);
 			*handle = at[0];
-			return at[1] != 0 && at[0] >= 0 && at[0] < FIRST_PERSON_HANDLE;
+			// (a record in use has its models loaded, or at least names a model)
+			return (at[1] != 0 || *reinterpret_cast<const char*>(record + 0x24) != 0) && at[0] >= 0 && at[0] < FIRST_PERSON_HANDLE;
 		}
 		__except (EXCEPTION_EXECUTE_HANDLER)
 		{
@@ -298,6 +353,17 @@ namespace
 		const bool colour = elements == OnlyPlayers || elements == OnlyGun;
 		const bool gun = elements == Everything || elements == OnlyGun;
 		const bool colour_changed = memcmp(g_applied_colour, g_colour, sizeof(g_colour)) != 0;
+		// (rain, smoke, glows and water have no place on the colour: the game's drawing of effects and of water
+		// is turned off there, unless effects on what is shown are asked to be kept)
+		const int effects = colour && !g_keep_effects ? 0 : 1;
+		if (effects != g_applied_effects && (g_applied_effects >= 0 || effects == 0))
+		{
+			theater_command(effects ? "fx_draw 1" : "fx_draw 0");
+			theater_command(effects ? "fx_flare 1" : "fx_flare 0");
+			theater_command(colour ? "r_drawWater 0" : "r_drawWater 1");
+			g_applied_effects = effects;
+		}
+
 		if (elements == g_applied_elements && !(colour && colour_changed))
 		{
 			return;
@@ -344,6 +410,7 @@ namespace
 	constexpr int FOG_NUMBER_COUNT = 12;
 	const int FOG_ATMOS_NUMBERS[FOG_NUMBER_COUNT] = {0x40, 0x44, 0x48, 0x4C, 0x50, 0x54, 0x58, 0x5C, 0x60, 0x70, 0x8C, 0x90};
 
+	constexpr float FOG_LN2 = 0.69314718f;
 	struct FogWish
 	{
 		// (made: the map has no fog of the game's own, and one is made of the plain kind: start, half-way
@@ -394,7 +461,11 @@ namespace
 		memcpy(&own_half, set + 0x80, 4);
 		if (wish.made && !set[0x3C] && own_half == 0.0f)
 		{
-			const float one = 1.0f, half = wish.half > 1.0f ? wish.half : 1.0f;
+			// (0.66: what is kept at +0x80 is not the half-way distance but the fog's density, ln 2 over that
+			// distance: the drawing (0x1405FB553) hands the shader -density and density x start, and
+			// 1 - (+0x04) as the least that shows through. 0.64 and 0.65 wrote the distance itself there:
+			// a density thousands of times too great, which is what turned the fog inside out.)
+			const float one = 1.0f, half = FOG_LN2 / (wish.half > 1.0f ? wish.half : 1.0f);
 			memcpy(set + 0x00, &wish.start, 4);
 			memcpy(set + 0x80, &half, 4);
 			memcpy(set + 0x04, &wish.most, 4);
@@ -435,7 +506,8 @@ namespace
 
 			if (wish.half_on)
 			{
-				memcpy(set + 0x80, &wish.half, 4);
+				const float density = FOG_LN2 / (wish.half > 1.0f ? wish.half : 1.0f);
+				memcpy(set + 0x80, &density, 4);
 			}
 		}
 	}
@@ -485,6 +557,8 @@ namespace
 			memcpy(&shown->start, own + 0x00, 4);
 			memcpy(&shown->half, own + 0x80, 4);
 			shown->none = !shown->atmos && shown->half == 0.0f;
+			// (shown as the half-way distance it stands for)
+			shown->half = shown->half > 0.0f ? FOG_LN2 / shown->half : 0.0f;
 			get_colour(own + (shown->atmos ? 0x94 : 0x7C), shown->colour);
 			get_colour(own + (shown->atmos ? 0x98 : 0x84), shown->colour2);
 			for (int n = 0; n < FOG_NUMBER_COUNT; ++n)
@@ -1000,6 +1074,8 @@ void passes_start()
 	const bool brush = hook(BRUSH_CAMERA, reinterpret_cast<void*>(&hooked_brush), &g_original_brush);
 	const bool spawn = hook(FX_SPAWN, reinterpret_cast<void*>(&hooked_spawn), &g_original_spawn);
 	const bool clear = hook(GAME_CLEAR, reinterpret_cast<void*>(&hooked_game_clear), &g_original_game_clear);
+	const bool other = hook(0x1405C8840, reinterpret_cast<void*>(&hooked_dobj_other), &g_original_dobj_other);
+	theater_log(other ? "hook: passes: the models' other drawing held" : "hook: passes: the models' other drawing NOT held");
 	char more[160];
 	snprintf(more, sizeof(more), "hook: passes: loose models %s, moving map pieces %s, effects begun %s, the game's clearing %s", loose ? "held" : "NOT held",
 	         brush ? "held" : "NOT held", spawn ? "held" : "NOT held", clear ? "held" : "NOT held");
@@ -1376,6 +1452,15 @@ void passes_draw_ui(const bool busy)
 			g_colour[0] = 0.0f, g_colour[1] = 1.0f, g_colour[2] = 0.0f;
 		}
 
+		bool keep = g_keep_effects;
+		ui_row_label("Keep effects");
+		if (ImGui::Checkbox("##passEffects", &keep))
+		{
+			g_keep_effects = keep;
+			theater_rebuild();
+		}
+
+		ImGui::SetItemTooltip("Off: no effects are drawn on the colour at all (rain, smoke, glows, muzzle flashes).\nOn: effects fixed to what is shown (the gun's, or the players') are drawn; others that were already playing may linger.");
 		ImGui::PushTextWrapPos(0.0f);
 		ImGui::TextDisabled("The map and its sky are not drawn. Glow and the film settings still act on the colour: turn them off in Look for a clean one.");
 		ImGui::PopTextWrapPos();
@@ -1587,7 +1672,7 @@ void passes_draw_fog()
 		ui_row_label("Brightness");
 		ImGui::SetNextItemWidth(-FLT_MIN);
 		changed = ImGui::SliderFloat("##fogMadeBright", &wish.bright, 0.0f, 20.0f, "%.2f") || changed;
-		ImGui::SetItemTooltip("0.64 made the fog with this at 1 and it came out black on a dark map: raise it until the colour shows.");
+		ImGui::SetItemTooltip("How bright the fog's colour is. 1 is the usual.");
 		ImGui::EndDisabled();
 		if (changed)
 		{
