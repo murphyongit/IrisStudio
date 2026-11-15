@@ -1269,21 +1269,22 @@ namespace
 			ImGui::OpenPopup("Props");
 		}
 
-		ImGui::SetNextWindowSize({g_font_size * 30.0f, g_font_size * 30.0f}, ImGuiCond_Appearing);
 		if (!ImGui::BeginPopup("Props"))
 		{
 			return;
 		}
 
-		ImGui::PushTextWrapPos(0.0f);
+		// (a popup is as big as what is in it: the text and the list are given their sizes)
+		const float wide = g_font_size * 34.0f;
+		ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + wide);
 		ImGui::TextDisabled("Any model the game has in memory for this match, put where you clicked. Killstreaks and vehicles: try \"vehicle\", "
 		                    "\"drone\", \"crate\", \"care\", \"turret\", \"missile\". Give it a path and a speed to make it fly or drive.");
 		ImGui::PopTextWrapPos();
-		ImGui::SetNextItemWidth(-1.0f);
+		ImGui::SetNextItemWidth(wide);
 		ImGui::InputTextWithHint("##propSearch", ICON_SEARCH "  Search the models", g_prop_pick.search, sizeof(g_prop_pick.search));
 		static char found[400][64];
 		const int count = models_find(g_prop_pick.search, 3, -1, found, 400);
-		ImGui::BeginChild("##propList", {0.0f, -ImGui::GetFrameHeightWithSpacing()}, ImGuiChildFlags_Border);
+		ImGui::BeginChild("##propList", {wide, g_font_size * 24.0f}, ImGuiChildFlags_Border);
 		for (int m = 0; m < count; ++m)
 		{
 			if (ImGui::Selectable(found[m]))
@@ -1661,7 +1662,24 @@ namespace
 		for (int w = 0; w < word_count && !out[0]; ++w)
 		{
 			const int count = effects_find(words[w], found, 400);
-			if (count > 0)
+			// (a gun's flash as others see it before the first person's: "_wv", "world", "3p")
+			for (int f = 0; f < count && !out[0]; ++f)
+			{
+				if (strstr(found[f], "_wv") || strstr(found[f], "world") || strstr(found[f], "3p"))
+				{
+					strncpy_s(out, 96, found[f], _TRUNCATE);
+				}
+			}
+
+			for (int f = 0; f < count && !out[0]; ++f)
+			{
+				if (!strstr(found[f], "_view") && !strstr(found[f], "_vm") && !strstr(found[f], "child"))
+				{
+					strncpy_s(out, 96, found[f], _TRUNCATE);
+				}
+			}
+
+			if (count > 0 && !out[0])
 			{
 				strncpy_s(out, 96, found[0], _TRUNCATE);
 			}
@@ -1892,8 +1910,8 @@ namespace
 			ActorEvent event;
 			event.kind = 1;
 			event.at_ms = state.position_ms;
-			static const char* const WORDS[] = {"flesh_hit", "flesh", "blood"};
-			first_effect(WORDS, 3, event.effect);
+			static const char* const WORDS[] = {"flesh_impact_body", "flesh_hit", "flesh_impact", "blood", "flesh"};
+			first_effect(WORDS, 5, event.effect);
 			actor.events[actor.event_count++] = event;
 			changed = true;
 		}
@@ -3349,8 +3367,8 @@ namespace
 					// a weapon's camouflage: any of that weapon's the game has in memory
 					for (int i = 0; i < part_count; ++i)
 					{
-						static char camos[16][64];
-						const int camo_count = models_camos(parts[i], camos, 16);
+						static char camos[48][64];
+						const int camo_count = models_camos(parts[i], camos, 48);
 						if (camo_count == 0)
 						{
 							continue;
@@ -3358,7 +3376,28 @@ namespace
 
 						char current[64] = "";
 						const bool painted = models_camo(entity, parts[i], current);
-						auto pretty = [](const char* material) {
+						auto pretty = [](const char* material) -> const char* {
+							// (an older one: camo_carbonfiber_01_col is "carbonfiber"; a painted one: m/dear_jackpot is "jackpot")
+							if (strncmp(material, "camo_", 5) == 0)
+							{
+								static char names[4][64];
+								static int turn = 0;
+								char* out = names[turn++ & 3];
+								strncpy_s(out, 64, material + 5, _TRUNCATE);
+								if (char* end = strstr(out, "_col"))
+								{
+									*end = 0;
+								}
+
+								const size_t length = strlen(out);
+								if (length > 3 && out[length - 3] == '_' && isdigit(static_cast<unsigned char>(out[length - 2])) && isdigit(static_cast<unsigned char>(out[length - 1])))
+								{
+									out[length - 3] = 0;
+								}
+
+								return out;
+							}
+
 							const char* cut = strrchr(material, '_');
 							return cut ? cut + 1 : material;
 						};

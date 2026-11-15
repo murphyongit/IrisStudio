@@ -355,6 +355,21 @@ namespace
 		}
 	}
 
+	// What an effect is made of (its parts' memory): an effect the game only knows the name of (something
+	// mentions it, but no loaded file has it) is a copy of the game's stand-in, the red letters "FX", and so
+	// shares the stand-in's parts with every other such copy.
+	const void* parts_of(const void* def)
+	{
+		__try
+		{
+			return *reinterpret_cast<const void* const*>(static_cast<const unsigned char*>(def) + 0x38);
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			return nullptr;
+		}
+	}
+
 	// (with the lock held)
 	void list_loaded()
 	{
@@ -377,15 +392,50 @@ namespace
 			}
 		}
 
+		// the stand-ins (see parts_of) are not effects: left out, so they are neither listed nor played
+		std::unordered_map<const void*, int> shared;
+		for (const auto& effect : g_loaded)
+		{
+			++shared[parts_of(effect.second)];
+		}
+
+		int stand_ins = 0;
+		for (auto effect = g_loaded.begin(); effect != g_loaded.end();)
+		{
+			const void* parts = parts_of(effect->second);
+			if (!parts || shared[parts] > 1)
+			{
+				++stand_ins;
+				effect = g_loaded.erase(effect);
+			}
+			else
+			{
+				++effect;
+			}
+		}
+
 		for (const auto& effect : g_loaded)
 		{
 			g_names.push_back(effect.first);
 		}
 
 		std::sort(g_names.begin(), g_names.end());
-		char text[96];
-		snprintf(text, sizeof(text), "effects: the game has %d effects loaded", count);
+		char text[160];
+		snprintf(text, sizeof(text), "effects: the game has %d effects loaded (%d more are only names: the red \"FX\")", count - stand_ins, stand_ins);
 		theater_log(text);
+		{
+			// (the names, for looking up what there is: theater\effects_list.txt)
+			FILE* file = nullptr;
+			if (fopen_s(&file, (std::string(theater_folder()) + "\\effects_list.txt").c_str(), "w") == 0 && file)
+			{
+				for (const std::string& name : g_names)
+				{
+					fprintf(file, "%s\n", name.c_str());
+				}
+
+				fclose(file);
+			}
+		}
 		// (the weather's, by name, to know what a map's rain is made of)
 		std::string weather;
 		for (const std::string& name : g_names)

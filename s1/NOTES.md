@@ -425,3 +425,16 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
 - Seen in the log, both evenings: "GAME ERROR: Fatal error (0xC0000005) at 0x00007FFA8E21A410" then FAULT at 1404C9BB0 as the game is closed while a
   recording plays (same address in two processes: a system DLL). Not looked into.
 - Not done: detailed killstreak events (a care package drop as one thing), sounds, actors' tracers, HUD labels.
+
+## 0.72: fixes after the first test of 0.71
+- User on 0.71: the prop list shrank to nothing (a popup auto-sizes: a child with a negative height collapses; now fixed sizes). Older camos showed as
+  "col", only two of them (list capped at 16 = 14 painted + 2), and looked like no camo. A big red "FX" at the actor's gun; shots/blood "not spawning".
+- Red "FX" = the game's stand-in effect: an effect only known by name (referenced, not in any loaded file) is a copy of the default FxEffectDef, so it
+  shares the default's elemDefs pointer (+0x38) with every other such copy. effects.cpp list_loaded drops every effect whose parts pointer is shared
+  (logged: "N more are only names"), so they are neither listed nor played; the real names are written to theater\effects_list.txt. So in 0.71 the
+  shots DID fire at tag_flash, with a stand-in picked by name. Defaults now prefer "_wv"/"world"/"3p" names and skip "_view"/"_vm"/"child".
+- Older camos, how the game puts them on (0x1404DE730, entry byte +0xD == 0): for "decalColorMap1", "decalNormalMap1", "decalSpecColorMap1" it looks
+  the name's number (0x1405E3AB0: h = (c|0x20) ^ h*33) up in the CAMO material's pictures (count byte +0xE4, 16-byte entries {number, image} at +0xF8)
+  and writes that image into the same-named place of a per-model override of the BASE material (+0x18; 0x1404DE620(obj, base, 0)). So +0x18 must be
+  the weapon's material that HAS a decalColorMap1; 0.71 gave the painted camos' guess. models.cpp camo_decal_base picks the model's first material
+  with that place (log: "models: <model>'s materials (* can take an older camouflage): ...").

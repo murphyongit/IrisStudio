@@ -1715,6 +1715,73 @@ namespace
 		return best;
 	}
 
+	// Has a material a picture of this name? (its pictures: how many, a byte at +0xE4; 16 bytes each from the
+	// pointer at +0xF8: the name's number, then the picture. The number: 0x1405E3AB0.)
+	std::uint32_t picture_number(const char* name)
+	{
+		std::uint32_t number = 0;
+		for (; *name; ++name)
+		{
+			number = static_cast<std::uint32_t>(static_cast<signed char>(*name) | 0x20) ^ (number * 33u);
+		}
+
+		return number;
+	}
+
+	bool material_has_picture(const void* material, const std::uint32_t number)
+	{
+		__try
+		{
+			const auto* at = static_cast<const unsigned char*>(material);
+			const unsigned count = at[0xE4];
+			const unsigned char* table = *reinterpret_cast<const unsigned char* const*>(at + 0xF8);
+			for (unsigned i = 0; table && i < count && i < 64; ++i)
+			{
+				if (*reinterpret_cast<const std::uint32_t*>(table + 16 * static_cast<size_t>(i)) == number)
+				{
+					return true;
+				}
+			}
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+		}
+
+		return false;
+	}
+
+	// (with the lock held) The material of a weapon's model an older camouflage goes on: the game copies the
+	// camouflage's "decalColorMap1" (and its normal and specular) into the same-named places of that material
+	// (0x1404DE730, the entry's byte +0xD being 0), so it is the one that has such a place.
+	void* camo_decal_base(void* model, const char* model_name, void* camo)
+	{
+		static const std::uint32_t number = picture_number("decalColorMap1");
+		void* found[64];
+		const int count = model_materials(model, found, 64);
+		void* best = nullptr;
+		std::string all;
+		for (int i = 0; i < count; ++i)
+		{
+			const char* name = name_of(found[i]);
+			const bool has = material_has_picture(found[i], number);
+			all += std::string(" ") + (name ? name : "?") + (has ? "*" : "");
+			if (has && !best)
+			{
+				best = found[i];
+			}
+		}
+
+		static std::map<std::string, bool> told;
+		if (!told[model_name] && told.size() < 40)
+		{
+			told[model_name] = true;
+			note("models: %s's materials (* can take an older camouflage):%s; the camouflage %s a decalColorMap1", model_name, all.empty() ? " (none read)" : all.c_str(),
+			     material_has_picture(camo, number) ? "has" : "HAS NO");
+		}
+
+		return best;
+	}
+
 	// The entity's model made again from the list the game last gave, with the game's own calls: what
 	// there is let go of, and the list made and its materials put on as the game's code does.
 	bool remake(const int handle, const unsigned char* bytes, const unsigned short count)
@@ -2022,7 +2089,13 @@ namespace
 								unsigned char* entry = copy + stride * out;
 								void** fields = reinterpret_cast<void**>(entry);
 								fields[2] = material->second;
-								if (!fields[3])
+								const bool older = g_old_camos.count(camo->second) != 0;
+								if (older)
+								{
+									// (an older one goes on the material that has a place for it, whatever the entry had)
+									fields[3] = camo_decal_base(model, drawn, material->second);
+								}
+								else if (!fields[3])
 								{
 									// (the material it goes over: the game's own entry has it when the game's
 									// own camouflage is on)
@@ -2031,7 +2104,7 @@ namespace
 								}
 
 								// (a painted one is drawn in place of the weapon's material; an older one goes on with the byte 0)
-								entry[0xD] = g_old_camos.count(camo->second) ? 0 : 1;
+								entry[0xD] = older ? 0 : 1;
 								changed = true;
 								made += std::string(" ") + drawn + "~" + camo->second + (fields[3] ? "" : " (nothing to put it over)");
 							}
