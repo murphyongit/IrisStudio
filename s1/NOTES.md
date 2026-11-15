@@ -452,3 +452,14 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
   "MPUI_" keys kept). Older camo: row by its material (col 8); painted: row whose col 10 equals the material's column in camoMaterialTable.
 - Real effects on Greenband per theater\effects_list.txt (1376): shots default vfx/muzzleflash/generic_assault_flash_wv (also generic_lmg/smg/pistol/
   shotgun/sniper/silenced _wv), blood default vfx/weaponimpact/flesh_impact_body_fatal_exit.
+
+## 0.74: effects from another recording, the HUD script says how it is doing
+- User on 0.73: "are fx saved too?" (yes since 0.71: clip1.awdm.scene held 20 effects + 2 lights at the time) and "the HUD loading thing doesn't
+  work, I only see Gun and Names over players": the Look tab's HUD part list is empty (s1iris_hud_count never set). No "hud parts:" line in any log
+  since 0.69, i.e. since the Lua script was changed for 0.68 (hide/fast/watch). The script runs correctly against a mock of LUI (lupa), so the cause
+  is in the game's own Lua (HavokScript) or LUI: not found yet.
+- Lua now: reports through dvars s1iris_lua_state ("loaded" / "waiting for the match's HUD" / "attached" / "no mp_hud to attach to") and
+  s1iris_lua_error (first fault of attach / watch / tick); the ticker is added BEFORE the layers' addElement is wrapped, the wrapping is in its own
+  pcall. look.cpp shows and logs these ("hud script: state ..., error ...") when no parts are listed. READ THE LOG NEXT TIME.
+- Scene > Effects: "Bring in another recording's effects..." (scene_recordings / scene_take_effects: the EFFX section of another .scene appended).
+  A restored scene whose effects are not loaded loads the rain file by itself.

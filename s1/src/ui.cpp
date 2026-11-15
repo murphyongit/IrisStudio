@@ -2526,6 +2526,40 @@ namespace
 					ImGui::TextDisabled("Ascend's rain, mist and lightning are loaded: search rain, mist or lightning.");
 				}
 
+				// another recording's effects brought in (the rain set up once, used again on another clip of the same map)
+				{
+					static char recordings[32][96];
+					static int effect_counts[32];
+					static int recording_count = 0;
+					if (ImGui::Button("Bring in another recording's effects..."))
+					{
+						recording_count = scene_recordings(recordings, effect_counts, 32);
+						ImGui::OpenPopup("##fxFrom");
+					}
+
+					ImGui::SetItemTooltip("The effects you put into this recording are kept with it and are there again the next time you play it.\nThis adds the ones kept with another recording, at the same places and times: for another clip of the same map.");
+					if (ImGui::BeginPopup("##fxFrom"))
+					{
+						if (recording_count == 0)
+						{
+							ImGui::TextDisabled("No other recording has effects kept with it yet.");
+						}
+
+						for (int r = 0; r < recording_count; ++r)
+						{
+							char label[160];
+							snprintf(label, sizeof(label), "%s   (%d effect%s)", recordings[r], effect_counts[r], effect_counts[r] == 1 ? "" : "s");
+							if (ImGui::Selectable(label))
+							{
+								const int taken = scene_take_effects(recordings[r]);
+								ui_log("%d effects brought in from %s", taken, recordings[r]);
+							}
+						}
+
+						ImGui::EndPopup();
+					}
+				}
+
 				fx_search_row("##fxSearch", ICON_SEARCH "  search the effects by name (explosion, spark, smoke...)", ImGui::GetContentRegionAvail().x);
 				const int fx_count = fx_listed(fx_found, 400);
 				ImGui::BeginChild("fxResults", {0.0f, g_font_size * 10.0f}, ImGuiChildFlags_Border);

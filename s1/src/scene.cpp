@@ -273,6 +273,97 @@ namespace
 	}
 }
 
+namespace
+{
+	// The effects in a saved scene's block.
+	int effects_in(const std::string& block, PlacedEffect* out, const int max)
+	{
+		if (block.size() < 8 || memcmp(block.data(), &MAGIC, 4) != 0)
+		{
+			return 0;
+		}
+
+		for (size_t at = 8; at + 12 <= block.size();)
+		{
+			std::uint32_t head[3];
+			memcpy(head, block.data() + at, sizeof(head));
+			at += 12;
+			const size_t bytes = static_cast<size_t>(head[1]) * head[2];
+			if (bytes > block.size() - at)
+			{
+				break;
+			}
+
+			if (head[0] == EFFX)
+			{
+				return out ? items(block.data() + at, head[1], head[2], out, max) : static_cast<int>(head[2]);
+			}
+
+			at += bytes;
+		}
+
+		return 0;
+	}
+}
+
+int scene_recordings(char names[][96], int counts[], const int max)
+{
+	int count = 0;
+	WIN32_FIND_DATAA found;
+	const HANDLE find = FindFirstFileA((std::string(theater_folder()) + "\\*.scene").c_str(), &found);
+	if (find == INVALID_HANDLE_VALUE)
+	{
+		return 0;
+	}
+
+	do
+	{
+		std::string recording = found.cFileName;
+		recording.resize(recording.size() - 6);
+		std::string block;
+		if (count < max && recording != g_name && recording.size() < 96 && load(recording.c_str(), block))
+		{
+			const int effects = effects_in(block, nullptr, 0);
+			if (effects > 0)
+			{
+				strncpy_s(names[count], 96, recording.c_str(), _TRUNCATE);
+				counts[count++] = effects;
+			}
+		}
+	} while (FindNextFileA(find, &found));
+
+	FindClose(find);
+	return count;
+}
+
+int scene_take_effects(const char* recording)
+{
+	std::string block;
+	static PlacedEffect effects[EFFECTS_MAX];
+	if (!load(recording, block))
+	{
+		return 0;
+	}
+
+	const int count = effects_in(block, effects, EFFECTS_MAX);
+	int taken = 0;
+	for (int i = 0; i < count; ++i)
+	{
+		const int index = effects_add(effects[i].name, effects[i].origin, effects[i].at_ms);
+		if (index < 0)
+		{
+			break;
+		}
+
+		// (one that went with an actor of that recording's stands where it was put instead)
+		effects[i].on_actor = 0;
+		effects_set(index, effects[i]);
+		++taken;
+	}
+
+	return taken;
+}
+
 bool scene_can_undo() { return !g_undo.empty(); }
 bool scene_can_redo() { return !g_redo.empty(); }
 void scene_undo() { g_ask_undo = true; }
@@ -344,6 +435,18 @@ void scene_ui_frame(const TheaterState& state, const bool busy, const bool touch
 			unpack(block);
 			snprintf(line, sizeof(line), "scene: %s.scene read (%zu bytes)", g_name, block.size());
 			theater_log(line);
+			// (its rain, mist or lightning are in the editor's own file: loaded without being asked for)
+			static PlacedEffect saved[EFFECTS_MAX];
+			const int saved_count = effects_in(block, saved, EFFECTS_MAX);
+			for (int i = 0; i < saved_count; ++i)
+			{
+				if (effects_lasts(saved[i].name) < 0 && effects_extra_state() == 1)
+				{
+					effects_load_extra();
+					theater_log("scene: its effects need the rain file: loading it");
+					break;
+				}
+			}
 		}
 		else if (!same)
 		{

@@ -300,6 +300,10 @@ StormState storm_state();
 void storm_set(const StormState& storm);
 void scene_ui_frame(const TheaterState& state, bool busy, bool touched);
 void scene_game_frame(const TheaterState& state);
+// The other recordings that have a saved scene with effects in it (their names, and how many effects each has);
+// and those effects (with their places and times) added to this recording's.
+int scene_recordings(char names[][96], int counts[], int max);
+int scene_take_effects(const char* recording);
 bool scene_can_undo();
 bool scene_can_redo();
 void scene_undo();

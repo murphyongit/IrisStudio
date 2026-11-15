@@ -899,9 +899,30 @@ namespace
 		const int count = atoi(dvar_string("s1iris_hud_count").c_str());
 		if (count <= 0)
 		{
+			// (how the script is doing, as it says itself: shown, and logged when it changes)
+			const std::string script_state = dvar_string("s1iris_lua_state"), script_error = dvar_string("s1iris_lua_error");
+			static std::string said;
+			if (said != script_state + "|" + script_error)
+			{
+				said = script_state + "|" + script_error;
+				ui_log("hud script: state \"%s\", error \"%s\"", script_state.c_str(), script_error.c_str());
+			}
+
 			ImGui::PushTextWrapPos(0.0f);
-			ImGui::TextDisabled("The HUD's separate parts are listed here by a small script that loads when the game starts "
-			                    "(s1x\\ui_scripts\\s1iris). None are listed yet: restart the game if this was just installed.");
+			if (!script_error.empty())
+			{
+				ImGui::TextDisabled("The HUD's parts cannot be listed: the script that lists them has a fault (%s).", script_error.c_str());
+			}
+			else if (script_state.empty())
+			{
+				ImGui::TextDisabled("The HUD's separate parts are listed here by a small script the game loads when it starts "
+				                    "(s1x\\ui_scripts\\s1iris). The game has not loaded it: restart the game.");
+			}
+			else
+			{
+				ImGui::TextDisabled("The HUD's separate parts are listed here once a match's HUD is on screen (the script: %s).", script_state.c_str());
+			}
+
 			ImGui::PopTextWrapPos();
 			return;
 		}

@@ -12,6 +12,16 @@ end
 local MAX_DEPTH = 3
 local MAX_PARTS = 150
 
+-- How the script is doing, for the editor to show and log (dvars s1iris_lua_state, s1iris_lua_error).
+local function report(key, text)
+	pcall(function()
+		local plain = tostring(text):gsub("[\"\n\r;]", " "):sub(1, 220)
+		Engine.Exec("set s1iris_lua_" .. key .. " \"" .. plain .. "\"")
+	end)
+end
+
+report("state", "loaded")
+
 local function clean(text)
 	return (tostring(text):gsub("[^%w_%-%.]", "_"))
 end
@@ -222,14 +232,11 @@ local function watch(layer, name)
 	end)
 end
 
+local tick_failed = false
+
 local function attach(hud)
 	told = ""
 	hidden_now = {}
-	for _, part in ipairs(parts(hud)) do
-		if part.depth == 0 then
-			watch(part.element, part.name)
-		end
-	end
 	local ticker = LUI.UIElement.new({
 		leftAnchor = true,
 		topAnchor = true,
@@ -241,20 +248,42 @@ local function attach(hud)
 	ticker.id = "s1iris_ticker"
 	ticker:addElement(LUI.UITimer.new(100, "s1iris_tick"))
 	ticker:registerEventHandler("s1iris_tick", function()
-		pcall(tick, hud)
+		local ok, problem = pcall(tick, hud)
+		if not ok and not tick_failed then
+			tick_failed = true
+			report("error", "tick: " .. tostring(problem))
+		end
 	end)
 	ticker:addElement(LUI.UITimer.new(1, "s1iris_fast"))
 	ticker:registerEventHandler("s1iris_fast", function()
 		pcall(fast, hud)
 	end)
 	hud:addElement(ticker)
+	report("state", "attached")
+	-- (after the ticker is on, so that a fault here does not cost the list of parts)
+	local ok, problem = pcall(function()
+		for _, part in ipairs(parts(hud)) do
+			if part.depth == 0 then
+				watch(part.element, part.name)
+			end
+		end
+	end)
+	if not ok then
+		report("error", "watch: " .. tostring(problem))
+	end
 end
 
 local build = LUI.MenuBuilder.m_types_build["mp_hud"]
 if build then
 	LUI.MenuBuilder.m_types_build["mp_hud"] = function(...)
 		local hud = build(...)
-		pcall(attach, hud)
+		local ok, problem = pcall(attach, hud)
+		if not ok then
+			report("error", "attach: " .. tostring(problem))
+		end
 		return hud
 	end
+	report("state", "waiting for the match's HUD")
+else
+	report("state", "no mp_hud to attach to")
 end
