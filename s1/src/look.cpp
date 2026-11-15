@@ -338,7 +338,9 @@ namespace
 		ImGui::PushID(dvar.at);
 		const int kind = dvar.type();
 		const bool keyable = kind == 1 || kind == 2 || kind == 3 || kind == 4 || kind == 5 || kind == 8 || kind == 9;
-		ImGui::SetNextItemWidth(keyable ? -key_button_width() : -1.0f);
+		// (room at the row's right for the keyframe diamond and the "back to default" button)
+		const float reset_width = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x;
+		ImGui::SetNextItemWidth(keyable ? -(key_button_width() + reset_width) : -reset_width);
 		float shown[4] = {};  // the value the row shows, for a keyframe
 		bool changed = false;
 		const unsigned char* value = dvar.current();
@@ -557,7 +559,9 @@ namespace
 		}
 
 		// (right click on the row: the setting as the game had it, its keyframes gone)
-		if (ui_reset_menu("##row"))
+		ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - ImGui::GetFrameHeight());
+		const bool reset_pressed = ui_reset_button("##rowReset");
+		if (ui_reset_menu("##row") || reset_pressed)
 		{
 			remove_track(dvar.name());
 			restore(dvar.name());
@@ -790,7 +794,8 @@ namespace
 		bool changed = false;
 		ui_row_label("Hue");
 		ImGui::SetNextItemWidth(-key_button_width());
-		if (ImGui::SliderFloat("##skyHue", &sky.hsv[0], -180.0f, 180.0f, "%.0f deg"))
+		ui::Default(0.0f);
+		if (ui::SliderFloat("##skyHue", &sky.hsv[0], -180.0f, 180.0f, "%.0f deg"))
 		{
 			changed = true;
 			key_changed("sky_hue", &sky.hsv[0]);
@@ -799,7 +804,8 @@ namespace
 		key_button("sky_hue", "Sky hue", 1, &sky.hsv[0]);
 		ui_row_label("Saturation");
 		ImGui::SetNextItemWidth(-key_button_width());
-		if (ImGui::SliderFloat("##skySaturation", &sky.hsv[1], 0.0f, 3.0f, "%.2f"))
+		ui::Default(1.0f);
+		if (ui::SliderFloat("##skySaturation", &sky.hsv[1], 0.0f, 3.0f, "%.2f"))
 		{
 			changed = true;
 			key_changed("sky_saturation", &sky.hsv[1]);
@@ -808,7 +814,8 @@ namespace
 		key_button("sky_saturation", "Sky saturation", 1, &sky.hsv[1]);
 		ui_row_label("Brightness");
 		ImGui::SetNextItemWidth(-key_button_width());
-		if (ImGui::SliderFloat("##skyValue", &sky.hsv[2], 0.0f, 4.0f, "%.2f"))
+		ui::Default(1.0f);
+		if (ui::SliderFloat("##skyValue", &sky.hsv[2], 0.0f, 4.0f, "%.2f"))
 		{
 			changed = true;
 			key_changed("sky_brightness", &sky.hsv[2]);
@@ -817,7 +824,8 @@ namespace
 		key_button("sky_brightness", "Sky brightness", 1, &sky.hsv[2]);
 		ui_row_label("Rotation");
 		ImGui::SetNextItemWidth(-key_button_width());
-		if (ImGui::DragFloat3("##skyTurn", sky.turn, 0.5f, -720.0f, 720.0f, "%.1f"))
+		ui::Default(0.0f, 0.0f, 0.0f);
+		if (ui::DragFloat3("##skyTurn", sky.turn, 0.5f, -720.0f, 720.0f, "%.1f"))
 		{
 			changed = true;
 			key_changed("sky_turn", sky.turn);

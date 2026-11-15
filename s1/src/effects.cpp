@@ -452,7 +452,7 @@ namespace
 	bool same_in_game(const PlacedEffect& a, const PlacedEffect& b)
 	{
 		return strcmp(a.name, b.name) == 0 && memcmp(a.origin, b.origin, sizeof(a.origin)) == 0 && memcmp(a.angles, b.angles, sizeof(a.angles)) == 0 &&
-		       a.at_ms == b.at_ms && a.every_ms == b.every_ms && a.follow == b.follow && a.above == b.above;
+		       a.at_ms == b.at_ms && a.every_ms == b.every_ms && a.follow == b.follow && a.above == b.above && a.on_actor == b.on_actor;
 	}
 }
 
@@ -781,7 +781,12 @@ void effects_game_frame(const TheaterState& state)
 				}
 
 				PlacedEffect here = placed;
-				if (placed.follow)
+				if (placed.on_actor)
+				{
+					actors_origin_of(placed.on_actor, here.origin);
+					here.origin[2] += placed.above;
+				}
+				else if (placed.follow)
 				{
 					camera_view_origin(here.origin);
 					here.origin[2] += placed.above;
@@ -885,7 +890,17 @@ void effects_game_frame(const TheaterState& state)
 		const int began = base + static_cast<int>(placed.at_ms) + rep * every;
 		const int begin = (std::min)(game_now, (std::max)(began, game_now - CATCH_UP_MS));
 		PlacedEffect here = placed;
-		if (placed.follow)
+		if (placed.on_actor)
+		{
+			// where the actor or prop is now (not played while it is not there)
+			if (!actors_origin_of(placed.on_actor, here.origin))
+			{
+				continue;
+			}
+
+			here.origin[2] += placed.above;
+		}
+		else if (placed.follow)
 		{
 			// where the camera is now, and above it
 			camera_view_origin(here.origin);
@@ -904,4 +919,18 @@ void effects_game_frame(const TheaterState& state)
 		live.rep = rep;
 		live.last_begin = begin;
 	}
+}
+
+// (the game's thread) An effect played once, now: an actor's shot or blood. Not kept track of: it ends by itself,
+// and goes with everything else when the recording is gone back in.
+bool effects_play_once(const char* name, const float origin[3], const float axis[3][3])
+{
+	void* def = nullptr;
+	{
+		std::lock_guard<std::mutex> lock(g_lock);
+		const auto loaded = g_loaded.find(name);
+		def = loaded != g_loaded.end() ? loaded->second : nullptr;
+	}
+
+	return def && play(def, game_time(), origin, axis);
 }

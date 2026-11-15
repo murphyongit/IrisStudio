@@ -810,6 +810,7 @@ namespace
 		const TheaterState state = theater_state();
 		// (the editor's effects are played here, early in the client game's frame, as the game's own are)
 		effects_game_frame(state);
+		scene_game_frame(state);
 		models_game_frame(state);
 		passes_game_frame(state);
 		const bool focus = state.playing && GetForegroundWindow() == ui_window() && !theater_keys_blocked();
@@ -1344,4 +1345,46 @@ void camera_start()
 	log(status == MH_OK ? "camera: the game's view hooked. While a recording plays: F2 free camera, K a point of the path, L the dolly camera"
 	                    : "camera: the game's view NOT hooked (%s)",
 	    MH_StatusToString(status));
+}
+
+// The camera's path as bytes (the size of a point first), for the saved scene and undo; and put back.
+int camera_points_export(unsigned char* out, const int size)
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	const size_t bytes = 4 + g_points.size() * sizeof(Point);
+	if (bytes > static_cast<size_t>(size))
+	{
+		return 0;
+	}
+
+	const std::uint32_t each = sizeof(Point);
+	memcpy(out, &each, 4);
+	if (!g_points.empty())
+	{
+		memcpy(out + 4, g_points.data(), g_points.size() * sizeof(Point));
+	}
+
+	return static_cast<int>(bytes);
+}
+
+void camera_points_import(const unsigned char* bytes, const int size)
+{
+	std::uint32_t each = 0;
+	if (size < 4)
+	{
+		return;
+	}
+
+	memcpy(&each, bytes, 4);
+	if (each != sizeof(Point))
+	{
+		return;
+	}
+
+	std::lock_guard<std::mutex> lock(g_lock);
+	g_points.resize(static_cast<size_t>(size - 4) / sizeof(Point));
+	if (!g_points.empty())
+	{
+		memcpy(g_points.data(), bytes + 4, g_points.size() * sizeof(Point));
+	}
 }

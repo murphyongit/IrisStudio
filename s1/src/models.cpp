@@ -3201,3 +3201,88 @@ void models_start()
 		theater_log("models: the lists the game loads gear by NOT hooked");
 	}
 }
+
+// An outfit of one model (a prop): the model by its name, the rest of its entry empty (it stands on its own).
+void models_outfit_named(const char* model, ModelsOutfit* out)
+{
+	*out = ModelsOutfit();
+	if (model && model[0])
+	{
+		strncpy_s(out->names[0], model, _TRUNCATE);
+		out->count = 1;
+	}
+}
+
+// The editor's changes for an entity as lines of text: "s<tab>model<tab>drawn as", "a<tab>model put on as well",
+// "c<tab>model<tab>camouflage material".
+int models_export(const int entity, char* out, const int size)
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	std::string text;
+	const auto swaps = g_swaps.find(entity);
+	if (swaps != g_swaps.end())
+	{
+		for (const auto& swap : swaps->second)
+		{
+			text += "s\t" + swap.first + "\t" + swap.second + "\n";
+		}
+	}
+
+	const auto adds = g_adds.find(entity);
+	if (adds != g_adds.end())
+	{
+		for (const std::string& add : adds->second)
+		{
+			text += "a\t" + add + "\n";
+		}
+	}
+
+	const auto camos = g_camos.find(entity);
+	if (camos != g_camos.end())
+	{
+		for (const auto& camo : camos->second)
+		{
+			text += "c\t" + camo.first + "\t" + camo.second + "\n";
+		}
+	}
+
+	strncpy_s(out, static_cast<size_t>(size), text.c_str(), _TRUNCATE);
+	return static_cast<int>(strlen(out));
+}
+
+void models_import(const int entity, const char* text)
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	g_swaps.erase(entity);
+	g_adds.erase(entity);
+	g_camos.erase(entity);
+	for (const char* at = text; at && *at;)
+	{
+		const char* end = strchr(at, '\n');
+		const std::string line(at, end ? static_cast<size_t>(end - at) : strlen(at));
+		at = end ? end + 1 : nullptr;
+		if (line.size() < 3 || line[1] != '\t')
+		{
+			continue;
+		}
+
+		const size_t tab = line.find('\t', 2);
+		const std::string first = line.substr(2, tab == std::string::npos ? std::string::npos : tab - 2);
+		const std::string second = tab == std::string::npos ? "" : line.substr(tab + 1);
+		if (line[0] == 's' && tab != std::string::npos)
+		{
+			g_swaps[entity][first] = second;
+		}
+		else if (line[0] == 'a')
+		{
+			g_adds[entity].push_back(first);
+		}
+		else if (line[0] == 'c' && tab != std::string::npos)
+		{
+			g_camos[entity][first] = second;
+		}
+	}
+
+	++g_changed[entity];
+	g_extra_dirty = GetTickCount64();
+}

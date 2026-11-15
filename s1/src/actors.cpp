@@ -97,12 +97,17 @@ namespace
 		std::vector<float> weights;      // as last given
 		unsigned outfit = 0;             // the outfit's changes it was made with
 		bool made = false;               // its model was made (it is found again by its handle each frame)
+		bool prop = false;               // one model, no animations
 		bool broken = false;             // a fault with it: left alone until it is changed
 		ULONGLONG tried = 0;
 		char said[96] = "";
 	};
 	// (by handle, which an actor keeps for as long as it is there: the list's places move when one is removed)
 	Built g_built[ACTORS_MAX + 1];
+	unsigned g_change_counter = 100;
+	double g_before[ACTORS_MAX] = {};          // (the game's thread) the recording's time at the frame before, for what happens at a time
+	Actor g_scanned[ACTORS_MAX];               // (the game's thread) the actor its path's end was worked out for
+	std::uint32_t g_path_end[ACTORS_MAX] = {};
 	int g_told = 0;
 	std::vector<int> g_removed;  // the handles of actors removed, to let go of on the game's thread
 
@@ -289,9 +294,25 @@ namespace
 		}
 	}
 
+	void free_model(const int handle)
+	{
+		__try
+		{
+			reinterpret_cast<void (*)(int)>(COM_SAFE_CLIENT_DOBJ_FREE)(handle);
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+		}
+	}
+
 	void unbuild(const int slot, const int handle, const bool game_holds)
 	{
 		Built& built = g_built[slot];
+		if (!built.tree && built.prop && built.made && game_holds)
+		{
+			free_model(handle);
+		}
+
 		if (built.tree)
 		{
 			if (!let_go(handle, built.tree, game_holds))
@@ -378,7 +399,7 @@ namespace
 	}
 
 	// The pose: an entity of the client game's that no match uses, told where the figure stands.
-	bool pose(const int handle, const float origin[3], const float yaw)
+	bool pose(const int handle, const float origin[3], const float yaw, const float pitch = 0.0f, const float roll = 0.0f)
 	{
 		__try
 		{
@@ -393,9 +414,9 @@ namespace
 			}
 
 			auto* angles = reinterpret_cast<float*>(entity + CENTITY_ANGLES);
-			angles[0] = 0.0f;
+			angles[0] = pitch;
 			angles[1] = yaw;
-			angles[2] = 0.0f;
+			angles[2] = roll;
 			*reinterpret_cast<std::int16_t*>(entity + CENTITY_NUMBER) = static_cast<std::int16_t>(handle);
 			return true;
 		}
@@ -421,9 +442,10 @@ namespace
 		}
 	}
 
-	bool bone(const int handle, void* model, const char* name, float origin[3])
+	bool bone(const int handle, void* model, const char* name, float origin[3], float (*axis_out)[3] = nullptr)
 	{
-		float axis[3][3];
+		float own[3][3];
+		float (*axis)[3] = axis_out ? axis_out : own;
 		__try
 		{
 			const unsigned tag = reinterpret_cast<unsigned (*)(const char*)>(SL_FIND_STRING)(name);
@@ -473,7 +495,74 @@ namespace
 		float times[ACTOR_CLIPS_MAX] = {};
 		float origin[3] = {};
 		float yaw = 0.0f;
+		float gone = 0.0f, path_length = 0.0f;  // how far along its path it is, and the path's length
 	};
+
+	float turn_to(const float from, const float to, const float t)
+	{
+		return from + std::remainder(to - from, 360.0f) * t;
+	}
+
+	// Along an actor's path (from where it stands through its points) by a distance: where that is, and which way
+	// the path heads there (turning over a short way at each corner). flat: distances along the ground only (an
+	// actor's steps); else through the air too (a prop). Returns the path's whole length.
+	float along(const Actor& actor, const float distance, const bool flat, float out[3], float* heading)
+	{
+		const int count = actor.path_count < 0 ? 0 : actor.path_count > ACTOR_PATH_MAX ? ACTOR_PATH_MAX : actor.path_count;
+		memcpy(out, actor.origin, 3 * sizeof(float));
+		*heading = actor.yaw;
+		if (count == 0)
+		{
+			return 0.0f;
+		}
+
+		float lengths[ACTOR_PATH_MAX], headings[ACTOR_PATH_MAX], total = 0.0f;
+		const float* from = actor.origin;
+		for (int i = 0; i < count; ++i)
+		{
+			const float* to = actor.path[i];
+			const float dx = to[0] - from[0], dy = to[1] - from[1], dz = flat ? 0.0f : to[2] - from[2];
+			lengths[i] = std::sqrt(dx * dx + dy * dy + dz * dz);
+			headings[i] = dx * dx + dy * dy > 0.01f ? std::atan2(dy, dx) * TO_DEG : i ? headings[i - 1] : actor.yaw;
+			total += lengths[i];
+			from = to;
+		}
+
+		const float CORNER = 28.0f;
+		float left = distance < 0.0f ? 0.0f : distance;
+		from = actor.origin;
+		for (int i = 0; i < count; ++i)
+		{
+			const float* to = actor.path[i];
+			if (left <= lengths[i] || i == count - 1)
+			{
+				const float t = lengths[i] > 0.001f && left < lengths[i] ? left / lengths[i] : 1.0f;
+				for (int k = 0; k < 3; ++k)
+				{
+					out[k] = from[k] + (to[k] - from[k]) * t;
+				}
+
+				float h = headings[i];
+				const float to_end = lengths[i] - left;
+				if (i + 1 < count && to_end < CORNER)
+				{
+					h = turn_to(h, headings[i + 1], 0.5f * (1.0f - (to_end < 0.0f ? 0.0f : to_end) / CORNER));
+				}
+				else if (i > 0 && left < CORNER)
+				{
+					h = turn_to(headings[i - 1], h, 0.5f + 0.5f * left / CORNER);
+				}
+
+				*heading = h;
+				return total;
+			}
+
+			left -= lengths[i];
+			from = to;
+		}
+
+		return total;
+	}
 
 	// How far into a clip's animation the time is: whole times round, and the part of one.
 	void clip_time(const ActorClip& clip, const float length, const bool loops, const double now, int* rounds, float* fraction)
@@ -510,6 +599,25 @@ namespace
 		Shown shown;
 		memcpy(shown.origin, actor.origin, sizeof(shown.origin));
 		shown.yaw = actor.yaw;
+		if (actor.prop)
+		{
+			// (a prop: there for its clip's time, going along its path at its speed)
+			const ActorClip& span = actor.clips[0];
+			if (actor.clip_count < 1 || now < span.at_ms || (!actor.stays && now >= static_cast<double>(span.at_ms) + span.length_ms))
+			{
+				return shown;
+			}
+
+			const double end = static_cast<double>(span.at_ms) + span.length_ms;
+			shown.any = true;
+			shown.clip = 0;
+			shown.gone = static_cast<float>(((now < end ? now : end) - span.at_ms) / 1000.0) * actor.speed;
+			float heading = actor.yaw;
+			shown.path_length = along(actor, shown.gone, false, shown.origin, &heading);
+			shown.yaw = actor.path_count > 0 ? heading + actor.yaw : actor.yaw;
+			return shown;
+		}
+
 		const int count = actor.clip_count < static_cast<int>(built.parts.size()) ? actor.clip_count : static_cast<int>(built.parts.size());
 		// the clip the time is in: the last that has begun
 		int playing = -1;
@@ -578,6 +686,10 @@ namespace
 		}
 
 		std::sort(order, order + ordered, [&](const int a, const int b) { return actor.clips[a].at_ms < actor.clips[b].at_ms; });
+		// on a path: what its moving animations have carried it forward goes along the path; the rest (a death's
+		// fall, a turn on the spot) is added to where the path has it
+		const bool path = actor.path_count > 0 && actor.moves;
+		float gone = 0.0f, beside[3] = {}, beside_yaw = 0.0f;
 		for (int o = 0; o < ordered; ++o)
 		{
 			const int i = order[o];
@@ -621,6 +733,28 @@ namespace
 				turned += whole_turn * rounds;
 			}
 
+			if (path)
+			{
+				if (offset[0] > 1.0f && offset[0] > std::fabs(offset[1]))
+				{
+					gone += std::sqrt(offset[0] * offset[0] + offset[1] * offset[1]);
+					beside[2] += offset[2];
+				}
+				else
+				{
+					float at[3], heading = 0.0f;
+					along(actor, gone, true, at, &heading);
+					const float facing = heading + beside_yaw;
+					const float c = std::cos(facing * TO_RAD), s = std::sin(facing * TO_RAD);
+					beside[0] += offset[0] * c - offset[1] * s;
+					beside[1] += offset[0] * s + offset[1] * c;
+					beside[2] += offset[2];
+					beside_yaw += turned;
+				}
+
+				continue;
+			}
+
 			const float c = std::cos(shown.yaw * TO_RAD), s = std::sin(shown.yaw * TO_RAD);
 			shown.origin[0] += offset[0] * c - offset[1] * s;
 			shown.origin[1] += offset[0] * s + offset[1] * c;
@@ -628,17 +762,31 @@ namespace
 			shown.yaw += turned;
 		}
 
+		if (path)
+		{
+			float heading = 0.0f;
+			shown.path_length = along(actor, gone, true, shown.origin, &heading);
+			shown.gone = gone < shown.path_length ? gone : shown.path_length;
+			for (int k = 0; k < 3; ++k)
+			{
+				shown.origin[k] += beside[k];
+			}
+
+			shown.yaw = heading + beside_yaw;
+		}
+
 		return shown;
 	}
 
 	// (the game's thread) The model and tree for a figure, made if they are not there or no longer fit.
-	void* ensure(const int slot, const int handle, const std::vector<std::string>& names, const ModelsOutfit& outfit, const unsigned outfit_changes)
+	void* ensure(const int slot, const int handle, const std::vector<std::string>& names, const ModelsOutfit& outfit, const unsigned outfit_changes,
+	             const bool prop = false)
 	{
 		Built& built = g_built[slot];
-		if (built.names != names || built.outfit != outfit_changes)
+		if (built.names != names || built.outfit != outfit_changes || built.prop != prop)
 		{
 			// (changed: made again, and tried again after a fault)
-			if (built.tree)
+			if (built.tree || built.prop)
 			{
 				unbuild(slot, handle, !built.broken);
 			}
@@ -646,11 +794,57 @@ namespace
 			built.broken = false;
 			built.names = names;
 			built.outfit = outfit_changes;
+			built.prop = prop;
 		}
 
 		if (built.broken)
 		{
 			return nullptr;
+		}
+
+		if (prop)
+		{
+			if (built.made)
+			{
+				if (void* model = model_of(handle))
+				{
+					return model;
+				}
+
+				built.made = false;
+			}
+
+			const ULONGLONG tick = GetTickCount64();
+			if (tick - built.tried < 500 || outfit.count == 0)
+			{
+				return nullptr;
+			}
+
+			built.tried = tick;
+			if (!entity_free(handle, nullptr))
+			{
+				say("actors: entity %d is in use by the match; the prop is not made", handle);
+				built.broken = true;
+				return nullptr;
+			}
+
+			char missing[64] = "";
+			void* model = models_make_actor(handle, outfit, nullptr, missing);
+			if (!model)
+			{
+				if (strcmp(built.said, missing) != 0)
+				{
+					strncpy_s(built.said, missing, _TRUNCATE);
+					say("actors: the prop for entity %d could not be made: %s is not in memory", handle, missing[0] ? missing : "its model");
+				}
+
+				return nullptr;
+			}
+
+			built.made = true;
+			built.said[0] = 0;
+			say("actors: entity %d made as a prop: %s", handle, outfit.names[0]);
+			return model;
 		}
 
 		if (built.tree && built.made)
@@ -771,6 +965,70 @@ namespace
 		}
 
 		return true;
+	}
+}
+
+namespace
+{
+	void facing_axis(const float yaw, float axis[3][3])
+	{
+		const float c = std::cos(yaw * TO_RAD), s = std::sin(yaw * TO_RAD);
+		const float made[3][3] = {{c, s, 0.0f}, {-s, c, 0.0f}, {0.0f, 0.0f, 1.0f}};
+		memcpy(axis, made, sizeof(made));
+	}
+
+	// (the game's thread) What an actor does at a time, as the recording's time goes past it.
+	void happen(const Actor& actor, const ActorEvent& event, void* model, const Shown& shown, const double before, const double now)
+	{
+		if (!event.effect[0])
+		{
+			return;
+		}
+
+		float origin[3] = {}, axis[3][3] = {};
+		if (event.kind == 0)
+		{
+			const double every = event.every_ms < 20.0f ? 20.0 : event.every_ms;
+			const double end = static_cast<double>(event.at_ms) + event.length_ms;
+			const double shots_now = now < event.at_ms ? -1.0 : std::floor(((now < end ? now : end) - event.at_ms) / every);
+			const double shots_before = before < event.at_ms ? -1.0 : std::floor(((before < end ? before : end) - event.at_ms) / every);
+			if (shots_now <= shots_before)
+			{
+				return;
+			}
+
+			if (!bone(actor.handle, model, "tag_flash", origin, axis))
+			{
+				// (no gun, or one with no such place: from the right hand, the way it faces)
+				if (!bone(actor.handle, model, "j_wrist_ri", origin))
+				{
+					return;
+				}
+
+				facing_axis(shown.yaw, axis);
+			}
+		}
+		else
+		{
+			if (!(before < event.at_ms && now >= event.at_ms))
+			{
+				return;
+			}
+
+			if (!bone(actor.handle, model, event.bone[0] ? event.bone : "j_spineupper", origin))
+			{
+				memcpy(origin, shown.origin, sizeof(origin));
+				origin[2] += 44.0f;
+			}
+
+			// (out of its back)
+			facing_axis(shown.yaw + 180.0f, axis);
+		}
+
+		if (!effects_play_once(event.effect, origin, axis))
+		{
+			say("actors: %s's effect %s is not loaded in this match", actor.name, event.effect);
+		}
 	}
 }
 
@@ -1150,7 +1408,7 @@ int actors_add(const float origin[3], const float yaw, const int dressed_as, con
 
 	g_actors[g_count] = actor;
 	g_outfits[g_count] = outfit;
-	g_outfit_changes[g_count] = 1;
+	g_outfit_changes[g_count] = ++g_change_counter;
 	g_now[g_count] = ActorNow();
 	return g_count++;
 }
@@ -1183,7 +1441,7 @@ bool actors_dress(const int index, const int dressed_as)
 	}
 
 	g_outfits[index] = outfit;
-	++g_outfit_changes[index];
+	g_outfit_changes[index] = ++g_change_counter;
 	return true;
 }
 
@@ -1348,7 +1606,7 @@ void actors_release()
 {
 	for (int slot = 0; slot <= ACTORS_MAX; ++slot)
 	{
-		if (g_built[slot].tree)
+		if (g_built[slot].tree || g_built[slot].prop)
 		{
 			unbuild(slot, slot == PREVIEW ? PREVIEW_HANDLE : FIRST_HANDLE + slot, true);
 		}
@@ -1381,12 +1639,13 @@ void actors_scene_frame(const TheaterState& state)
 		const int slot = slot_of(handle);
 		if (slot >= 0 && slot < ACTORS_MAX)
 		{
-			if (g_built[slot].tree)
+			if (g_built[slot].tree || g_built[slot].prop)
 			{
 				unbuild(slot, handle, state.playing);
 			}
 
 			g_built[slot] = Built();
+			g_scanned[slot] = Actor();
 		}
 	}
 
@@ -1429,7 +1688,7 @@ void actors_scene_frame(const TheaterState& state)
 		const Actor& actor = actors[i];
 		ActorNow status;
 		std::vector<std::string> names;
-		for (int c = 0; c < actor.clip_count; ++c)
+		for (int c = 0; c < actor.clip_count && !actor.prop; ++c)
 		{
 			names.emplace_back(actor.clips[c].anim);
 		}
@@ -1453,7 +1712,7 @@ void actors_scene_frame(const TheaterState& state)
 				changes = g_outfit_changes[i];
 			}
 
-			model = ensure(slot, actor.handle, names, outfit, changes);
+			model = ensure(slot, actor.handle, names, outfit, changes, actor.prop);
 			status.made = model != nullptr;
 			if (model)
 			{
@@ -1464,7 +1723,9 @@ void actors_scene_frame(const TheaterState& state)
 		Built& built = g_built[slot];
 		if (model && shown.any)
 		{
-			if (!animate(built, model, shown.weights, shown.times) || !pose(actor.handle, shown.origin, shown.yaw) || !draw(model, actor.handle, shown.origin))
+			if ((!actor.prop && !animate(built, model, shown.weights, shown.times)) ||
+			    !pose(actor.handle, shown.origin, shown.yaw, actor.prop ? actor.pitch : 0.0f, actor.prop ? actor.roll : 0.0f) ||
+			    !draw(model, actor.handle, shown.origin))
 			{
 				say("actors: a fault drawing %s; it is left out until it is changed", actor.name);
 				built.broken = true;
@@ -1474,11 +1735,51 @@ void actors_scene_frame(const TheaterState& state)
 			status.clip = shown.clip;
 			memcpy(status.origin, shown.origin, sizeof(status.origin));
 			status.yaw = shown.yaw;
+			status.path_gone = shown.gone;
+			status.path_length = shown.path_length;
+			// what it does at a time (its shots, its blood), as the time goes past it
+			const double before = g_before[slot];
+			if (!built.broken && now > before && now - before < 400.0)
+			{
+				for (int e = 0; e < actor.event_count && e < ACTOR_EVENTS_MAX; ++e)
+				{
+					happen(actor, actor.events[e], model, shown, before, now);
+				}
+			}
 		}
 		else
 		{
 			memcpy(status.origin, actor.origin, sizeof(status.origin));
 			status.yaw = actor.yaw;
+		}
+
+		g_before[slot] = now;
+		// when it gets to its path's end (worked out anew when it has been changed)
+		if (actor.path_count > 0 && model && !built.broken)
+		{
+			if (memcmp(&g_scanned[slot], &actor, sizeof(Actor)) != 0)
+			{
+				g_scanned[slot] = actor;
+				g_path_end[slot] = 0;
+				std::uint32_t first = UINT32_MAX, last = 0;
+				for (int c = 0; c < actor.clip_count; ++c)
+				{
+					first = (std::min)(first, actor.clips[c].at_ms);
+					last = (std::max)(last, actor.clips[c].at_ms + actor.clips[c].length_ms);
+				}
+
+				for (std::uint32_t t = first, steps = 0; t <= last && steps < 6000 && first != UINT32_MAX; t += 50, ++steps)
+				{
+					const Shown then = shown_at(actor, built, t);
+					if (then.path_length > 0.0f && then.gone >= then.path_length - 0.5f)
+					{
+						g_path_end[slot] = t;
+						break;
+					}
+				}
+			}
+
+			status.path_end_ms = g_path_end[slot];
 		}
 
 		status.broken = built.broken;
@@ -1549,9 +1850,336 @@ void actors_scene_frame(const TheaterState& state)
 		}
 	}
 
+	// (kept in the middle of the view however far the animation carries it: its hips over the middle, and brought
+	// back up or down when it climbs or drops out of sight)
+	if (has[0])
+	{
+		const float x = bones[0][0], y = bones[0][1];
+		const float z = bones[0][2] > 62.0f ? bones[0][2] - 62.0f : bones[0][2] < -4.0f ? bones[0][2] + 4.0f : 0.0f;
+		for (int b = 0; b < ACTOR_BONES; ++b)
+		{
+			bones[b][0] -= x;
+			bones[b][1] -= y;
+			bones[b][2] -= z;
+		}
+	}
+
 	std::lock_guard<std::mutex> lock(g_lock);
 	memcpy(g_preview_bones, bones, sizeof(bones));
 	memcpy(g_preview_has, has, sizeof(has));
 	g_preview_fraction = fraction;
 	g_preview_ready = true;
+}
+
+// ---- props, guns, and the whole of it taken and put back (the saved scene, undo)
+namespace
+{
+	// (with the lock held) A handle none of the actors has.
+	int free_handle()
+	{
+		int handle = FIRST_HANDLE;
+		for (bool taken = true; taken;)
+		{
+			taken = false;
+			for (int i = 0; i < g_count; ++i)
+			{
+				if (g_actors[i].handle == handle)
+				{
+					taken = true;
+					++handle;
+				}
+			}
+		}
+
+		return handle;
+	}
+
+	bool is_gun(const char* name)
+	{
+		return strncmp(name, "npc_", 4) == 0;
+	}
+}
+
+int actors_add_prop(const char* model, const float origin[3], const float yaw, const std::uint32_t ms)
+{
+	ModelsOutfit outfit;
+	models_outfit_named(model, &outfit);
+	std::lock_guard<std::mutex> lock(g_lock);
+	if (g_count >= ACTORS_MAX || !model || !model[0])
+	{
+		return -1;
+	}
+
+	Actor actor;
+	actor.handle = free_handle();
+	snprintf(actor.name, sizeof(actor.name), "%.31s", model);
+	memcpy(actor.origin, origin, sizeof(actor.origin));
+	actor.yaw = yaw;
+	actor.prop = true;
+	actor.moves = false;
+	strncpy_s(actor.model, model, _TRUNCATE);
+	actor.clips[0].at_ms = ms;
+	actor.clips[0].length_ms = 10000;
+	actor.clips[0].anim[0] = 0;
+	actor.clip_count = 1;
+	g_actors[g_count] = actor;
+	g_outfits[g_count] = outfit;
+	g_outfit_changes[g_count] = ++g_change_counter;
+	g_now[g_count] = ActorNow();
+	return g_count++;
+}
+
+bool actors_gun(const int index, char out[64])
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	out[0] = 0;
+	if (index < 0 || index >= g_count)
+	{
+		return false;
+	}
+
+	const ModelsOutfit& outfit = g_outfits[index];
+	for (int i = 0; i < outfit.count; ++i)
+	{
+		if (is_gun(outfit.names[i]))
+		{
+			strncpy_s(out, 64, outfit.names[i], _TRUNCATE);
+			return true;
+		}
+	}
+
+	return false;
+}
+
+// The gun in its hands is another model ("": none). The place in the hands is the one a player's gun has: if the
+// actor's outfit came without a gun, a player's of the match is gone by.
+bool actors_give_gun(const int index, const char* model)
+{
+	// (a player's gun's entry, asked for before the lock is taken)
+	ModelsOutfit donor;
+	int donor_entry = -1;
+	for (int entity = 0; entity < 42 && donor_entry < 0; ++entity)
+	{
+		if (models_outfit_of(entity, &donor))
+		{
+			for (int i = 0; i < donor.count && donor_entry < 0; ++i)
+			{
+				donor_entry = is_gun(donor.names[i]) ? i : -1;
+			}
+		}
+	}
+
+	std::lock_guard<std::mutex> lock(g_lock);
+	if (index < 0 || index >= g_count || g_actors[index].prop)
+	{
+		return false;
+	}
+
+	ModelsOutfit& outfit = g_outfits[index];
+	// the first of its gun's parts is kept as the place; the others (sights, grips) go
+	int first = -1, kept = 0;
+	for (int i = 0; i < outfit.count; ++i)
+	{
+		const bool gun = is_gun(outfit.names[i]);
+		if (gun && first >= 0)
+		{
+			continue;
+		}
+
+		if (gun && (!model || !model[0]))
+		{
+			continue;
+		}
+
+		if (kept != i)
+		{
+			memcpy(outfit.names[kept], outfit.names[i], sizeof(outfit.names[0]));
+			memcpy(outfit.over[kept], outfit.over[i], sizeof(outfit.over[0]));
+			memcpy(outfit.base[kept], outfit.base[i], sizeof(outfit.base[0]));
+			memcpy(outfit.entries[kept], outfit.entries[i], sizeof(outfit.entries[0]));
+		}
+
+		first = gun ? kept : first;
+		++kept;
+	}
+
+	outfit.count = kept;
+	if (model && model[0])
+	{
+		if (first < 0)
+		{
+			if (donor_entry < 0 || outfit.count >= 32)
+			{
+				return false;
+			}
+
+			first = outfit.count++;
+			memcpy(outfit.entries[first], donor.entries[donor_entry], sizeof(outfit.entries[0]));
+		}
+
+		strncpy_s(outfit.names[first], model, _TRUNCATE);
+		outfit.over[first][0] = 0;
+		outfit.base[first][0] = 0;
+		outfit.entries[first][0xD] = 0;
+	}
+
+	g_outfit_changes[index] = ++g_change_counter;
+	return true;
+}
+
+int actors_export(Actor* actors, ModelsOutfit* outfits, const int max)
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	const int count = g_count < max ? g_count : max;
+	for (int i = 0; i < count; ++i)
+	{
+		actors[i] = g_actors[i];
+		outfits[i] = g_outfits[i];
+	}
+
+	return count;
+}
+
+void actors_import(const Actor* actors, const ModelsOutfit* outfits, const int count)
+{
+	std::vector<int> gone;
+	{
+		std::lock_guard<std::mutex> lock(g_lock);
+		// what each handle had, to tell what has changed
+		std::map<int, int> had;
+		for (int i = 0; i < g_count; ++i)
+		{
+			had[g_actors[i].handle] = i;
+		}
+
+		static ModelsOutfit old_outfits[ACTORS_MAX];
+		unsigned old_changes[ACTORS_MAX];
+		ActorNow old_now[ACTORS_MAX];
+		for (int i = 0; i < g_count; ++i)
+		{
+			old_outfits[i] = g_outfits[i];
+			old_changes[i] = g_outfit_changes[i];
+			old_now[i] = g_now[i];
+		}
+
+		const int taken = count < ACTORS_MAX ? count : ACTORS_MAX;
+		int highest = 0;
+		for (int i = 0; i < taken; ++i)
+		{
+			g_actors[i] = actors[i];
+			g_outfits[i] = outfits[i];
+			const auto was = had.find(actors[i].handle);
+			if (was != had.end() && memcmp(&old_outfits[was->second], &outfits[i], sizeof(ModelsOutfit)) == 0)
+			{
+				g_outfit_changes[i] = old_changes[was->second];
+				g_now[i] = old_now[was->second];
+			}
+			else
+			{
+				g_outfit_changes[i] = ++g_change_counter;
+				g_now[i] = ActorNow();
+			}
+
+			if (was != had.end())
+			{
+				had.erase(was);
+			}
+
+			int number = 0;
+			if (sscanf_s(actors[i].name, "actor%d", &number) == 1 && number > highest)
+			{
+				highest = number;
+			}
+		}
+
+		for (const auto& left : had)
+		{
+			gone.push_back(left.first);
+			g_removed.push_back(left.first);
+		}
+
+		g_count = taken;
+		g_next_number = (std::max)(g_next_number, highest + 1);
+	}
+
+	for (const int handle : gone)
+	{
+		models_drop(handle);
+	}
+}
+
+void actors_touch(const int handle)
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	for (int i = 0; i < g_count; ++i)
+	{
+		if (g_actors[i].handle == handle)
+		{
+			g_outfit_changes[i] = ++g_change_counter;
+		}
+	}
+}
+
+// Where an actor or prop is now (by its handle); false: there is none such, or it is not shown.
+bool actors_origin_of(const int handle, float out[3])
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	for (int i = 0; i < g_count; ++i)
+	{
+		if (g_actors[i].handle == handle && g_now[i].shown)
+		{
+			memcpy(out, g_now[i].origin, 3 * sizeof(float));
+			return true;
+		}
+	}
+
+	return false;
+}
+
+// The death animations chosen, as lines of "player<tab>animation" (-1: everybody).
+int deaths_export(char* out, const int size)
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	std::string text;
+	if (!g_death_all.empty())
+	{
+		text += "-1\t" + g_death_all + "\n";
+	}
+
+	for (const auto& one : g_death_of)
+	{
+		text += std::to_string(one.first) + "\t" + one.second + "\n";
+	}
+
+	strncpy_s(out, static_cast<size_t>(size), text.c_str(), _TRUNCATE);
+	return static_cast<int>(strlen(out));
+}
+
+void deaths_import(const char* text)
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	g_death_all.clear();
+	g_death_of.clear();
+	for (const char* at = text; at && *at;)
+	{
+		const char* end = strchr(at, '\n');
+		const std::string line(at, end ? static_cast<size_t>(end - at) : strlen(at));
+		const size_t tab = line.find('\t');
+		if (tab != std::string::npos && tab + 1 < line.size())
+		{
+			const int entity = atoi(line.c_str());
+			if (entity < 0)
+			{
+				g_death_all = line.substr(tab + 1);
+			}
+			else
+			{
+				g_death_of[entity] = line.substr(tab + 1);
+			}
+		}
+
+		at = end ? end + 1 : nullptr;
+	}
+
+	g_death_any = !g_death_all.empty() || !g_death_of.empty();
 }

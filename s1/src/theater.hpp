@@ -154,9 +154,24 @@ struct ModelsOutfit
 bool models_outfit_of(int entity, ModelsOutfit* out);
 void* models_make_actor(int handle, const ModelsOutfit& outfit, void* tree, char missing[64]);
 void models_drop(int entity);
+// An outfit of one model (a prop).
+void models_outfit_named(const char* model, ModelsOutfit* out);
+// The editor's changes for an entity (other models, added ones, camouflage) as text, and put back from it.
+int models_export(int entity, char* out, int size);
+void models_import(int entity, const char* text);
 
 // ---- actors (actors.cpp): figures the editor puts into the match, dressed as a player and played by clips
-constexpr int ACTORS_MAX = 16, ACTOR_CLIPS_MAX = 24, ACTOR_BONES = 22;
+constexpr int ACTORS_MAX = 16, ACTOR_CLIPS_MAX = 24, ACTOR_BONES = 22, ACTOR_PATH_MAX = 16, ACTOR_EVENTS_MAX = 12;
+// Something an actor does at a time: 0 shots (its gun's flash again and again for a while), 1 an effect once on
+// a part of it (blood).
+struct ActorEvent
+{
+	int kind = 0;
+	std::uint32_t at_ms = 0, length_ms = 600;
+	float every_ms = 100.0f;         // shots: one this often
+	char effect[96] = "";
+	char bone[32] = "";
+};
 struct ActorClip
 {
 	char anim[64] = "";
@@ -177,6 +192,18 @@ struct Actor
 	bool stays = true;               // holds its last pose after its last clip (else it goes)
 	int clip_count = 0;
 	ActorClip clips[ACTOR_CLIPS_MAX];
+	// (what follows was added after 0.70: a saved scene from before has none of it. Only ever add at the end.)
+	// a path: from where it stands through these points. An actor's moving animations carry it along the path
+	// (turning at its corners) instead of straight on; a prop goes along it at its speed.
+	int path_count = 0;
+	float path[ACTOR_PATH_MAX][3] = {};
+	// a prop: one model of the game's (no animations), shown for its first clip's time
+	bool prop = false;
+	char model[64] = "";
+	float pitch = 0.0f, roll = 0.0f;
+	float speed = 300.0f;            // along its path, units a second
+	int event_count = 0;
+	ActorEvent events[ACTOR_EVENTS_MAX];
 };
 struct ActorNow
 {
@@ -185,11 +212,26 @@ struct ActorNow
 	float origin[3] = {};            // where it stands now (its animations may have carried it)
 	float yaw = 0.0f;
 	char waiting[96] = "";           // what it is waiting for (a model or animation not in memory)
+	float path_gone = 0.0f, path_length = 0.0f;  // how far along its path it is, of how far
+	std::uint32_t path_end_ms = 0;   // when it gets to its path's end (0: it does not, as its animations are)
 };
 int actors_list(Actor* out, int max);
 bool actors_now(int index, ActorNow* out);
 int actors_handles(int* out, int max);
 int actors_add(const float origin[3], float yaw, int dressed_as, std::uint32_t ms);
+// A prop: one model of the game's at a place (-1: no room).
+int actors_add_prop(const char* model, const float origin[3], float yaw, std::uint32_t ms);
+// The gun in an actor's hands: which model it is ("" none), and another put there (false: no player's gun to go by).
+bool actors_gun(int index, char out[64]);
+bool actors_give_gun(int index, const char* model);
+// Everything about the actors, for the saved scene and undo: taken, and put back.
+int actors_export(Actor* actors, ModelsOutfit* outfits, int max);
+void actors_import(const Actor* actors, const ModelsOutfit* outfits, int count);
+// The actor (by its handle) is made again: its outfit's changes are taken up.
+void actors_touch(int handle);
+bool actors_origin_of(int handle, float out[3]);
+int deaths_export(char* out, int size);
+void deaths_import(const char* text);
 void actors_set(int index, const Actor& actor);
 bool actors_dress(int index, int dressed_as);
 void actors_remove(int index);
@@ -225,6 +267,8 @@ struct PlacedEffect
 	std::uint32_t length_ms = 2000;         // its clip on the timeline: played again and again only this long
 	bool follow = false;                    // played where the camera is each time (rain, mist), this far above it
 	float above = 0.0f;
+	// (added after 0.70; only ever add at the end) played where an actor or prop is each time: its handle (0: not)
+	int on_actor = 0;
 };
 
 int effects_find(const char* text, char names[][96], int max);
@@ -237,6 +281,28 @@ int effects_add(const char* name, const float origin[3], std::uint32_t ms);
 void effects_set(int index, const PlacedEffect& placed);
 void effects_fire(int index);
 void effects_remove(int index);
+// (the game's thread) An effect played once, now, at a place along an axis (forward, left, up). False: not loaded.
+bool effects_play_once(const char* name, const float origin[3], const float axis[3][3]);
+// The camera's path as bytes (for the saved scene and undo), and put back.
+int camera_points_export(unsigned char* out, int size);
+void camera_points_import(const unsigned char* bytes, int size);
+// scene.cpp: the saved scene (what the editor put into a recording, kept beside it), undo and redo, the storm.
+struct StormState
+{
+	bool on = false;
+	float every_s = 8.0f;      // a strike about this often
+	float flash = 3.0f;        // how much brighter the sun's light is at a strike
+	float distance = 6000.0f;  // how far from the camera the bolts are
+	bool bolts = true;
+};
+StormState storm_state();
+void storm_set(const StormState& storm);
+void scene_ui_frame(const TheaterState& state, bool busy);
+void scene_game_frame(const TheaterState& state);
+bool scene_can_undo();
+bool scene_can_redo();
+void scene_undo();
+void scene_redo();
 void effects_game_frame(const TheaterState& state);
 // Where the picture is taken from this frame.
 void camera_view_origin(float out[3]);

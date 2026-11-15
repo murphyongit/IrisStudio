@@ -29,7 +29,9 @@
 #include <cstring>
 #include <iterator>
 #include <mutex>
+#include <array>
 #include <set>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -318,6 +320,18 @@ namespace
 
 		if (ImGui::BeginMenu("Edit"))
 		{
+			if (ImGui::MenuItem(ICON_UNDO "  Undo", "Ctrl+Z", false, scene_can_undo()))
+			{
+				scene_undo();
+			}
+
+			if (ImGui::MenuItem(ICON_REDO "  Redo", "Ctrl+Y", false, scene_can_redo()))
+			{
+				scene_redo();
+			}
+
+			ImGui::SetItemTooltip("Undo and redo go over what you put into the recording: actors and props, effects, lights, the camera's path, the deaths\nchosen and the storm. All of it is also kept beside the recording and is there again the next time you play it.");
+			ImGui::Separator();
 			if (ImGui::MenuItem("Add campath node", "K", false, camera_state().mode == CameraMode::Free))
 			{
 				camera_add_point();
@@ -452,7 +466,7 @@ namespace
 		const bool loaded = effects_lasts(name) >= 0;
 		ImGui::PushID(name);
 		ImGui::PushStyleColor(ImGuiCol_Text, u32(favourite ? P.warn : P.muted, favourite ? 1.0f : 0.45f));
-		ImGui::PushStyleColor(ImGuiCol_Button, 0);
+		ImGui::PushStyleColor(ImGuiCol_Button, static_cast<ImU32>(0));
 		if (ImGui::SmallButton(ICON_STAR))
 		{
 			fx_favourite_toggle(name);
@@ -873,7 +887,7 @@ namespace
 	{
 		struct Thing
 		{
-			int kind;  // 0 an effect, 1 an actor
+			int kind;  // 0 an effect, 1 an actor or prop, 2 a light, 3 a point of the open actor's path
 			int index;
 			float origin[3];   // where its handle is
 			float angles[3];   // up/down, around, roll
@@ -887,6 +901,9 @@ namespace
 		static float held_angle = 0.0f;
 		static PlacedEffect effects[EFFECTS_MAX];
 		static Actor actors[ACTORS_MAX];
+		static SceneLight lights[32];
+		static char light_names[32][16], point_names[ACTOR_PATH_MAX][24];
+		static int held_actor = -1;
 		const ImGuiIO& io = ImGui::GetIO();
 		if (held && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
 		{
@@ -935,7 +952,42 @@ namespace
 			things.push_back(thing);
 		}
 
+		const int light_count = scene_lights(lights, 32);
+		for (int i = 0; i < light_count; ++i)
+		{
+			snprintf(light_names[i], sizeof(light_names[i]), "Light %d", i + 1);
+			Thing thing = {2, i, {}, {}, light_names[i]};
+			memcpy(thing.origin, lights[i].origin, sizeof(thing.origin));
+			memcpy(thing.angles, lights[i].angles, sizeof(thing.angles));
+			things.push_back(thing);
+		}
+
 		ImDrawList* draw = ImGui::GetWindowDrawList();
+		// the open actor's path: its points, and the line through them
+		const int path_actor = held && held_kind == 3 ? held_actor : g_actor_open;
+		if (path_actor >= 0 && path_actor < actor_count && actors[path_actor].path_count > 0)
+		{
+			const Actor& walker = actors[path_actor];
+			ImGui::PushClipRect(at, {at.x + size.x, at.y + size.y}, true);
+			const float* from = walker.origin;
+			for (int p = 0; p < walker.path_count && p < ACTOR_PATH_MAX; ++p)
+			{
+				snprintf(point_names[p], sizeof(point_names[p]), "%.12s: point %d", walker.name, p + 1);
+				Thing thing = {3, p, {}, {}, point_names[p]};
+				memcpy(thing.origin, walker.path[p], sizeof(thing.origin));
+				things.push_back(thing);
+				ImVec2 a, b;
+				if (on_picture(view, from, &a) && on_picture(view, walker.path[p], &b))
+				{
+					draw->AddLine(a, b, u32(P.accent, 0.8f), 2.0f);
+				}
+
+				from = walker.path[p];
+			}
+
+			ImGui::PopClipRect();
+		}
+
 		static const unsigned COLOURS[3] = {0xFF5050E6u, 0xFF50C850u, 0xFFE68C50u};  // (ABGR) red, green, blue
 		static const float AXES[3][3] = {{1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f, 1.0f}};
 		int over_thing = -1, over_axis = -1;
@@ -963,8 +1015,8 @@ namespace
 			const bool turning = this_held ? held_turn : g_handles_turn;
 			for (int a = 0; a < 3; ++a)
 			{
-				// (an actor only turns about the upright)
-				if (turning && thing.kind == 1 && a != 2)
+				// (an actor only turns about the upright; a light that shines all round and a path's point do not turn)
+				if (turning && ((thing.kind == 1 && a != 2) || thing.kind == 3 || (thing.kind == 2 && !lights[thing.index].spot)))
 				{
 					continue;
 				}
@@ -1050,7 +1102,8 @@ namespace
 				held_kind = thing.kind;
 				held_index = thing.index;
 				held_axis = over_axis;
-				held_turn = g_handles_turn;
+				held_turn = g_handles_turn && thing.kind != 3 && !(thing.kind == 2 && !lights[thing.index].spot);
+				held_actor = path_actor;
 				// (an actor is slid from where it was put, not from where its animations have carried it)
 				if (thing.kind == 1)
 				{
@@ -1145,6 +1198,19 @@ namespace
 				changed.yaw = angles[1];
 				actors_set(held_index, changed);
 			}
+			else if (held_kind == 2 && held_index < light_count)
+			{
+				SceneLight changed = lights[held_index];
+				memcpy(changed.origin, origin, sizeof(changed.origin));
+				memcpy(changed.angles, angles, sizeof(changed.angles));
+				scene_set_light(held_index, changed);
+			}
+			else if (held_kind == 3 && held_actor >= 0 && held_actor < actor_count && held_index < actors[held_actor].path_count)
+			{
+				Actor changed = actors[held_actor];
+				memcpy(changed.path[held_index], origin, sizeof(changed.path[held_index]));
+				actors_set(held_actor, changed);
+			}
 		}
 
 		return held;
@@ -1186,6 +1252,65 @@ namespace
 	}
 
 	// The menu a right click on the picture opens: things put at the place clicked.
+	// Props: any model the game has loaded, put at a place.
+	struct PropPick
+	{
+		bool open = false;
+		float point[3] = {};
+		char search[48] = "";
+	};
+	PropPick g_prop_pick;
+
+	void draw_prop_picker()
+	{
+		if (g_prop_pick.open)
+		{
+			g_prop_pick.open = false;
+			ImGui::OpenPopup("Props");
+		}
+
+		ImGui::SetNextWindowSize({g_font_size * 30.0f, g_font_size * 30.0f}, ImGuiCond_Appearing);
+		if (!ImGui::BeginPopup("Props"))
+		{
+			return;
+		}
+
+		ImGui::PushTextWrapPos(0.0f);
+		ImGui::TextDisabled("Any model the game has in memory for this match, put where you clicked. Killstreaks and vehicles: try \"vehicle\", "
+		                    "\"drone\", \"crate\", \"care\", \"turret\", \"missile\". Give it a path and a speed to make it fly or drive.");
+		ImGui::PopTextWrapPos();
+		ImGui::SetNextItemWidth(-1.0f);
+		ImGui::InputTextWithHint("##propSearch", ICON_SEARCH "  Search the models", g_prop_pick.search, sizeof(g_prop_pick.search));
+		static char found[400][64];
+		const int count = models_find(g_prop_pick.search, 3, -1, found, 400);
+		ImGui::BeginChild("##propList", {0.0f, -ImGui::GetFrameHeightWithSpacing()}, ImGuiChildFlags_Border);
+		for (int m = 0; m < count; ++m)
+		{
+			if (ImGui::Selectable(found[m]))
+			{
+				float eye[3];
+				camera_view_origin(eye);
+				const float yaw = std::atan2(eye[1] - g_prop_pick.point[1], eye[0] - g_prop_pick.point[0]) * 57.29578f;
+				const int index = actors_add_prop(found[m], g_prop_pick.point, yaw, theater_state().position_ms);
+				if (index < 0)
+				{
+					ui_log("No prop added: all %d actors and props are in use.", ACTORS_MAX);
+				}
+				else
+				{
+					g_actor_open = index;
+					g_actor_clip = -1;
+				}
+
+				ImGui::CloseCurrentPopup();
+			}
+		}
+
+		ImGui::EndChild();
+		ImGui::TextDisabled("%d model%s%s", count, count == 1 ? "" : "s", count >= 400 ? " (the first 400: search to narrow it)" : "");
+		ImGui::EndPopup();
+	}
+
 	void draw_place_menu()
 	{
 		static int found = 0;
@@ -1224,6 +1349,28 @@ namespace
 		if (ImGui::MenuItem(ICON_PERSON "  Add an actor here"))
 		{
 			add_actor_at(point);
+		}
+
+		if (ImGui::MenuItem(ICON_CUBE "  Add a prop here..."))
+		{
+			g_prop_pick.open = true;
+			memcpy(g_prop_pick.point, point, sizeof(g_prop_pick.point));
+		}
+
+		{
+			static Actor listed[ACTORS_MAX];
+			const int listed_count = actors_list(listed, ACTORS_MAX);
+			if (g_actor_open >= 0 && g_actor_open < listed_count)
+			{
+				char text[96];
+				snprintf(text, sizeof(text), ICON_FLAG "  Add a path point for %s here", listed[g_actor_open].name);
+				if (ImGui::MenuItem(text, nullptr, false, listed[g_actor_open].path_count < ACTOR_PATH_MAX))
+				{
+					Actor walker = listed[g_actor_open];
+					memcpy(walker.path[walker.path_count++], point, sizeof(walker.path[0]));
+					actors_set(g_actor_open, walker);
+				}
+			}
 		}
 
 		ImGui::SetItemTooltip("A figure of the editor's own, dressed as the player nearest the camera: its outfit and its animations are set in the Scene tab");
@@ -1472,6 +1619,284 @@ namespace
 		ImGui::SetNextItemWidth(-1.0f);
 	}
 
+	// The gun in an actor's hands: any of the game's guns as others see them.
+	void draw_actor_gun(const int index)
+	{
+		static char search[48] = "";
+		static bool parts = false;
+		char gun[64] = "";
+		actors_gun(index, gun);
+		row_label("Gun");
+		if (ImGui::BeginCombo("##gun", gun[0] ? gun : "None"))
+		{
+			ImGui::SetNextItemWidth(-1.0f);
+			ImGui::InputTextWithHint("##gunSearch", ICON_SEARCH "  Search the guns", search, sizeof(search));
+			ImGui::Checkbox("Single parts too (bare guns, sights, grips)", &parts);
+			if (ImGui::Selectable("None (empty hands)", gun[0] == 0))
+			{
+				actors_give_gun(index, "");
+			}
+
+			static char found[400][64];
+			const int count = parts ? models_find(search, 1, -1, found, 400) : models_find(search, 4, 0, found, 400);
+			for (int m = 0; m < count; ++m)
+			{
+				if (ImGui::Selectable(found[m], strcmp(found[m], gun) == 0) && !actors_give_gun(index, found[m]))
+				{
+					ui_log("The gun could not be put in its hands: no player of the match has a gun right now to go by. Go to a time when one does.");
+				}
+			}
+
+			ImGui::EndCombo();
+		}
+
+		ImGui::SetItemTooltip("The gun it holds. Camouflage and single parts can be changed under Models (\"Change its outfit\").");
+	}
+
+	// An effect for something an actor does: the first of the game's loaded effects whose name has one of these in it.
+	void first_effect(const char* const* words, const int word_count, char out[96])
+	{
+		static char found[400][96];
+		out[0] = 0;
+		for (int w = 0; w < word_count && !out[0]; ++w)
+		{
+			const int count = effects_find(words[w], found, 400);
+			if (count > 0)
+			{
+				strncpy_s(out, 96, found[0], _TRUNCATE);
+			}
+		}
+	}
+
+	// What comes after an actor's own rows: a prop's model and timing, the path, the shots and blood.
+	bool draw_actor_more(const int index, Actor& actor, const ActorNow* standing, const TheaterState& state)
+	{
+		bool changed = false;
+		const ImGuiStyle& style = ImGui::GetStyle();
+		if (actor.prop)
+		{
+			row_label("Model");
+			ImGui::TextUnformatted(actor.model);
+			row_label("Tilt and roll");
+			float tilt[3] = {actor.pitch, actor.roll, 0.0f};
+			ImGui::SetNextItemWidth(ImGui::CalcItemWidth());
+			if (ImGui::DragFloat2("##tilt", tilt, 0.5f, -360.0f, 360.0f, "%.0f"))
+			{
+				actor.pitch = tilt[0];
+				actor.roll = tilt[1];
+				changed = true;
+			}
+
+			ImGui::SetItemTooltip("Nose up or down, and leaning to a side. (Facing, above, turns it around; on a path it faces along the path, plus that.)");
+			ActorClip& span = actor.clips[0];
+			float starts = span.at_ms / 1000.0f, lasts = span.length_ms / 1000.0f;
+			row_label("Comes in at");
+			if (ImGui::DragFloat("##propAt", &starts, 0.02f, 0.0f, state.length_ms / 1000.0f, "%.2f s"))
+			{
+				span.at_ms = static_cast<std::uint32_t>((std::max)(0.0f, starts) * 1000.0f);
+				changed = true;
+			}
+
+			row_label("For");
+			if (ImGui::DragFloat("##propFor", &lasts, 0.02f, 0.1f, 3600.0f, "%.2f s"))
+			{
+				span.length_ms = static_cast<std::uint32_t>((std::max)(0.1f, lasts) * 1000.0f);
+				changed = true;
+			}
+
+			ImGui::SetItemTooltip("How long it moves along its path. With \"Stays after the last\" on it stays where it got to; off, it goes.");
+			row_label("Speed on its path");
+			ui::Default(300.0f);
+			changed = ui::DragFloat("##propSpeed", &actor.speed, 5.0f, 0.0f, 20000.0f, "%.0f a second") || changed;
+			row_label("Stays after");
+			changed = ImGui::Checkbox("##propStays", &actor.stays) || changed;
+		}
+
+		ImGui::SeparatorText("Path");
+		if (actor.path_count == 0)
+		{
+			ImGui::PushTextWrapPos(0.0f);
+			ImGui::TextDisabled(actor.prop ? "Points it goes through at its speed, from where it stands."
+			                               : "Points it goes through, from where it stands: its moving animations (a run, a walk) carry it along the path "
+			                                 "and turn it at the corners, instead of straight on.");
+			ImGui::PopTextWrapPos();
+		}
+
+		int remove_point = -1;
+		for (int p = 0; p < actor.path_count && p < ACTOR_PATH_MAX; ++p)
+		{
+			ImGui::PushID(1000 + p);
+			char label[24];
+			snprintf(label, sizeof(label), "Point %d", p + 1);
+			row_label(label);
+			ImGui::SetNextItemWidth(-(ImGui::GetFrameHeight() + style.ItemSpacing.x));
+			changed = ImGui::DragFloat3("##point", actor.path[p], 1.0f, 0.0f, 0.0f, "%.0f") || changed;
+			ImGui::SameLine();
+			if (ImGui::SmallButton(ICON_TRASH))
+			{
+				remove_point = p;
+			}
+
+			ImGui::PopID();
+		}
+
+		if (remove_point >= 0)
+		{
+			for (int p = remove_point; p + 1 < actor.path_count; ++p)
+			{
+				memcpy(actor.path[p], actor.path[p + 1], sizeof(actor.path[0]));
+			}
+
+			--actor.path_count;
+			changed = true;
+		}
+
+		ImGui::BeginDisabled(actor.path_count >= ACTOR_PATH_MAX);
+		if (ImGui::Button(ICON_PLUS "  Add a point where the camera is"))
+		{
+			camera_view_origin(actor.path[actor.path_count++]);
+			changed = true;
+		}
+
+		ImGui::EndDisabled();
+		ImGui::SetItemTooltip("Or right click a place on the picture and choose \"Add a path point for %s here\".\nEach point has arrows on the picture to slide it.", actor.name);
+		if (actor.path_count > 0 && standing && standing->shown)
+		{
+			ImGui::PushTextWrapPos(0.0f);
+			if (standing->path_end_ms)
+			{
+				ImGui::TextDisabled("It gets to the end of its path at %.2f s.", standing->path_end_ms / 1000.0f);
+			}
+			else if (!actor.prop && standing->path_length > 0.0f)
+			{
+				ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(u32(P.warn)),
+				                   "Its animations do not take it to the end of its path (the path is %.0f units long): give its run or walk more time.",
+				                   standing->path_length);
+			}
+
+			ImGui::PopTextWrapPos();
+		}
+
+		if (actor.prop)
+		{
+			return changed;
+		}
+
+		ImGui::SeparatorText("Shots and blood");
+		int remove_event = -1;
+		for (int e = 0; e < actor.event_count && e < ACTOR_EVENTS_MAX; ++e)
+		{
+			ActorEvent& event = actor.events[e];
+			ImGui::PushID(2000 + e);
+			row_label(event.kind == 0 ? "Shots from" : "Blood at");
+			float at = event.at_ms / 1000.0f;
+			ImGui::SetNextItemWidth(-(ImGui::GetFrameHeight() + style.ItemSpacing.x));
+			if (ImGui::DragFloat("##eventAt", &at, 0.01f, 0.0f, state.length_ms / 1000.0f, "%.2f s"))
+			{
+				event.at_ms = static_cast<std::uint32_t>((std::max)(0.0f, at) * 1000.0f);
+				changed = true;
+			}
+
+			ImGui::SameLine();
+			if (ImGui::SmallButton(ICON_TRASH))
+			{
+				remove_event = e;
+			}
+
+			if (event.kind == 0)
+			{
+				float lasts = event.length_ms / 1000.0f, rate = 60000.0f / (std::max)(20.0f, event.every_ms);
+				row_label("For");
+				if (ImGui::DragFloat("##eventFor", &lasts, 0.01f, 0.0f, 600.0f, "%.2f s"))
+				{
+					event.length_ms = static_cast<std::uint32_t>((std::max)(0.0f, lasts) * 1000.0f);
+					changed = true;
+				}
+
+				row_label("Rounds a minute");
+				ui::Default(600.0f);
+				if (ui::DragFloat("##eventRate", &rate, 5.0f, 30.0f, 3000.0f, "%.0f"))
+				{
+					event.every_ms = 60000.0f / (std::max)(30.0f, rate);
+					changed = true;
+				}
+			}
+			else
+			{
+				row_label("On its");
+				changed = ImGui::InputTextWithHint("##eventBone", "j_spineupper (chest)", event.bone, sizeof(event.bone)) || changed;
+				ImGui::SetItemTooltip("The part of it the effect comes from: j_spineupper (chest), j_head, j_spinelower, j_knee_le, j_elbow_ri ...");
+			}
+
+			row_label(event.kind == 0 ? "Muzzle flash" : "Effect");
+			const char* slash = strrchr(event.effect, '/');
+			if (ImGui::BeginCombo("##eventEffect", event.effect[0] ? (slash ? slash + 1 : event.effect) : "Choose an effect..."))
+			{
+				fx_search_row("##eventSearch", ICON_SEARCH "  Search the effects", ImGui::GetContentRegionAvail().x);
+				const int count = fx_listed(g_fx_found, 400);
+				for (int f = 0; f < count; ++f)
+				{
+					if (fx_row(g_fx_found[f]))
+					{
+						strncpy_s(event.effect, g_fx_found[f], _TRUNCATE);
+						changed = true;
+						ImGui::CloseCurrentPopup();
+					}
+				}
+
+				ImGui::EndCombo();
+			}
+
+			if (event.effect[0])
+			{
+				ImGui::SetItemTooltip("%s", event.effect);
+			}
+
+			ImGui::Spacing();
+			ImGui::PopID();
+		}
+
+		if (remove_event >= 0)
+		{
+			for (int e = remove_event; e + 1 < actor.event_count; ++e)
+			{
+				actor.events[e] = actor.events[e + 1];
+			}
+
+			--actor.event_count;
+			changed = true;
+		}
+
+		ImGui::BeginDisabled(actor.event_count >= ACTOR_EVENTS_MAX);
+		if (ImGui::Button("Add shots"))
+		{
+			ActorEvent event;
+			event.kind = 0;
+			event.at_ms = state.position_ms;
+			static const char* const WORDS[] = {"muzzleflash", "muzzle_flash", "muzzle", "flash"};
+			first_effect(WORDS, 4, event.effect);
+			actor.events[actor.event_count++] = event;
+			changed = true;
+		}
+
+		ImGui::SetItemTooltip("Its gun's flash again and again for a while, beginning at the time the recording is at now.\nGive it a firing animation at the same time (search the library for \"fire\" or \"shoot\").");
+		ImGui::SameLine();
+		if (ImGui::Button("Add blood"))
+		{
+			ActorEvent event;
+			event.kind = 1;
+			event.at_ms = state.position_ms;
+			static const char* const WORDS[] = {"flesh_hit", "flesh", "blood"};
+			first_effect(WORDS, 3, event.effect);
+			actor.events[actor.event_count++] = event;
+			changed = true;
+		}
+
+		ImGui::SetItemTooltip("An effect once on a part of it, at the time the recording is at now: put it where its death animation begins.");
+		ImGui::EndDisabled();
+		return changed;
+	}
+
 	void draw_camera_tab(const TheaterState& state, const CameraState& camera)
 	{
 		if (section(ICON_CAMERA, "Camera"))
@@ -1505,7 +1930,8 @@ namespace
 			row_label("Field of View");
 			ImGui::BeginDisabled(camera.mode != CameraMode::Free && camera.mode != CameraMode::Bone);
 			ImGui::SetNextItemWidth(-look_key_width());
-			if (ImGui::SliderFloat("##fov", &fov, 5.0f, 160.0f, "%.1f"))
+			ui::Default(80.0f);
+			if (ui::SliderFloat("##fov", &fov, 5.0f, 160.0f, "%.1f"))
 			{
 				camera_set_fov(fov);
 				look_key_changed("camera_fov", &fov);
@@ -1519,7 +1945,8 @@ namespace
 				// (the bone camera has a fly speed of its own: it is flown close to a player)
 				float speed = camera.speed;
 				row_label("Fly speed");
-				if (ImGui::SliderFloat("##speed", &speed, camera.mode == CameraMode::Bone ? 2.0f : 50.0f, 3000.0f, "%.0f", ImGuiSliderFlags_Logarithmic))
+				ui::Default(camera.mode == CameraMode::Bone ? 40.0f : 400.0f);
+				if (ui::SliderFloat("##speed", &speed, camera.mode == CameraMode::Bone ? 2.0f : 50.0f, 3000.0f, "%.0f", ImGuiSliderFlags_Logarithmic))
 				{
 					camera_set_speed(speed);
 				}
@@ -1600,7 +2027,8 @@ namespace
 			// recording plays; flown with the mouse, press the diamond to keep where it is now)
 			row_label("Offset");
 			ImGui::SetNextItemWidth(-look_key_width());
-			if (ImGui::DragFloat3("##boneOffset", wanted.offset, 0.25f, -2000.0f, 2000.0f, "%.1f"))
+			ui::Default(0.0f, 0.0f, 0.0f);
+			if (ui::DragFloat3("##boneOffset", wanted.offset, 0.25f, -2000.0f, 2000.0f, "%.1f"))
 			{
 				changed = true;
 				look_key_changed("bone_offset", wanted.offset);
@@ -1610,7 +2038,8 @@ namespace
 			look_key_button("bone_offset", "Bone camera offset", 3, wanted.offset);
 			row_label("Rotation");
 			ImGui::SetNextItemWidth(-look_key_width());
-			if (ImGui::DragFloat3("##boneTurn", wanted.turn, 0.5f, -720.0f, 720.0f, "%.1f"))
+			ui::Default(0.0f, 0.0f, 0.0f);
+			if (ui::DragFloat3("##boneTurn", wanted.turn, 0.5f, -720.0f, 720.0f, "%.1f"))
 			{
 				changed = true;
 				look_key_changed("bone_turn", wanted.turn);
@@ -1964,10 +2393,12 @@ namespace
 					if (light.spot)
 					{
 						row_label("Direction");
-						changed = ImGui::DragFloat3("##angles", light.angles, 0.5f, -360.0f, 360.0f, "%.0f") || changed;
+						ui::Default(0.0f, 0.0f, 0.0f);
+						changed = ui::DragFloat3("##angles", light.angles, 0.5f, -360.0f, 360.0f, "%.0f") || changed;
 						ImGui::SetItemTooltip("Up and down, around, roll. \"Move here\" also points it the way the camera looks.");
 						row_label("Cone");
-						changed = ImGui::SliderFloat("##cone", &light.cone, 5.0f, 150.0f, "%.0f deg") || changed;
+						ui::Default(60.0f);
+						changed = ui::SliderFloat("##cone", &light.cone, 5.0f, 150.0f, "%.0f deg") || changed;
 						row_label("Shadows");
 						changed = ImGui::Checkbox("##shadows", &light.shadows) || changed;
 					}
@@ -1992,7 +2423,8 @@ namespace
 					snprintf(name, sizeof(name), "Light %d brightness", i + 1);
 					row_label("Brightness");
 					ImGui::SetNextItemWidth(-key);
-					if (ImGui::SliderFloat("##intensity", &stops, 0.0f, 30.0f, "%.1f"))
+					ui::Default(8.0f);
+					if (ui::SliderFloat("##intensity", &stops, 0.0f, 30.0f, "%.1f"))
 					{
 						light.intensity = std::pow(2.0f, stops);
 						changed = true;
@@ -2005,7 +2437,8 @@ namespace
 					snprintf(name, sizeof(name), "Light %d reach", i + 1);
 					row_label("Reach");
 					ImGui::SetNextItemWidth(-key);
-					if (ImGui::SliderFloat("##radius", &light.radius, 10.0f, 5000.0f, "%.0f", ImGuiSliderFlags_Logarithmic))
+					ui::Default(400.0f);
+					if (ui::SliderFloat("##radius", &light.radius, 10.0f, 5000.0f, "%.0f", ImGuiSliderFlags_Logarithmic))
 					{
 						changed = true;
 						look_key_changed(id, &light.radius);
@@ -2294,7 +2727,8 @@ namespace
 								}
 
 								row_label("Again every");
-								if (ImGui::DragFloat("##every", &again, 0.01f, 0.0f, 60.0f, again > 0.0f ? "%.2f s" : "never"))
+								ui::Default(0.0f);
+								if (ui::DragFloat("##every", &again, 0.01f, 0.0f, 60.0f, again > 0.0f ? "%.2f s" : "never"))
 								{
 									effect.every_ms = static_cast<std::uint32_t>(again * 1000.0f);
 									changed = true;
@@ -2304,13 +2738,51 @@ namespace
 							}
 						}
 
+						{
+							// played where an actor or prop is (a drone's engines, smoke off a crate)
+							static Actor carriers[ACTORS_MAX];
+							const int carrier_count = actors_list(carriers, ACTORS_MAX);
+							const char* on_name = "No";
+							for (int a = 0; a < carrier_count; ++a)
+							{
+								on_name = carriers[a].handle == effect.on_actor ? carriers[a].name : on_name;
+							}
+
+							row_label("On an actor or prop");
+							if (ImGui::BeginCombo("##onActor", on_name))
+							{
+								if (ImGui::Selectable("No", effect.on_actor == 0))
+								{
+									effect.on_actor = 0;
+									changed = true;
+								}
+
+								for (int a = 0; a < carrier_count; ++a)
+								{
+									ImGui::PushID(a);
+									if (ImGui::Selectable(carriers[a].name, carriers[a].handle == effect.on_actor))
+									{
+										effect.on_actor = carriers[a].handle;
+										changed = true;
+									}
+
+									ImGui::PopID();
+								}
+
+								ImGui::EndCombo();
+							}
+
+							ImGui::SetItemTooltip("Played where that actor or prop is each time it begins, not at a place of its own.\nWith \"Again every\" set short it goes along with it (a trail of smoke, engines).");
+						}
+
 						row_label("Follow the camera");
 						changed = ImGui::Checkbox("##follow", &effect.follow) || changed;
 						ImGui::SetItemTooltip("It is put where the camera is when it begins (rain or mist around the view), not at a place of its own");
 						if (effect.follow)
 						{
 							row_label("Above the camera");
-							changed = ImGui::DragFloat("##above", &effect.above, 1.0f, -2000.0f, 2000.0f, "%.0f") || changed;
+							ui::Default(0.0f);
+							changed = ui::DragFloat("##above", &effect.above, 1.0f, -2000.0f, 2000.0f, "%.0f") || changed;
 						}
 						else
 						{
@@ -2319,7 +2791,8 @@ namespace
 						}
 
 						row_label("Direction");
-						changed = ImGui::DragFloat3("##angles", effect.angles, 1.0f, -360.0f, 360.0f, "%.0f") || changed;
+						ui::Default(-90.0f, 0.0f, 0.0f);
+						changed = ui::DragFloat3("##angles", effect.angles, 1.0f, -360.0f, 360.0f, "%.0f") || changed;
 						ImGui::SetItemTooltip("Up and down, around, roll: which way the effect goes (it starts going up)");
 						ImGui::Unindent();
 						if (changed)
@@ -2423,6 +2896,8 @@ namespace
 					ImGui::SetItemTooltip("Where it stands when its first animation begins. Or drag its arrows on the picture.");
 					row_label("Facing");
 					changed = ImGui::DragFloat("##yaw", &actor.yaw, 1.0f, -360.0f, 360.0f, "%.0f") || changed;
+					if (!actor.prop)
+					{
 					row_label("Dressed as");
 					if (ImGui::BeginCombo("##dressed", "A player's outfit..."))
 					{
@@ -2450,12 +2925,18 @@ namespace
 					}
 
 					ImGui::SetItemTooltip("Shows this actor under Models below: its parts, the gear sets and a random outfit work on it as on a player");
+					draw_actor_gun(i);
 					row_label("Carried by its animations");
 					changed = ImGui::Checkbox("##moves", &actor.moves) || changed;
 					ImGui::SetItemTooltip("A walk walks it forward, a death throws it back: each animation carries on from where the one before left it");
+					}
+
 					row_label("Stays after the last");
 					changed = ImGui::Checkbox("##stays", &actor.stays) || changed;
 					ImGui::SetItemTooltip("On: it holds its last pose to the end of the recording (a body stays down). Off: it goes when its last animation is over.");
+					changed = draw_actor_more(i, actor, have_now ? &standing : nullptr, state) || changed;
+					if (!actor.prop)
+					{
 					ImGui::SeparatorText("Animations");
 					int remove_clip = -1;
 					for (int c = 0; c < actor.clip_count; ++c)
@@ -2519,9 +3000,11 @@ namespace
 							}
 
 							row_label("Speed");
-							changed = ImGui::DragFloat("##speed", &clip.speed, 0.01f, 0.05f, 4.0f, "%.2fx") || changed;
+							ui::Default(1.0f);
+							changed = ui::DragFloat("##speed", &clip.speed, 0.01f, 0.05f, 4.0f, "%.2fx") || changed;
 							row_label("Blends in over");
-							if (ImGui::DragFloat("##blend", &blend, 0.01f, 0.0f, 3.0f, "%.2f s"))
+							ui::Default(0.25f);
+							if (ui::DragFloat("##blend", &blend, 0.01f, 0.0f, 3.0f, "%.2f s"))
 							{
 								clip.blend_ms = static_cast<std::uint32_t>((std::max)(0.0f, blend) * 1000.0f);
 								changed = true;
@@ -2566,6 +3049,8 @@ namespace
 
 					ImGui::EndDisabled();
 					ImGui::SetItemTooltip("Another animation after the last: it begins where that one ends and blends in from it.\nSo: stand, then walk, then die.");
+					}
+
 					ImGui::Unindent();
 					if (changed)
 					{
@@ -2582,6 +3067,42 @@ namespace
 					g_actor_clip = -1;
 				}
 
+			}
+
+			if (section(ICON_BOLT, "Storm", nullptr, false))
+			{
+				StormState storm = storm_state();
+				bool changed = false;
+				row_label("Lightning");
+				changed = ImGui::Checkbox("##stormOn", &storm.on) || changed;
+				ImGui::SetItemTooltip("Lightning at times worked out from the recording's own time: the same strikes every time you play or record it.\nThe sun's light flares for a moment, and a bolt is played far off.");
+				row_label("A strike about every");
+				ui::Default(8.0f);
+				changed = ui::SliderFloat("##stormEvery", &storm.every_s, 1.0f, 60.0f, "%.0f s") || changed;
+				row_label("Flash");
+				ui::Default(3.0f);
+				changed = ui::SliderFloat("##stormFlash", &storm.flash, 0.0f, 20.0f, "%.1f") || changed;
+				ImGui::SetItemTooltip("How much brighter the sun's light gets at a strike (0: no flash)");
+				row_label("Bolts in the sky");
+				changed = ImGui::Checkbox("##stormBolts", &storm.bolts) || changed;
+				row_label("How far off");
+				ui::Default(6000.0f);
+				changed = ui::SliderFloat("##stormFar", &storm.distance, 500.0f, 30000.0f, "%.0f", ImGuiSliderFlags_Logarithmic) || changed;
+				if (storm.bolts && effects_extra_state() == 1)
+				{
+					ImGui::PushTextWrapPos(0.0f);
+					ImGui::TextDisabled("The bolts come with the rain effects, which are not loaded yet.");
+					ImGui::PopTextWrapPos();
+					if (ImGui::Button("Load the rain, mist and lightning effects"))
+					{
+						effects_load_extra();
+					}
+				}
+
+				if (changed)
+				{
+					storm_set(storm);
+				}
 			}
 
 			if (section(ICON_PERSON, "Death animations", nullptr, false))
@@ -3922,7 +4443,7 @@ namespace
 					draw->AddRect({x0, y + 3.0f}, {x1, y + lane - 3.0f}, u32(chosen ? P.text : fill), 3.0f, 0, chosen ? 2.0f : 1.0f);
 					ImGui::PushClipRect({x0 + 5.0f, y}, {x1 - 5.0f, y + lane}, true);
 					// (a player's body animations all begin "pb_")
-					draw->AddText({x0 + 7.0f, y + style.FramePadding.y}, u32(P.text), strncmp(clip.anim, "pb_", 3) == 0 ? clip.anim + 3 : clip.anim);
+					draw->AddText({x0 + 7.0f, y + style.FramePadding.y}, u32(P.text), actor.prop ? actor.model : strncmp(clip.anim, "pb_", 3) == 0 ? clip.anim + 3 : clip.anim);
 					ImGui::PopClipRect();
 				}
 
@@ -4023,6 +4544,7 @@ namespace
 		rows_height = (y + row + rows_scroll) - rows_top;
 		// (the animation library opens over the editor from the Scene tab or from an actor's row here)
 		draw_library();
+		draw_prop_picker();
 		// (more rows than there is room for: a bar at the right edge shows where the rows shown are among them)
 		if (rows_height > rows_bottom - rows_top + 1.0f)
 		{
@@ -4067,6 +4589,20 @@ namespace
 		const TheaterState state = theater_state();
 		const CameraState camera = camera_state();
 		const ImGuiIO& io = ImGui::GetIO();
+		// undo and redo; the scene looked at for changes (not while something is being dragged)
+		if (!io.WantTextInput && !theater_keys_blocked() && io.KeyCtrl)
+		{
+			if (ImGui::IsKeyPressed(ImGuiKey_Z, false))
+			{
+				io.KeyShift ? scene_redo() : scene_undo();
+			}
+			else if (ImGui::IsKeyPressed(ImGuiKey_Y, false))
+			{
+				scene_redo();
+			}
+		}
+
+		scene_ui_frame(state, ImGui::IsAnyItemActive() || ImGui::IsMouseDown(ImGuiMouseButton_Left));
 		ImGui::SetNextWindowPos({0, 0});
 		ImGui::SetNextWindowSize(io.DisplaySize);
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {0, 0});
@@ -4464,6 +5000,124 @@ void ui_row_label(const char* label)
 
 // A row's right-click menu, asked for after the row's controls are drawn: true when "Reset to default"
 // was chosen.
+bool ui_reset_button(const char* id, const bool enabled)
+{
+	const float size = ImGui::GetFrameHeight();
+	ImGui::PushID(id);
+	ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, {0.0f, ImGui::GetStyle().FramePadding.y});
+	ImGui::PushStyleColor(ImGuiCol_Button, static_cast<ImU32>(0));
+	ImGui::BeginDisabled(!enabled);
+	const bool pressed = ImGui::Button(ICON_UNDO "##reset", {size, size});
+	ImGui::EndDisabled();
+	ImGui::PopStyleColor();
+	ImGui::PopStyleVar();
+	ImGui::PopID();
+	return pressed;
+}
+
+namespace
+{
+	struct NextDefault
+	{
+		bool set = false;
+		float v[3] = {};
+	};
+	NextDefault g_next_default;
+	std::unordered_map<ImGuiID, std::array<float, 3>> g_first_seen;
+
+	// A control drawn with the "back to default" button at its right, the two as one item (a tooltip, a keyframe
+	// diamond after it and "is it being dragged" all work as on the control alone).
+	template <typename Draw> bool with_reset(const char* label, float* v, const int count, Draw draw)
+	{
+		const NextDefault next = g_next_default;
+		g_next_default = NextDefault();
+		float standard[3] = {};
+		if (next.set)
+		{
+			memcpy(standard, next.v, sizeof(standard));
+		}
+		else
+		{
+			const ImGuiID id = ImGui::GetID(label);
+			auto seen = g_first_seen.find(id);
+			if (seen == g_first_seen.end())
+			{
+				std::array<float, 3> now = {};
+				for (int k = 0; k < count; ++k)
+				{
+					now[static_cast<size_t>(k)] = v[k];
+				}
+
+				seen = g_first_seen.emplace(id, now).first;
+			}
+
+			memcpy(standard, seen->second.data(), sizeof(standard));
+		}
+
+		const float inner = ImGui::GetStyle().ItemInnerSpacing.x;
+		const float width = ImGui::CalcItemWidth();
+		ImGui::BeginGroup();
+		ImGui::SetNextItemWidth((std::max)(24.0f, width - ImGui::GetFrameHeight() - inner));
+		bool changed = draw();
+		bool differs = false;
+		for (int k = 0; k < count; ++k)
+		{
+			differs = differs || v[k] != standard[k];
+		}
+
+		ImGui::SameLine(0.0f, inner);
+		if (ui_reset_button(label, differs))
+		{
+			memcpy(v, standard, sizeof(float) * static_cast<size_t>(count));
+			changed = true;
+		}
+
+		ImGui::EndGroup();
+		return changed;
+	}
+}
+
+void ui::Default(const float a)
+{
+	g_next_default.set = true;
+	g_next_default.v[0] = a;
+}
+
+void ui::Default(const float a, const float b, const float c)
+{
+	g_next_default.set = true;
+	g_next_default.v[0] = a;
+	g_next_default.v[1] = b;
+	g_next_default.v[2] = c;
+}
+
+bool ui::SliderFloat(const char* label, float* v, const float low, const float high, const char* format, const ImGuiSliderFlags flags)
+{
+	return with_reset(label, v, 1, [&] { return ImGui::SliderFloat(label, v, low, high, format, flags); });
+}
+
+bool ui::SliderInt(const char* label, int* v, const int low, const int high, const char* format, const ImGuiSliderFlags flags)
+{
+	float as_float = static_cast<float>(*v);
+	const bool changed = with_reset(label, &as_float, 1, [&] {
+		const bool edited = ImGui::SliderInt(label, v, low, high, format, flags);
+		as_float = static_cast<float>(*v);
+		return edited;
+	});
+	*v = static_cast<int>(as_float);
+	return changed;
+}
+
+bool ui::DragFloat(const char* label, float* v, const float speed, const float low, const float high, const char* format, const ImGuiSliderFlags flags)
+{
+	return with_reset(label, v, 1, [&] { return ImGui::DragFloat(label, v, speed, low, high, format, flags); });
+}
+
+bool ui::DragFloat3(const char* label, float v[3], const float speed, const float low, const float high, const char* format, const ImGuiSliderFlags flags)
+{
+	return with_reset(label, v, 3, [&] { return ImGui::DragFloat3(label, v, speed, low, high, format, flags); });
+}
+
 bool ui_reset_menu(const char* id)
 {
 	const ImVec2 low = ImGui::GetItemRectMin(), high = ImGui::GetItemRectMax();

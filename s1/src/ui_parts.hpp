@@ -32,6 +32,10 @@
 #define ICON_ROTATE "\xef\x8b\xb1"
 #define ICON_PLUS "\x2b"
 #define ICON_STAR "\xef\x80\x85"
+#define ICON_UNDO "\xef\x83\xa2"
+#define ICON_REDO "\xef\x80\x9e"
+#define ICON_CUBE "\xef\x86\xb2"
+#define ICON_BOLT "\xef\x83\xa7"
 #define ICON_CHEVRON_RIGHT "\xef\x81\x94"
 #define ICON_CHEVRON_DOWN "\xef\x81\xb8"
 
@@ -42,6 +46,21 @@ bool ui_section(const char* icon, const char* label, bool* reset = nullptr, bool
 void ui_row_label(const char* label);
 // A row's right-click menu (call after the row's controls): true when "Reset to default" was chosen.
 bool ui_reset_menu(const char* id);
+// A small "back to default" button (the arrow going round to the left): true when pressed.
+bool ui_reset_button(const char* id, bool enabled = true);
+// Sliders and number boxes with that button at their right. The default is what Default was last told (for the
+// next one only), or else the value the control had when it was first shown.
+namespace ui
+{
+	void Default(float a);
+	void Default(float a, float b, float c);
+	bool SliderFloat(const char* label, float* v, float low, float high, const char* format = "%.3f", ImGuiSliderFlags flags = 0);
+	bool SliderInt(const char* label, int* v, int low, int high, const char* format = "%d", ImGuiSliderFlags flags = 0);
+	bool DragFloat(const char* label, float* v, float speed = 1.0f, float low = 0.0f, float high = 0.0f, const char* format = "%.3f",
+	               ImGuiSliderFlags flags = 0);
+	bool DragFloat3(const char* label, float v[3], float speed = 1.0f, float low = 0.0f, float high = 0.0f, const char* format = "%.3f",
+	                ImGuiSliderFlags flags = 0);
+}
 float ui_font_size();
 ImFont* ui_bold_font();
 void ui_not_built(const char* what);

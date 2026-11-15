@@ -1509,7 +1509,7 @@ void passes_draw_ui(const bool busy)
 	{
 		ui_row_label("Range");
 		ImGui::SetNextItemWidth(-FLT_MIN);
-		ImGui::SliderFloat("##depthRange", &g_depth_range, 50.0f, 20000.0f, "%.0f units", ImGuiSliderFlags_Logarithmic);
+		ui::SliderFloat("##depthRange", &g_depth_range, 50.0f, 20000.0f, "%.0f units", ImGuiSliderFlags_Logarithmic);
 		if (ui_reset_menu("##depthRangeReset"))
 		{
 			g_depth_range = 3000.0f;
@@ -1518,7 +1518,7 @@ void passes_draw_ui(const bool busy)
 		ImGui::SetItemTooltip("How far away the grey runs out.");
 		ui_row_label("Curve");
 		ImGui::SetNextItemWidth(-FLT_MIN);
-		ImGui::SliderFloat("##depthCurve", &g_depth_curve, 0.1f, 4.0f, "%.2f");
+		ui::SliderFloat("##depthCurve", &g_depth_curve, 0.1f, 4.0f, "%.2f");
 		if (ui_reset_menu("##depthCurveReset"))
 		{
 			g_depth_curve = 1.0f;
@@ -1538,7 +1538,7 @@ void passes_draw_ui(const bool busy)
 			ui_row_label("Buffer");
 			ImGui::SetNextItemWidth(-FLT_MIN);
 			int buffer = g_depth_buffer;
-			if (ImGui::SliderInt("##depthBuffer", &buffer, 0, CANDIDATE_MOST, buffer ? "%d" : "found by itself"))
+			if (ui::SliderInt("##depthBuffer", &buffer, 0, CANDIDATE_MOST, buffer ? "%d" : "found by itself"))
 			{
 				std::lock_guard<std::mutex> lock(g_depth_lock);
 				g_depth_buffer = buffer;
@@ -1565,7 +1565,7 @@ void passes_draw_ui(const bool busy)
 
 			ui_row_label("Near plane");
 			ImGui::SetNextItemWidth(-FLT_MIN);
-			ImGui::SliderFloat("##depthNear", &g_depth_near, 0.01f, 16.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
+			ui::SliderFloat("##depthNear", &g_depth_near, 0.01f, 16.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
 		if (ui_reset_menu("##depthNearReset"))
 		{
 			g_depth_near = 4.0f;
@@ -1573,7 +1573,7 @@ void passes_draw_ui(const bool busy)
 
 			ui_row_label("Far plane");
 			ImGui::SetNextItemWidth(-FLT_MIN);
-			ImGui::SliderFloat("##depthFar", &g_depth_far, 0.0f, 100000.0f, g_depth_far > 0.0f ? "%.0f" : "none");
+			ui::SliderFloat("##depthFar", &g_depth_far, 0.0f, 100000.0f, g_depth_far > 0.0f ? "%.0f" : "none");
 		if (ui_reset_menu("##depthFarReset"))
 		{
 			g_depth_far = 0.0f;
@@ -1700,17 +1700,17 @@ void passes_draw_fog()
 		changed = ImGui::ColorEdit3("##fogMadeColour", wish.colour, ImGuiColorEditFlags_NoLabel) || changed;
 		ui_row_label("Starts at");
 		ImGui::SetNextItemWidth(-FLT_MIN);
-		changed = ImGui::SliderFloat("##fogMadeStart", &wish.start, 0.0f, 5000.0f, "%.0f units") || changed;
+		changed = ui::SliderFloat("##fogMadeStart", &wish.start, 0.0f, 5000.0f, "%.0f units") || changed;
 		ui_row_label("Half-way distance");
 		ImGui::SetNextItemWidth(-FLT_MIN);
-		changed = ImGui::SliderFloat("##fogMadeHalf", &wish.half, 50.0f, 20000.0f, "%.0f units", ImGuiSliderFlags_Logarithmic) || changed;
+		changed = ui::SliderFloat("##fogMadeHalf", &wish.half, 50.0f, 20000.0f, "%.0f units", ImGuiSliderFlags_Logarithmic) || changed;
 		ImGui::SetItemTooltip("Shorter is thicker.");
 		ui_row_label("Thickest");
 		ImGui::SetNextItemWidth(-FLT_MIN);
-		changed = ImGui::SliderFloat("##fogMadeMost", &wish.most, 0.0f, 1.0f, "%.2f") || changed;
+		changed = ui::SliderFloat("##fogMadeMost", &wish.most, 0.0f, 1.0f, "%.2f") || changed;
 		ui_row_label("Brightness");
 		ImGui::SetNextItemWidth(-FLT_MIN);
-		changed = ImGui::SliderFloat("##fogMadeBright", &wish.bright, 0.0f, 20.0f, "%.2f") || changed;
+		changed = ui::SliderFloat("##fogMadeBright", &wish.bright, 0.0f, 20.0f, "%.2f") || changed;
 		ImGui::SetItemTooltip("How bright the fog's colour is. 1 is the usual.");
 		ImGui::EndDisabled();
 		if (changed)
