@@ -290,6 +290,14 @@ void scene_ui_frame(const TheaterState& state, const bool busy, const bool touch
 	}
 
 	static bool active = false;
+	static ULONGLONG marked_at = 0;
+	if (marked_at && (!state.playing || (state.settled && tick - marked_at > 20000)))
+	{
+		// (shown for a while, or stopped by hand: the saved scene is good)
+		marked_at = 0;
+		DeleteFileA((file_of(g_name) + ".loading").c_str());
+	}
+
 	if (!state.playing)
 	{
 		if (active && g_dirty_at)
@@ -312,9 +320,27 @@ void scene_ui_frame(const TheaterState& state, const bool busy, const bool touch
 		const bool same = strcmp(g_name, state.name) == 0;
 		strncpy_s(g_name, state.name, _TRUNCATE);
 		std::string block;
-		char line[200];
-		if (load(g_name, block))
+		char line[300];
+		// (a mark is left while a saved scene is first shown: if the game went down then, the scene is set aside the
+		// next time instead of taking the game down again)
+		const std::string mark = file_of(g_name) + ".loading";
+		if (GetFileAttributesA(mark.c_str()) != INVALID_FILE_ATTRIBUTES)
 		{
+			DeleteFileA(mark.c_str());
+			MoveFileExA(file_of(g_name).c_str(), (file_of(g_name) + ".bad").c_str(), MOVEFILE_REPLACE_EXISTING);
+			snprintf(line, sizeof(line), "scene: %s.scene was being shown when the game last went down: set aside as .scene.bad, not read", g_name);
+			theater_log(line);
+			unpack(empty_block());
+		}
+		else if (load(g_name, block))
+		{
+			FILE* marked = nullptr;
+			if (fopen_s(&marked, mark.c_str(), "w") == 0 && marked)
+			{
+				fclose(marked);
+				marked_at = tick;
+			}
+
 			unpack(block);
 			snprintf(line, sizeof(line), "scene: %s.scene read (%zu bytes)", g_name, block.size());
 			theater_log(line);

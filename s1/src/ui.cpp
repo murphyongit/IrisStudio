@@ -1752,12 +1752,20 @@ namespace
 		ImGui::BeginDisabled(actor.path_count >= ACTOR_PATH_MAX);
 		if (ImGui::Button(ICON_PLUS "  Add a point where the camera is"))
 		{
-			camera_view_origin(actor.path[actor.path_count++]);
+			float* point = actor.path[actor.path_count];
+			camera_view_origin(point);
+			if (!actor.prop)
+			{
+				// (an actor walks on the ground: at the height of the point before, not the camera's)
+				point[2] = actor.path_count ? actor.path[actor.path_count - 1][2] : actor.origin[2];
+			}
+
+			++actor.path_count;
 			changed = true;
 		}
 
 		ImGui::EndDisabled();
-		ImGui::SetItemTooltip("Or right click a place on the picture and choose \"Add a path point for %s here\".\nEach point has arrows on the picture to slide it.", actor.name);
+		ImGui::SetItemTooltip("Better: right click a place on the picture and choose \"Add a path point for %s here\" (that point is on the ground).\nEach point has arrows on the picture to slide it.", actor.name);
 		if (actor.path_count > 0 && standing && standing->shown)
 		{
 			ImGui::PushTextWrapPos(0.0f);
