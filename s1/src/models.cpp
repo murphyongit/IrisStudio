@@ -1798,11 +1798,66 @@ namespace
 		}
 	}
 
+	// (with the lock held) Whose body a model is: a player's own (entities under 42 are the players and the
+	// game's other characters), or else the player who wears everything it is made of (a body has the dead
+	// player's outfit, without the weapon), the nearest one if several do. -1: nobody's.
+	int body_of(const int handle, const std::vector<std::string>& names)
+	{
+		if (handle < 42)
+		{
+			return handle;
+		}
+
+		if (names.size() < 2)
+		{
+			return -1;
+		}
+
+		int best = -1;
+		float best_distance = 0.0f;
+		float here[3] = {};
+		const bool placed = actors_entity_origin(handle, here);
+		for (const auto& seen : g_seen)
+		{
+			if (seen.first >= 42 || seen.second.size() < names.size())
+			{
+				continue;
+			}
+
+			bool wears_all = true;
+			for (const std::string& name : names)
+			{
+				wears_all = wears_all && std::find(seen.second.begin(), seen.second.end(), name) != seen.second.end();
+			}
+
+			if (!wears_all)
+			{
+				continue;
+			}
+
+			float there[3] = {};
+			float distance = 1.0e12f;
+			if (placed && actors_entity_origin(seen.first, there))
+			{
+				distance = (there[0] - here[0]) * (there[0] - here[0]) + (there[1] - here[1]) * (there[1] - here[1]) + (there[2] - here[2]) * (there[2] - here[2]);
+			}
+
+			if (best < 0 || distance < best_distance)
+			{
+				best = seen.first;
+				best_distance = distance;
+			}
+		}
+
+		return best;
+	}
+
 	void* hooked_create(unsigned char* models, const unsigned short count, void* tree, const int handle)
 	{
 		unsigned char copy[MAX_IN_LIST * 0x20];
 		unsigned short out = count;
 		bool changed = false;
+		int whose = -1;  // the player this model is (or is the body of), for the death animations
 		if (models && count >= 1 && count <= MAX_IN_LIST)
 		{
 			std::lock_guard<std::mutex> lock(g_lock);
@@ -1848,6 +1903,11 @@ namespace
 						name = was->second;
 					}
 				}
+			}
+
+			if (tree && !names.empty() && handle < 2048 && deaths_any())
+			{
+				whose = body_of(handle, names);
 			}
 
 			if (!names.empty())
@@ -1994,6 +2054,17 @@ namespace
 						note("models: entity %d made with:%s", handle, made.c_str());
 					}
 				}
+			}
+		}
+
+		// (a body about to play its death: the animation chosen for that player is put into its tree first;
+		// only in a recording being played, never in a match being played)
+		if (tree && handle < 2048)
+		{
+			const TheaterState playback = theater_state();
+			if (playback.playing || playback.starting)
+			{
+				deaths_on_create(tree, whose, handle);
 			}
 		}
 

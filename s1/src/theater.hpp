@@ -195,7 +195,13 @@ bool actors_dress(int index, int dressed_as);
 void actors_remove(int index);
 int actors_animations(const char* text, int group, char names[][64], int max);
 float actors_animation_length(const char* name, bool* loops);
-void actors_preview(const char* animation, int dressed_as_actor);
+void actors_preview(const char* animation, int dressed_as_actor, int dressed_as_entity);
+bool actors_entity_origin(int handle, float out[3]);
+// death animations for the match's own players (-1: everybody without a choice of their own)
+bool deaths_any();
+void deaths_set(int entity, const char* animation);
+bool deaths_get(int entity, char out[64]);
+void deaths_on_create(void* tree, int whose, int handle);
 bool actors_preview_bones(float out[ACTOR_BONES][3], bool has[ACTOR_BONES], float* fraction);
 void actors_release();
 void actors_scene_frame(const TheaterState& state);

@@ -27,6 +27,7 @@
 #include "theater.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cmath>
 #include <cstdarg>
@@ -773,6 +774,288 @@ namespace
 	}
 }
 
+// ---- death animations for the match's own players.
+// A body plays its death by the number the server gave it, which is an entry of the players' animations (one set,
+// shared by every player's and body's tree). The body's tree is given a copy of that set in which every death is
+// the animation chosen for that player, at the moment the game makes the body's model, before the death is begun:
+// whichever death the server picked, the chosen one plays. (IrisStudio's Black Ops version does the same.)
+namespace
+{
+	std::string g_death_all;               // for everybody without a choice of their own
+	std::map<int, std::string> g_death_of; // by player
+	std::atomic<bool> g_death_any{false};
+
+	struct DeathCopy
+	{
+		void* original;   // the players' animations
+		std::string name; // the death every death is in the copy
+		unsigned char* copy;
+	};
+	std::vector<DeathCopy> g_death_copies;  // (the game's thread; kept for good: trees point at them)
+
+	// The players' animations? (many entries, some of them a player's body's deaths)
+	bool players_set(const unsigned char* anims, unsigned* size)
+	{
+		__try
+		{
+			*size = *reinterpret_cast<const std::uint32_t*>(anims);
+			if (*size < 64 || *size > 20000)
+			{
+				return false;
+			}
+
+			int deaths = 0;
+			for (unsigned i = 1; i < *size && deaths < 3; ++i)
+			{
+				const unsigned char* entry = anims + 8 + 16 * static_cast<size_t>(i);
+				if (*reinterpret_cast<const std::uint16_t*>(entry) != 0)
+				{
+					continue;
+				}
+
+				const char* name = asset_name(*reinterpret_cast<void* const*>(entry + 8));
+				deaths += name && strncmp(name, "pb_", 3) == 0 && strstr(name, "death") ? 1 : 0;
+			}
+
+			return deaths >= 3;
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			return false;
+		}
+	}
+
+	int fill_copy(unsigned char* copy, const unsigned char* anims, const unsigned size, void* parts)
+	{
+		__try
+		{
+			memcpy(copy, anims, 8 + 16 * static_cast<size_t>(size));
+			int changed = 0;
+			for (unsigned i = 1; i < size; ++i)
+			{
+				unsigned char* entry = copy + 8 + 16 * static_cast<size_t>(i);
+				if (*reinterpret_cast<const std::uint16_t*>(entry) != 0)
+				{
+					continue;
+				}
+
+				const char* name = asset_name(*reinterpret_cast<void**>(entry + 8));
+				if (name && strncmp(name, "pb_", 3) == 0 && strstr(name, "death"))
+				{
+					*reinterpret_cast<void**>(entry + 8) = parts;
+					++changed;
+				}
+			}
+
+			return changed;
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			return -1;
+		}
+	}
+
+	bool tree_anims(void* tree, void** anims)
+	{
+		__try
+		{
+			*anims = *static_cast<void**>(tree);
+			return *anims != nullptr;
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			return false;
+		}
+	}
+
+	bool set_tree_anims(void* tree, void* anims)
+	{
+		__try
+		{
+			*static_cast<void**>(tree) = anims;
+			return true;
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			return false;
+		}
+	}
+}
+
+// Is any death animation chosen?
+bool deaths_any()
+{
+	return g_death_any;
+}
+
+// The death animation for a player (-1: for everybody who has none of their own); "" for the one recorded.
+void deaths_set(const int entity, const char* animation)
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	const std::string name = animation ? animation : "";
+	if (entity < 0)
+	{
+		g_death_all = name;
+	}
+	else if (name.empty())
+	{
+		g_death_of.erase(entity);
+	}
+	else
+	{
+		g_death_of[entity] = name;
+	}
+
+	g_death_any = !g_death_all.empty() || !g_death_of.empty();
+}
+
+bool deaths_get(const int entity, char out[64])
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	const std::string* name = &g_death_all;
+	if (entity >= 0)
+	{
+		const auto own = g_death_of.find(entity);
+		if (own == g_death_of.end())
+		{
+			out[0] = 0;
+			return false;
+		}
+
+		name = &own->second;
+	}
+
+	strncpy_s(out, 64, name->c_str(), _TRUNCATE);
+	return !name->empty();
+}
+
+// Where an entity of the client game's is (its pose's origin, kept XORed: see ORIGIN_KEY).
+bool actors_entity_origin(const int handle, float out[3])
+{
+	if (handle < 0 || handle >= 2048)
+	{
+		return false;
+	}
+
+	__try
+	{
+		const auto* kept = reinterpret_cast<const std::uint32_t*>(entity_at(handle) + CENTITY_ORIGIN);
+		const std::uint32_t key = *reinterpret_cast<const std::uint32_t*>(ORIGIN_KEY);
+		bool any = false;
+		for (int i = 0; i < 3; ++i)
+		{
+			const std::uint32_t bits = kept[i] ^ key;
+			memcpy(&out[i], &bits, sizeof(bits));
+			any = any || kept[i] != 0;
+		}
+
+		return any && std::isfinite(out[0]) && std::isfinite(out[1]) && std::isfinite(out[2]);
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		return false;
+	}
+}
+
+// (the game's thread, as the game is about to make a model with an animation tree) whose: the player the model
+// is, or is the body of (-1: not known). The tree is given the players' animations with that player's chosen
+// death in place of every death, or the players' own again if none is chosen.
+void deaths_on_create(void* tree, const int whose, const int handle)
+{
+	void* anims = nullptr;
+	if (!tree || !tree_anims(tree, &anims))
+	{
+		return;
+	}
+
+	// (a tree the editor changed before, used again by the game for another body)
+	void* original = anims;
+	for (const DeathCopy& copy : g_death_copies)
+	{
+		if (copy.copy == anims)
+		{
+			original = copy.original;
+		}
+	}
+
+	if (!g_death_any && original == anims)
+	{
+		return;
+	}
+
+	std::string wanted;
+	void* parts = nullptr;
+	{
+		std::lock_guard<std::mutex> lock(g_lock);
+		const auto own = g_death_of.find(whose);
+		wanted = whose >= 0 && own != g_death_of.end() ? own->second : g_death_all;
+		if (!wanted.empty())
+		{
+			if (!g_listed)
+			{
+				list_animations();
+			}
+
+			const auto found = g_animations.find(wanted);
+			parts = found == g_animations.end() ? nullptr : found->second;
+		}
+	}
+
+	if (wanted.empty() || !parts)
+	{
+		if (original != anims)
+		{
+			set_tree_anims(tree, original);
+		}
+
+		return;
+	}
+
+	unsigned size = 0;
+	if (!players_set(static_cast<const unsigned char*>(original), &size))
+	{
+		return;
+	}
+
+	DeathCopy* mine = nullptr;
+	for (DeathCopy& copy : g_death_copies)
+	{
+		if (copy.original == original && copy.name == wanted)
+		{
+			mine = &copy;
+		}
+	}
+
+	const bool fresh = !mine;
+	if (!mine)
+	{
+		auto* memory = static_cast<unsigned char*>(calloc(1, 8 + 16 * static_cast<size_t>(size) + 64));
+		if (!memory)
+		{
+			return;
+		}
+
+		g_death_copies.push_back({original, wanted, memory});
+		mine = &g_death_copies.back();
+	}
+
+	if (fresh)
+	{
+		const int changed = fill_copy(mine->copy, static_cast<const unsigned char*>(original), size, parts);
+		say("deaths: %s in place of %d deaths among the players' %u animations", wanted.c_str(), changed, size);
+		if (changed <= 0)
+		{
+			// (nothing to play it in place of: the copy is the players' own set, harmless)
+			return;
+		}
+	}
+
+	if (set_tree_anims(tree, mine->copy) && handle >= 42)
+	{
+		say("deaths: entity %d, the body of player %d, is given %s", handle, whose, wanted.c_str());
+	}
+}
+
 int actors_list(Actor* out, const int max)
 {
 	std::lock_guard<std::mutex> lock(g_lock);
@@ -993,14 +1276,48 @@ float actors_animation_length(const char* name, bool* loops)
 
 // The small bone view: an animation ("" for none) played on a figure that is not drawn, dressed as the actor in
 // a place of the list.
-void actors_preview(const char* animation, const int dressed_as_actor)
+void actors_preview(const char* animation, const int dressed_as_actor, const int dressed_as_entity)
 {
+	// (a player's outfit is asked for before the lock is taken: the Models list has a lock of its own)
+	ModelsOutfit players;
+	bool have_players = false;
+	{
+		std::lock_guard<std::mutex> lock(g_lock);
+		have_players = g_outfits[PREVIEW].count == 0 && !(dressed_as_actor >= 0 && dressed_as_actor < g_count);
+	}
+
+	if (have_players && animation && animation[0])
+	{
+		have_players = false;
+		if (dressed_as_entity >= 0)
+		{
+			have_players = models_outfit_of(dressed_as_entity, &players);
+		}
+
+		for (int entity = 0; !have_players && entity < 42; ++entity)
+		{
+			have_players = models_outfit_of(entity, &players);
+		}
+	}
+	else
+	{
+		have_players = false;
+	}
+
 	std::lock_guard<std::mutex> lock(g_lock);
 	strncpy_s(g_preview_wanted, animation ? animation : "", _TRUNCATE);
-	if (dressed_as_actor >= 0 && dressed_as_actor < g_count && g_outfits[PREVIEW].count == 0)
+	if (g_outfits[PREVIEW].count == 0)
 	{
-		g_outfits[PREVIEW] = g_outfits[dressed_as_actor];
-		++g_outfit_changes[PREVIEW];
+		if (dressed_as_actor >= 0 && dressed_as_actor < g_count)
+		{
+			g_outfits[PREVIEW] = g_outfits[dressed_as_actor];
+			++g_outfit_changes[PREVIEW];
+		}
+		else if (have_players)
+		{
+			g_outfits[PREVIEW] = players;
+			++g_outfit_changes[PREVIEW];
+		}
 	}
 
 	if (!g_preview_wanted[0])

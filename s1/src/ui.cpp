@@ -372,6 +372,124 @@ namespace
 
 	// the effects searched for, and the one last played: the picture's right-click menu offers them too
 	char g_fx_search[64] = "", g_fx_found[400][96], g_fx_last[96] = "";
+	// The effects marked as favourites (a star by their name): kept in theater\fx_favourites.txt, a name a line.
+	std::set<std::string> g_fx_favourites;
+	bool g_fx_favourites_read = false, g_fx_favourites_only = false;
+
+	std::set<std::string>& fx_favourites()
+	{
+		if (!g_fx_favourites_read)
+		{
+			g_fx_favourites_read = true;
+			FILE* file = nullptr;
+			if (fopen_s(&file, (std::string(theater_folder()) + "\\fx_favourites.txt").c_str(), "r") == 0 && file)
+			{
+				char line[160];
+				while (fgets(line, sizeof(line), file))
+				{
+					line[strcspn(line, "\r\n")] = 0;
+					if (line[0])
+					{
+						g_fx_favourites.insert(line);
+					}
+				}
+
+				fclose(file);
+			}
+		}
+
+		return g_fx_favourites;
+	}
+
+	void fx_favourite_toggle(const char* name)
+	{
+		std::set<std::string>& favourites = fx_favourites();
+		if (!favourites.erase(name))
+		{
+			favourites.insert(name);
+		}
+
+		FILE* file = nullptr;
+		if (fopen_s(&file, (std::string(theater_folder()) + "\\fx_favourites.txt").c_str(), "w") == 0 && file)
+		{
+			for (const std::string& favourite : favourites)
+			{
+				fprintf(file, "%s\n", favourite.c_str());
+			}
+
+			fclose(file);
+		}
+	}
+
+	// The effects to list: the ones found by the search text, or with "favourites only" the favourites that fit
+	// it (a favourite the match has not loaded is listed too, and cannot be played there).
+	int fx_listed(char names[][96], const int max)
+	{
+		if (!g_fx_favourites_only)
+		{
+			return effects_find(g_fx_search, names, max);
+		}
+
+		std::string wanted = g_fx_search;
+		std::transform(wanted.begin(), wanted.end(), wanted.begin(), [](const unsigned char c) { return static_cast<char>(tolower(c)); });
+		int count = 0;
+		for (const std::string& favourite : fx_favourites())
+		{
+			if (count < max && (wanted.empty() || favourite.find(wanted) != std::string::npos))
+			{
+				snprintf(names[count++], 96, "%s", favourite.c_str());
+			}
+		}
+
+		return count;
+	}
+
+	// One effect in a list: a star to mark it as a favourite, and its name. True when the name is clicked (and
+	// the match has it loaded).
+	bool fx_row(const char* name)
+	{
+		const bool favourite = fx_favourites().count(name) != 0;
+		const bool loaded = effects_lasts(name) >= 0;
+		ImGui::PushID(name);
+		ImGui::PushStyleColor(ImGuiCol_Text, u32(favourite ? P.warn : P.muted, favourite ? 1.0f : 0.45f));
+		ImGui::PushStyleColor(ImGuiCol_Button, 0);
+		if (ImGui::SmallButton(ICON_STAR))
+		{
+			fx_favourite_toggle(name);
+		}
+
+		ImGui::PopStyleColor(2);
+		ImGui::SetItemTooltip(favourite ? "A favourite: click to take the star off" : "Mark as a favourite");
+		ImGui::SameLine();
+		ImGui::BeginDisabled(!loaded);
+		const bool clicked = ImGui::Selectable(name, false, ImGuiSelectableFlags_DontClosePopups);
+		ImGui::EndDisabled();
+		if (!loaded && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+		{
+			ImGui::SetTooltip("This match has not loaded this effect");
+		}
+
+		ImGui::PopID();
+		return clicked && loaded;
+	}
+
+	// The search box of an effects list, with the favourites-only switch beside it.
+	void fx_search_row(const char* id, const char* hint, const float width)
+	{
+		const float star = ImGui::CalcTextSize(ICON_STAR).x + ImGui::GetStyle().FramePadding.x * 2.0f + ImGui::GetStyle().ItemSpacing.x;
+		ImGui::SetNextItemWidth(width - star);
+		ImGui::InputTextWithHint(id, hint, g_fx_search, sizeof(g_fx_search));
+		ImGui::SameLine();
+		ImGui::PushStyleColor(ImGuiCol_Text, u32(g_fx_favourites_only ? P.warn : P.muted));
+		if (ImGui::Button(ICON_STAR "##only"))
+		{
+			g_fx_favourites_only = !g_fx_favourites_only;
+		}
+
+		ImGui::PopStyleColor();
+		ImGui::SetItemTooltip(g_fx_favourites_only ? "Showing your favourites only: click for every effect" : "Show your favourites only");
+	}
+
 
 	// The placed effects are shown by kind (all the rain together, all of one explosion together): which kinds
 	// are opened out in the timeline, and which effects are selected there (moved, stretched, removed as one).
@@ -439,6 +557,9 @@ namespace
 	{
 		bool open = false;
 		int actor = -1, clip = -1;
+		// (or: a death animation for a player of the match, -1 for everybody)
+		bool death = false;
+		int entity = -1;
 		char search[48] = "";
 		int group = 0;
 		char chosen[64] = "";
@@ -662,7 +783,7 @@ namespace
 			snprintf(playing, sizeof(playing), "%s", wanted);
 		}
 
-		actors_preview(playing, g_library.actor);
+		actors_preview(playing, g_library.death ? -1 : g_library.actor, g_library.death ? g_library.entity : -1);
 		draw_bone_view({view_width, g_font_size * 20.0f});
 		if (playing[0])
 		{
@@ -680,20 +801,30 @@ namespace
 
 		ImGui::EndGroup();
 		ImGui::BeginDisabled(!g_library.chosen[0]);
-		use = ImGui::Button(g_library.clip < 0 ? "Then play it" : "Use it") || use;
+		use = ImGui::Button(!g_library.death && g_library.clip < 0 ? "Then play it" : "Use it") || use;
 		ImGui::EndDisabled();
 		ImGui::SameLine();
 		const bool cancel = ImGui::Button("Cancel");
 		ImGui::SameLine();
-		ImGui::TextDisabled(g_library.clip < 0 ? "It is added after the actor's last animation, and blends in from it." : "Double click: use it.");
+		ImGui::TextDisabled(g_library.death ? "Double click: use it. The picture is built again so it shows at once."
+		                    : g_library.clip < 0 ? "It is added after the actor's last animation, and blends in from it." : "Double click: use it.");
 		if (use && g_library.chosen[0])
 		{
-			use_animation(g_library.actor, g_library.clip, g_library.chosen);
+			if (g_library.death)
+			{
+				// (bodies already lying there keep what they died with: the picture is built again from before)
+				deaths_set(g_library.entity, g_library.chosen);
+				theater_rebuild();
+			}
+			else
+			{
+				use_animation(g_library.actor, g_library.clip, g_library.chosen);
+			}
 		}
 
 		if (use || cancel || !keep)
 		{
-			actors_preview("", -1);
+			actors_preview("", -1, -1);
 			playing[0] = 0;
 			ImGui::CloseCurrentPopup();
 		}
@@ -1139,9 +1270,8 @@ namespace
 
 		if (ImGui::BeginMenu("Play an effect here"))
 		{
-			ImGui::SetNextItemWidth(g_font_size * 22.0f);
-			ImGui::InputTextWithHint("##placeSearch", "search (explosion, spark, rain...)", g_fx_search, sizeof(g_fx_search));
-			const int count = effects_find(g_fx_search, g_fx_found, 400);
+			fx_search_row("##placeSearch", "search (explosion, spark, rain...)", g_font_size * 22.0f);
+			const int count = fx_listed(g_fx_found, 400);
 			ImGui::BeginChild("placeResults", {g_font_size * 22.0f, g_font_size * 12.0f});
 			ImGuiListClipper clipper;
 			clipper.Begin(count);
@@ -1150,7 +1280,7 @@ namespace
 			{
 				for (int f = clipper.DisplayStart; f < clipper.DisplayEnd; ++f)
 				{
-					if (ImGui::Selectable(g_fx_found[f]))
+					if (fx_row(g_fx_found[f]))
 					{
 						add_effect_at(g_fx_found[f], point, normal);
 						chosen = true;
@@ -1921,7 +2051,6 @@ namespace
 			if (section(ICON_WAND, "Effects", nullptr, false))
 			{
 				// any effect the game has loaded, played where the camera is, at a time of the recording
-				char* fx_search = g_fx_search;
 				auto& fx_found = g_fx_found;
 				const int extra = effects_extra_state();
 				if (extra == 1)
@@ -1938,9 +2067,8 @@ namespace
 					ImGui::TextDisabled("Ascend's rain, mist and lightning are loaded: search rain, mist or lightning.");
 				}
 
-				ImGui::SetNextItemWidth(-1.0f);
-				ImGui::InputTextWithHint("##fxSearch", ICON_SEARCH "  search the effects by name (explosion, spark, smoke...)", fx_search, sizeof(g_fx_search));
-				const int fx_count = effects_find(fx_search, fx_found, 400);
+				fx_search_row("##fxSearch", ICON_SEARCH "  search the effects by name (explosion, spark, smoke...)", ImGui::GetContentRegionAvail().x);
+				const int fx_count = fx_listed(fx_found, 400);
 				ImGui::BeginChild("fxResults", {0.0f, g_font_size * 10.0f}, ImGuiChildFlags_Border);
 				ImGuiListClipper fx_clipper;
 				fx_clipper.Begin(fx_count);
@@ -1948,7 +2076,7 @@ namespace
 				{
 					for (int f = fx_clipper.DisplayStart; f < fx_clipper.DisplayEnd; ++f)
 					{
-						if (ImGui::Selectable(fx_found[f]))
+						if (fx_row(fx_found[f]))
 						{
 							float here[3];
 							camera_view_origin(here);
@@ -1959,7 +2087,9 @@ namespace
 				}
 
 				ImGui::EndChild();
-				ImGui::TextDisabled(fx_count == 400 ? "More than 400: type more of the name. A click plays one where the camera is." : "A click plays one where the camera is and keeps it below.");
+				ImGui::TextDisabled(g_fx_favourites_only && fx_count == 0 ? "No favourites yet: click the star by an effect's name to keep it here."
+				                    : fx_count == 400 ? "More than 400: type more of the name. A click plays one where the camera is."
+				                    : "A click plays one where the camera is and keeps it below. The star marks a favourite.");
 				static PlacedEffect placed[EFFECTS_MAX];
 				static bool live[EFFECTS_MAX];
 				const int placed_count = effects_placed(placed, EFFECTS_MAX);
@@ -2360,6 +2490,7 @@ namespace
 							if (ImGui::Button("Choose another..."))
 							{
 								g_library.open = true;
+								g_library.death = false;
 								g_library.actor = i;
 								g_library.clip = c;
 								snprintf(g_library.chosen, sizeof(g_library.chosen), "%s", clip.anim);
@@ -2427,6 +2558,7 @@ namespace
 					if (ImGui::Button(actor.clip_count ? "Then..." : "Choose an animation..."))
 					{
 						g_library.open = true;
+						g_library.death = false;
 						g_library.actor = i;
 						g_library.clip = -1;
 						g_library.chosen[0] = 0;
@@ -2450,6 +2582,59 @@ namespace
 					g_actor_clip = -1;
 				}
 
+			}
+
+			if (section(ICON_PERSON, "Death animations", nullptr, false))
+			{
+				// how the match's own players die: any animation of the library in place of the one recorded
+				const BoneState players = camera_bone_state();
+				ImGui::PushTextWrapPos(0.0f);
+				ImGui::TextDisabled("How a player falls when killed, in place of the death that was recorded: for everybody, or player by player. "
+				                    "The picture is built again when you choose, so it shows on bodies already down.");
+				ImGui::PopTextWrapPos();
+				auto death_row = [&](const int entity, const char* label) {
+					char chosen[64] = "";
+					const bool has = deaths_get(entity, chosen);
+					ImGui::PushID(8000 + entity);
+					row_label(label);
+					const float clear = has ? ImGui::CalcTextSize(ICON_TRASH).x + ImGui::GetStyle().FramePadding.x * 2.0f + ImGui::GetStyle().ItemSpacing.x : 0.0f;
+					if (ImGui::Button(has ? chosen : "As recorded", {ImGui::GetContentRegionAvail().x - clear, 0.0f}))
+					{
+						g_library.open = true;
+						g_library.death = true;
+						g_library.entity = entity;
+						g_library.actor = -1;
+						g_library.clip = 0;
+						g_library.group = 1;
+						snprintf(g_library.chosen, sizeof(g_library.chosen), "%s", chosen);
+					}
+
+					ImGui::SetItemTooltip("Choose from the library: the deaths are shown first, and any other animation can be used");
+					if (has)
+					{
+						ImGui::SameLine();
+						if (ImGui::Button(ICON_TRASH))
+						{
+							deaths_set(entity, "");
+							theater_rebuild();
+						}
+
+						ImGui::SetItemTooltip("Back to the death that was recorded");
+					}
+
+					ImGui::PopID();
+				};
+				death_row(-1, "Everybody");
+				for (int e = 0; e < 42; ++e)
+				{
+					char unused[64];
+					if ((players.entities & (1ull << e)) || deaths_get(e, unused))
+					{
+						char label[32];
+						snprintf(label, sizeof(label), e == players.nearest ? "Player %d (nearest)" : "Player %d", e);
+						death_row(e, label);
+					}
+				}
 			}
 
 			if (section(ICON_PERSON, "Models"))
@@ -3792,6 +3977,7 @@ namespace
 					if (ImGui::MenuItem("Then...", nullptr, false, actors[menu_actor].clip_count < ACTOR_CLIPS_MAX))
 					{
 						g_library.open = true;
+						g_library.death = false;
 						g_library.actor = menu_actor;
 						g_library.clip = -1;
 						g_library.chosen[0] = 0;
@@ -3800,6 +3986,7 @@ namespace
 					if (ImGui::MenuItem("Choose another animation..."))
 					{
 						g_library.open = true;
+						g_library.death = false;
 						g_library.actor = menu_actor;
 						g_library.clip = menu_clip;
 						snprintf(g_library.chosen, sizeof(g_library.chosen), "%s", actors[menu_actor].clips[menu_clip].anim);

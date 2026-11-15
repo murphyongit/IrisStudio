@@ -370,3 +370,25 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
   the library's bone view (CG_DObjGetWorldTagMatrix on 22 bones, not added to the scene). passes.cpp counts actors' models as characters.
 - ui.cpp: Scene > Actors, animation library (modal) with bone view, actor rows in the timeline, handles on the picture (draw_handles: arrows / rings,
   R or the Slide/Turn button), camera_view() gives the view for projecting.
+
+## 0.70: death animations for players, effect favourites, the red squares (untested when written)
+- User on 0.69: "actor actually works perfectly", handles and the effects' clips too. Asked: animation swapping for players (deaths), the red squares
+  in the map, favourite effects.
+- **Red squares found**: zone\s1iris_rain.ff (S1ffu100, zlib from byte 1868, 342 KB unpacked; header lists 0x4C streamed-image entries) holds the 37
+  effects WITH their materials, techsets and images (ZoneTool pulls dependencies in). 20 images were not in the export of mp_refraction because they
+  belong to the game's common files: for a material or techset not exported ZoneTool copies the one in memory, but for an image it writes a 1x1 RED
+  pixel ("Image not found, it will probably look messed up ingame", gfximage.cpp). So the file carried red copies of $white, particle_cubemap_ft,
+  particle_cubemap_atlas_ir_ft, smk_white_atlas, smk_white_loop, worldxyznoise_smoke_1, flare_halogen_glw, water_ripple_01(+_nml, ~spec), uv_distort_1,
+  distort_ripple, water_splat_blurry(+_nml, ~spec), water_dissipate_1_atlas_tip, shrinking_pebbles_1, water_splash_side_2_(col_tip, nml, ~spec_tip),
+  which replaced the game's own once loaded (red rain sheets, and red glows/smoke of the map itself).
+  Fix: zone_source\s1iris_rain.csv now starts with "reference,true" + "image,<name>" x20 + "reference,false" (x64-zt csv: a referenced asset is
+  written by name ",name"; the game's DB_LinkXAssetEntry 0x1402708F0 takes a name beginning ',' as "the one already loaded"; Load_GfxImage 0x140248C80
+  only makes a texture when there is pixel data, so the empty image is harmless). D:\GAMES\AW\s1iris_rain_rebuild.bat builds again without exporting
+  (keeps zone\s1iris_rain.ff.old, copies to zone\english\eng_s1iris_rain.ff). Streamed images of the export point into imagefileN.pak by number
+  (wind_rain_soft_atlas: file 38; single_raindrop_col: file 1), which every map can read.
+- **Deaths**: every player's and body's tree shares one XAnim_s (the players' animations). models.cpp hooked_create (the game making a model) works out
+  whose body it is (body_of: entity < 42 itself; else the player wearing all its models, nearest by pose origin, read with the XOR number) and calls
+  deaths_on_create (actors.cpp): the tree's anims pointer is set to a copy of the set in which every leaf whose animation is pb_*death* is the chosen
+  animation. Done before the game starts the death on the new body, so the game's own blending/timing runs. Copies are never freed (trees point at
+  them). Only while a recording plays. UI: Scene > Death animations (everybody / per player), library opens on Deaths; a choice calls theater_rebuild().
+- Favourites: theater\fx_favourites.txt, a star by each effect in both pickers, a star button by the search box for favourites only.
