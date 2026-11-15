@@ -280,9 +280,15 @@ void scene_redo() { g_ask_redo = true; }
 
 // (the editor's thread, each frame) busy: something is being dragged or typed: the scene is not looked at until
 // it is let go of, so a drag is one step back, not hundreds.
-void scene_ui_frame(const TheaterState& state, const bool busy)
+void scene_ui_frame(const TheaterState& state, const bool busy, const bool touched)
 {
 	const ULONGLONG tick = GetTickCount64();
+	static ULONGLONG touched_at = 0;
+	if (touched)
+	{
+		touched_at = tick;
+	}
+
 	static bool active = false;
 	if (!state.playing)
 	{
@@ -347,15 +353,20 @@ void scene_ui_frame(const TheaterState& state, const bool busy)
 		std::string now = pack();
 		if (now != g_base)
 		{
-			g_undo.push_back(std::move(g_base));
-			if (g_undo.size() > 200)
+			// (a change with no hand in it, a keyframed light's colour going on as the recording plays, is not a step)
+			if (tick - touched_at < 1500)
 			{
-				g_undo.erase(g_undo.begin());
+				g_undo.push_back(std::move(g_base));
+				if (g_undo.size() > 200)
+				{
+					g_undo.erase(g_undo.begin());
+				}
+
+				g_redo.clear();
+				g_dirty_at = tick;
 			}
 
-			g_redo.clear();
 			g_base = std::move(now);
-			g_dirty_at = tick;
 		}
 	}
 

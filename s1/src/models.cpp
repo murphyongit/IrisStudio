@@ -113,6 +113,7 @@ namespace
 	};
 	std::vector<CamoRow> g_camo_rows;
 	std::map<int, std::map<std::string, std::string>> g_camos;  // per entity: a model, and the material over it
+	std::set<std::string> g_old_camos;                           // the older camouflages' materials (one for every weapon)
 	ULONGLONG g_materials_at = 0;
 	std::vector<PendingSet> g_pending;
 	char g_status[200] = "";
@@ -1501,6 +1502,18 @@ namespace
 			}
 		}
 
+		// the older camouflages (multicam, urban ... gold, diamond): one material each for every weapon (the camo
+		// table's ninth column), put in a weapon's entry like a painted one but with the byte at +0xD left 0
+		// (the game's own: 0x140341420 gives the material from its table at 0x144A74490 and that byte as 0)
+		g_old_camos.clear();
+		for (const auto& row : read_table("camotable"))
+		{
+			if (row.size() > 8 && !row[8].empty() && (row.size() < 12 || row[11].empty()))
+			{
+				g_old_camos.insert(row[8]);
+			}
+		}
+
 		for (const auto& row : read_table("camomaterialtable"))
 		{
 			CamoRow camo;
@@ -2017,7 +2030,8 @@ namespace
 									fields[3] = row ? camo_base(model, row->prefix, drawn) : nullptr;
 								}
 
-								entry[0xD] = 1;
+								// (a painted one is drawn in place of the weapon's material; an older one goes on with the byte 0)
+								entry[0xD] = g_old_camos.count(camo->second) ? 0 : 1;
 								changed = true;
 								made += std::string(" ") + drawn + "~" + camo->second + (fields[3] ? "" : " (nothing to put it over)");
 							}
@@ -2164,6 +2178,27 @@ int models_camos(const char* model, char materials[][64], const int max)
 		{
 			copy_name(materials[count++], material);
 		}
+	}
+
+	// the older ones, the same for every weapon
+	size_t old_loaded = 0;
+	for (const std::string& material : g_old_camos)
+	{
+		if (g_materials.count(material))
+		{
+			++old_loaded;
+			if (count < max)
+			{
+				copy_name(materials[count++], material);
+			}
+		}
+	}
+
+	static size_t old_told = static_cast<size_t>(-1);
+	if (old_loaded != old_told)
+	{
+		old_told = old_loaded;
+		note("models: %zu of the %zu older camouflage materials are loaded", old_loaded, g_old_camos.size());
 	}
 
 	// (a weapon that has camouflages, none of them in memory: -1)

@@ -297,7 +297,7 @@ struct StormState
 };
 StormState storm_state();
 void storm_set(const StormState& storm);
-void scene_ui_frame(const TheaterState& state, bool busy);
+void scene_ui_frame(const TheaterState& state, bool busy, bool touched);
 void scene_game_frame(const TheaterState& state);
 bool scene_can_undo();
 bool scene_can_redo();

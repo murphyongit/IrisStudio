@@ -1708,8 +1708,6 @@ namespace
 			row_label("Speed on its path");
 			ui::Default(300.0f);
 			changed = ui::DragFloat("##propSpeed", &actor.speed, 5.0f, 0.0f, 20000.0f, "%.0f a second") || changed;
-			row_label("Stays after");
-			changed = ImGui::Checkbox("##propStays", &actor.stays) || changed;
 		}
 
 		ImGui::SeparatorText("Path");
@@ -2830,6 +2828,14 @@ namespace
 				}
 
 				ImGui::SetItemTooltip("An actor where the camera is. Or right click a place on the picture and choose \"Add an actor here\".\nIt is dressed as the player nearest the camera; its outfit is changed like a player's, under Models.");
+				ImGui::SameLine();
+				if (ImGui::Button(ICON_CUBE "  Add a prop..."))
+				{
+					g_prop_pick.open = true;
+					camera_view_origin(g_prop_pick.point);
+				}
+
+				ImGui::SetItemTooltip("A model of the game's (a vehicle, a drone, a crate) where the camera is. Or right click a place on the picture.\nIt takes one of the %d places actors have.", ACTORS_MAX);
 				ImGui::SameLine();
 				ImGui::TextDisabled("%d of %d", actor_count, ACTORS_MAX);
 				if (actor_count == 0)
@@ -4602,7 +4608,18 @@ namespace
 			}
 		}
 
-		scene_ui_frame(state, ImGui::IsAnyItemActive() || ImGui::IsMouseDown(ImGuiMouseButton_Left));
+		{
+			const bool busy = ImGui::IsAnyItemActive() || ImGui::IsMouseDown(ImGuiMouseButton_Left);
+			// (the mouse or a key used: a change that follows is the user's, to be gone back to; one that comes by
+			// itself, a keyframed light going on, is not)
+			bool touched = busy || ImGui::IsAnyMouseDown() || io.MouseReleased[0] || io.MouseReleased[1];
+			for (int key = ImGuiKey_NamedKey_BEGIN; key < ImGuiKey_NamedKey_END && !touched; ++key)
+			{
+				touched = ImGui::IsKeyDown(static_cast<ImGuiKey>(key));
+			}
+
+			scene_ui_frame(state, busy, touched);
+		}
 		ImGui::SetNextWindowPos({0, 0});
 		ImGui::SetNextWindowSize(io.DisplaySize);
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {0, 0});

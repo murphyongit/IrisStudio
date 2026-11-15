@@ -392,3 +392,36 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
   animation. Done before the game starts the death on the new body, so the game's own blending/timing runs. Copies are never freed (trees point at
   them). Only while a recording plays. UI: Scene > Death animations (everybody / per player), library opens on Deaths; a choice calls theater_rebuild().
 - Favourites: theater\fx_favourites.txt, a star by each effect in both pickers, a star button by the search box for favourites only.
+
+## 0.71: undo/redo + saved scene, reset buttons, actors on paths with guns/shots/blood, props, storm, older camos (untested when written)
+- User on 0.70: red squares gone, death animations work. Asked for (all "in the next version"): old camos, thunder/lightning, undo/redo ("necessary"),
+  reset on every slider, x/y/z on lights, actors remembered + gun choice, actors that run to a point, turn a corner, shoot, die (blood, muzzle flash),
+  killstreaks and props incl. detailed events like a care package coming in, the library's preview kept centred. Not wanted: campaign maps, live games,
+  camera export, texture packs, orbit, bullet time.
+- scene.cpp (new): everything the editor puts into a recording as one block of bytes: sections [tag, item size, count, items] for Actor, ModelsOutfit,
+  the swapper's changes per actor handle (text, models_export/import), PlacedEffect, SceneLight, the camera's path (camera_points_export/import, a size
+  check on Point), the deaths (text), the storm. Structs are read as far as both versions know them: ONLY ADD FIELDS AT THE END of Actor, ActorClip is
+  inside Actor (do not grow it), PlacedEffect, SceneLight, StormState, ModelsOutfit.
+  Saved as theater\<recording>.scene 1.5 s after a change, read when that recording begins to play (another recording with no file: scene emptied).
+  Undo: the block is taken every frame nothing is held; differing from the last and the mouse/keys used within 1.5 s -> the last goes on the undo list
+  (a keyframed light changing by itself is taken as the new base without a step). Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z, Edit menu. Look tab settings and the
+  match's players' outfits are NOT in the scene (presets cover Look).
+- ui::SliderFloat/SliderInt/DragFloat/DragFloat3 (ui.cpp): the control and a small "back" button as one group; default from ui::Default(...) just
+  before, else the value first seen for that ImGui id. Look tab's setting rows have the same button doing what their right-click reset did.
+- Handles: lights (kind 2; rings only for spots) and the open actor's path points (kind 3, with the line through them).
+- Actors: path (up to 16 points): forward root motion of its clips (offset x > |y|, > 1) becomes distance along the path, heading follows the path
+  (blend over 28 units each side of a corner); other motion (a death's fall) is added beside. ActorNow.path_end_ms from a 50 ms scan when the actor
+  changes. Events: shots (effect at tag_flash, else the right wrist, every N ms for a while) and blood (effect once at a bone), fired as the
+  recording's time crosses them (not when scrubbing); effects_play_once. Gun: actors_give_gun swaps the outfit's first npc_ entry (others dropped),
+  or borrows a player's gun entry for the place in the hands. Props: Actor.prop, a one-model outfit (models_outfit_named), DObj with no tree, moved
+  along the path at Actor.speed for clips[0]'s time. PlacedEffect.on_actor: played where that actor/prop is each time it begins.
+- Storm (scene.cpp): strike times from a hash of the recording's time (one per "every"), sun brightness flared (sun_set_brightness), a bolt of the
+  rain file's (vfx/lightning/lightning_bolt_a, lightning_cloud_a, vfx/map/mp_refraction/lightning_mp_refraction) played far off. No sound.
+- Older camos FOUND: camoTable.csv column 8 is a MATERIAL name (camo_multicam_e_col ... camo_sentinel_01_col), registered at 0x140340E00 into
+  0x144A74490[camo-1] (DB_FindXAssetHeader(8 = material)); 0x140341420(weapon, camo-1, &byte) returns it with the byte 0 (painted ones: per-weapon
+  material from camoMaterialTable, byte from the table). So: entry +0x10 = that material, +0xD = 0. models.cpp g_old_camos lists them for any weapon
+  with a camo row, if loaded. Rows with column 11 set (toxictiger, infected, xom01) are skipped by the game outside one mode (0x1403D28B0).
+- Preview: bones shifted so the hips stay over the middle (and brought back when it climbs/drops).
+- Seen in the log, both evenings: "GAME ERROR: Fatal error (0xC0000005) at 0x00007FFA8E21A410" then FAULT at 1404C9BB0 as the game is closed while a
+  recording plays (same address in two processes: a system DLL). Not looked into.
+- Not done: detailed killstreak events (a care package drop as one thing), sounds, actors' tracers, HUD labels.
