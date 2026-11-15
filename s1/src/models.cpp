@@ -114,6 +114,17 @@ namespace
 	std::vector<CamoRow> g_camo_rows;
 	std::map<int, std::map<std::string, std::string>> g_camos;  // per entity: a model, and the material over it
 	std::set<std::string> g_old_camos;                           // the older camouflages' materials (one for every weapon)
+	// a camouflage as the game's own menu names it: the camo table's row (its name's key in the game's words, and
+	// either its one material or which of a weapon's sixteen painted ones it is)
+	struct CamoTitle
+	{
+		std::string ref, key, material;
+		int column = -1;
+	};
+	std::vector<CamoTitle> g_camo_titles;
+	std::unordered_map<std::string, int> g_camo_column;          // a painted camouflage's material: which of its weapon's sixteen
+	std::unordered_map<std::string, std::string> g_words;        // the game's words (its "MPUI_" ones), by key
+	bool g_words_read = false;
 	ULONGLONG g_materials_at = 0;
 	std::vector<PendingSet> g_pending;
 	char g_status[200] = "";
@@ -1506,8 +1517,20 @@ namespace
 		// table's ninth column), put in a weapon's entry like a painted one but with the byte at +0xD left 0
 		// (the game's own: 0x140341420 gives the material from its table at 0x144A74490 and that byte as 0)
 		g_old_camos.clear();
+		g_camo_titles.clear();
+		g_camo_column.clear();
 		for (const auto& row : read_table("camotable"))
 		{
+			if (row.size() > 2)
+			{
+				CamoTitle title;
+				title.ref = row[1];
+				title.key = row[2];
+				title.material = row.size() > 8 ? row[8] : "";
+				title.column = row.size() > 10 && !row[10].empty() ? atoi(row[10].c_str()) : -1;
+				g_camo_titles.push_back(title);
+			}
+
 			if (row.size() > 8 && !row[8].empty() && (row.size() < 12 || row[11].empty()))
 			{
 				g_old_camos.insert(row[8]);
@@ -1523,6 +1546,7 @@ namespace
 				if (!row[c].empty())
 				{
 					camo.materials.push_back(row[c]);
+					g_camo_column[row[c]] = static_cast<int>(c) - 1;
 				}
 			}
 
@@ -1563,6 +1587,68 @@ namespace
 		return best;
 	}
 
+	// A model the game only knows the name of (something mentions it, no loaded file has it) is a copy of the
+	// game's stand-in model, the big red letters "FX": it shares the stand-in's list of materials with every
+	// other such copy.
+	std::set<const void*> g_stand_in_materials;
+
+	const void* first_materials(void* model)
+	{
+		__try
+		{
+			const auto* bytes = static_cast<const unsigned char*>(model);
+			if ((*reinterpret_cast<const std::uint16_t*>(bytes + 0x204) & 0x400) != 0)
+			{
+				// (several models as one: its parts are looked at, not it)
+				return nullptr;
+			}
+
+			return reinterpret_cast<void** (*)(void*, int)>(0x1404F8050)(model, 0);
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			return nullptr;
+		}
+	}
+
+	bool stand_in(void* model)
+	{
+		const void* materials = first_materials(model);
+		return materials && g_stand_in_materials.count(materials) != 0;
+	}
+
+	void take_word(void* header, void* data)
+	{
+		auto* words = static_cast<std::unordered_map<std::string, std::string>*>(data);
+		if (!header || IsBadReadPtr(header, 16))
+		{
+			return;
+		}
+
+		const char* value = static_cast<const char* const*>(header)[0];
+		const char* name = static_cast<const char* const*>(header)[1];
+		if (!name || !value || IsBadReadPtr(name, 6) || strncmp(name, "MPUI_", 5) != 0 || IsBadStringPtrA(name, 64) || IsBadStringPtrA(value, 64))
+		{
+			return;
+		}
+
+		(*words)[name] = value;
+	}
+
+	bool enumerate_words(void* words)
+	{
+		__try
+		{
+			// (38: the game's words, a text and its key each)
+			reinterpret_cast<void (*)(int, void (*)(void*, void*), const void*, bool)>(DB_ENUM_XASSETS)(38, take_word, words, false);
+			return true;
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			return false;
+		}
+	}
+
 	// (with the lock held)
 	void list_loaded()
 	{
@@ -1590,6 +1676,27 @@ namespace
 		for (auto gone = g_let_go.begin(); gone != g_let_go.end();)
 		{
 			gone = now - gone->second >= 3000 ? g_let_go.erase(gone) : std::next(gone);
+		}
+
+		// the stand-ins (see first_materials): three or more models with one list of materials between them
+		{
+			std::unordered_map<const void*, int> shared;
+			for (const auto& model : g_loaded)
+			{
+				if (const void* materials = first_materials(model.second))
+				{
+					++shared[materials];
+				}
+			}
+
+			g_stand_in_materials.clear();
+			for (const auto& one : shared)
+			{
+				if (one.second >= 3)
+				{
+					g_stand_in_materials.insert(one.first);
+				}
+			}
 		}
 
 		int outfit = 0, weapons = 0;
@@ -2982,7 +3089,26 @@ void* models_make_actor(const int handle, const ModelsOutfit& outfit, void* tree
 
 		for (int i = 0; i < outfit.count && i < 32; ++i)
 		{
+			// (a player's list has parts that are not to be seen: "tag_ik_target", which the game moves about to
+			// place a hand, and hides. Nothing moves or hides an actor's: it showed as the stand-in model, the red
+			// "FX", and the arm reached for it. Left out; and so is any part that is only a stand-in.)
+			if (i > 0 && strncmp(outfit.names[i], "tag_", 4) == 0)
+			{
+				continue;
+			}
+
 			const auto loaded = g_loaded.find(outfit.names[i]);
+			if (i > 0 && loaded != g_loaded.end() && stand_in(loaded->second))
+			{
+				static std::set<std::string> told;
+				if (told.size() < 30 && told.insert(outfit.names[i]).second)
+				{
+					note("models: %s is only a stand-in in this match (the red \"FX\"): left out of the actor", outfit.names[i]);
+				}
+
+				continue;
+			}
+
 			if (loaded == g_loaded.end() || !name_of(loaded->second))
 			{
 				if (!missing[0])
@@ -3393,4 +3519,54 @@ void models_import(const int entity, const char* text)
 
 	++g_changed[entity];
 	g_extra_dirty = GetTickCount64();
+}
+
+// A camouflage's name as the game's own menu has it (from its material). False: not one of the camo table's.
+bool models_camo_title(const char* material, char out[64])
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	read_gear_tables();
+	if (!g_words_read)
+	{
+		g_words_read = true;
+		const bool read = enumerate_words(&g_words);
+		note("models: %zu of the game's menu words read%s", g_words.size(), read ? "" : " (a fault reading them)");
+	}
+
+	const CamoTitle* found = nullptr;
+	const auto column = g_camo_column.find(material);
+	for (const CamoTitle& title : g_camo_titles)
+	{
+		if (found)
+		{
+			break;
+		}
+
+		if (!title.material.empty() ? title.material == material : column != g_camo_column.end() && title.column == column->second)
+		{
+			found = &title;
+		}
+	}
+
+	if (!found)
+	{
+		return false;
+	}
+
+	const auto word = g_words.find(found->key);
+	if (word != g_words.end() && !word->second.empty() && found->key != "MPUI_NONE")
+	{
+		strncpy_s(out, 64, word->second.c_str(), _TRUNCATE);
+		return true;
+	}
+
+	// (no such word: the table's own short name, with a capital)
+	const std::string plain = found->key.compare(0, 5, "MPUI_") == 0 && found->key != "MPUI_NONE" ? found->key.substr(5) : found->ref;
+	strncpy_s(out, 64, plain.c_str(), _TRUNCATE);
+	for (char* c = out; *c; ++c)
+	{
+		*c = static_cast<char>(c == out ? toupper(static_cast<unsigned char>(*c)) : tolower(static_cast<unsigned char>(*c)));
+	}
+
+	return true;
 }

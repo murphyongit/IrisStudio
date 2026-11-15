@@ -438,3 +438,17 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
   and writes that image into the same-named place of a per-model override of the BASE material (+0x18; 0x1404DE620(obj, base, 0)). So +0x18 must be
   the weapon's material that HAS a decalColorMap1; 0.71 gave the painted camos' guess. models.cpp camo_decal_base picks the model's first material
   with that place (log: "models: <model>'s materials (* can take an older camouflage): ...").
+
+## 0.73: the red "FX" on actors, the reaching arm, camo names
+- User on 0.72 (screenshot): muzzle flash, blood, props, older camos all work. But a new actor had a big red 3D "FX" at its gun and its right arm
+  reached toward the camera whatever the angle (seen before in an earlier session). Camo names wanted as the game's menu has them. Path points by
+  right click were asked for (they were there, below the actor item: now first in the menu, and the panel says so).
+- Cause (from the log's lists): a player's list can hold [tag_ik_target tag 0x2B40, flag byte +0xC = 1] after its gun (seen with npc_launcher_energy /
+  an optic): a helper model the game moves to place a hand and hides. An actor's copy was neither moved nor hidden: it drew as the game's stand-in
+  model (red "FX" letters) and the arm's IK reached for it. models_make_actor now leaves out parts named "tag_*", and any part that is a stand-in
+  (first_materials: 3+ models sharing one materials list = copies of the default model; composites not judged).
+- is_gun: "npc_" but not "exo_arm" (npc_exo_arm_launcher_l is on the arm, tag 0x2B3C).
+- Camo names: camoTable column 2 is the key (MPUI_MULTICAME ...), looked up in the game's words (asset type 38 = localize: {value, key}; enumerated once,
+  "MPUI_" keys kept). Older camo: row by its material (col 8); painted: row whose col 10 equals the material's column in camoMaterialTable.
+- Real effects on Greenband per theater\effects_list.txt (1376): shots default vfx/muzzleflash/generic_assault_flash_wv (also generic_lmg/smg/pistol/
+  shotgun/sniper/silenced _wv), blood default vfx/weaponimpact/flesh_impact_body_fatal_exit.

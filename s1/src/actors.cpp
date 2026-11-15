@@ -1894,9 +1894,10 @@ namespace
 		return handle;
 	}
 
+	// (a gun or a part of one, as others see it; the launcher on an exo's arm is "npc_" too and is not)
 	bool is_gun(const char* name)
 	{
-		return strncmp(name, "npc_", 4) == 0;
+		return strncmp(name, "npc_", 4) == 0 && !strstr(name, "exo_arm");
 	}
 }
 

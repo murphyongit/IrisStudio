@@ -1342,22 +1342,6 @@ namespace
 		ImGui::Separator();
 		// (a light a little off the surface, so it lights it)
 		const float off[3] = {point[0] + normal[0] * 24.0f, point[1] + normal[1] * 24.0f, point[2] + normal[2] * 24.0f};
-		if (ImGui::MenuItem("Add a light here"))
-		{
-			scene_add_light_at(off);
-		}
-
-		if (ImGui::MenuItem(ICON_PERSON "  Add an actor here"))
-		{
-			add_actor_at(point);
-		}
-
-		if (ImGui::MenuItem(ICON_CUBE "  Add a prop here..."))
-		{
-			g_prop_pick.open = true;
-			memcpy(g_prop_pick.point, point, sizeof(g_prop_pick.point));
-		}
-
 		{
 			static Actor listed[ACTORS_MAX];
 			const int listed_count = actors_list(listed, ACTORS_MAX);
@@ -1372,6 +1356,22 @@ namespace
 					actors_set(g_actor_open, walker);
 				}
 			}
+		}
+
+		if (ImGui::MenuItem("Add a light here"))
+		{
+			scene_add_light_at(off);
+		}
+
+		if (ImGui::MenuItem(ICON_PERSON "  Add an actor here"))
+		{
+			add_actor_at(point);
+		}
+
+		if (ImGui::MenuItem(ICON_CUBE "  Add a prop here..."))
+		{
+			g_prop_pick.open = true;
+			memcpy(g_prop_pick.point, point, sizeof(g_prop_pick.point));
 		}
 
 		ImGui::SetItemTooltip("A figure of the editor's own, dressed as the player nearest the camera: its outfit and its animations are set in the Scene tab");
@@ -1732,9 +1732,11 @@ namespace
 		if (actor.path_count == 0)
 		{
 			ImGui::PushTextWrapPos(0.0f);
-			ImGui::TextDisabled(actor.prop ? "Points it goes through at its speed, from where it stands."
+			ImGui::TextDisabled(actor.prop ? "Points it goes through at its speed, from where it stands. To add one: right click a place on the picture "
+			                                 "and choose \"Add a path point\" (this prop must be open here, as it is now)."
 			                               : "Points it goes through, from where it stands: its moving animations (a run, a walk) carry it along the path "
-			                                 "and turn it at the corners, instead of straight on.");
+			                                 "and turn it at the corners, instead of straight on. To add one: right click the ground on the picture and "
+			                                 "choose \"Add a path point\" (this actor must be open here, as it is now).");
 			ImGui::PopTextWrapPos();
 		}
 
@@ -1897,8 +1899,8 @@ namespace
 			ActorEvent event;
 			event.kind = 0;
 			event.at_ms = state.position_ms;
-			static const char* const WORDS[] = {"muzzleflash", "muzzle_flash", "muzzle", "flash"};
-			first_effect(WORDS, 4, event.effect);
+			static const char* const WORDS[] = {"muzzleflash/generic_assault_flash_wv", "muzzleflash", "muzzle_flash", "muzzle", "flash"};
+			first_effect(WORDS, 5, event.effect);
 			actor.events[actor.event_count++] = event;
 			changed = true;
 		}
@@ -1910,8 +1912,8 @@ namespace
 			ActorEvent event;
 			event.kind = 1;
 			event.at_ms = state.position_ms;
-			static const char* const WORDS[] = {"flesh_impact_body", "flesh_hit", "flesh_impact", "blood", "flesh"};
-			first_effect(WORDS, 5, event.effect);
+			static const char* const WORDS[] = {"flesh_impact_body_fatal_exit", "flesh_impact_body", "flesh_hit", "flesh_impact", "blood", "flesh"};
+			first_effect(WORDS, 6, event.effect);
 			actor.events[actor.event_count++] = event;
 			changed = true;
 		}
@@ -3377,12 +3379,18 @@ namespace
 						char current[64] = "";
 						const bool painted = models_camo(entity, parts[i], current);
 						auto pretty = [](const char* material) -> const char* {
-							// (an older one: camo_carbonfiber_01_col is "carbonfiber"; a painted one: m/dear_jackpot is "jackpot")
+							// (as the game's own camo menu names it; failing that, from the material's name:
+							// camo_carbonfiber_01_col is "carbonfiber", m/dear_jackpot is "jackpot")
+							static char names[8][64];
+							static int turn = 0;
+							char* out = names[turn++ & 7];
+							if (models_camo_title(material, out))
+							{
+								return out;
+							}
+
 							if (strncmp(material, "camo_", 5) == 0)
 							{
-								static char names[4][64];
-								static int turn = 0;
-								char* out = names[turn++ & 3];
 								strncpy_s(out, 64, material + 5, _TRUNCATE);
 								if (char* end = strstr(out, "_col"))
 								{
