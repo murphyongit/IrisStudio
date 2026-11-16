@@ -181,14 +181,19 @@ namespace
 	{
 		if (g_captured && !g_swapped && g_on && g_context && g_back && g_final && !(flags & DXGI_PRESENT_TEST))
 		{
-			g_inside = true;
 			g_context->CopyResource(g_final, g_back);
 			g_context->CopyResource(g_back, g_scene);
-			g_inside = false;
 			g_swapped = true;
 		}
 
-		return g_original_wrapper_present(self, sync, flags);
+		// (what is drawn from here to the end of the real Present is ReShade's and the editor's, not the game's:
+		// no "HUD begins" is looked for in it)
+		g_inside = true;
+		const HRESULT result = g_original_wrapper_present(self, sync, flags);
+		g_captured = g_swapped = g_on_back = false;
+		g_draws_before = g_draws_after = 0;
+		g_inside = false;
+		return result;
 	}
 
 	template <typename T> void release(T*& one)
@@ -480,7 +485,6 @@ void hud_keep_frame(IDXGISwapChain* real, ID3D11Device* device, ID3D11DeviceCont
 	if (g_swapped && g_on)
 	{
 		// R: what ReShade made of the scene. The HUD over it.
-		g_inside = true;
 		Kept kept;
 		kept.keep(context);
 		context->CopyResource(g_made, g_back);
@@ -502,7 +506,6 @@ void hud_keep_frame(IDXGISwapChain* real, ID3D11Device* device, ID3D11DeviceCont
 		context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 		context->Draw(3, 0);
 		kept.put_back(context);
-		g_inside = false;
 		++g_frames;
 		if (g_frames == 1 || g_frames == 600)
 		{
@@ -517,6 +520,7 @@ void hud_keep_frame(IDXGISwapChain* real, ID3D11Device* device, ID3D11DeviceCont
 		snprintf(g_status, sizeof(g_status), "ready (no HUD is being drawn right now)");
 	}
 
-	g_captured = g_swapped = false;
-	g_draws_before = g_draws_after = 0;
+	// (the editor draws next, blended, on the back buffer: not the game's HUD. Looked for again once ReShade's
+	// Present, which this is inside of, has returned.)
+	g_inside = true;
 }
