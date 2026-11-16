@@ -371,7 +371,9 @@ namespace
 	// A part of an entity's model: where it is and how it is turned (forward, left, up).
 	bool bone_matrix(const int entity, const char* name, float axis[3][3], float origin[3])
 	{
-		if (entity < 0 || entity >= BONE_ENTITIES)
+		// (a player; or one of the editor's actors and props, whose models are the entities from 1983 up)
+		const bool editors = entity >= 1983 && entity < 2048;
+		if (entity < 0 || (entity >= BONE_ENTITIES && !editors))
 		{
 			return false;
 		}
@@ -379,7 +381,7 @@ namespace
 		__try
 		{
 			auto* centity = reinterpret_cast<unsigned char*>(CG_ENTITIES + static_cast<size_t>(entity) * CENTITY_SIZE);
-			const int number = *reinterpret_cast<const std::int16_t*>(centity + CENTITY_NUMBER);
+			const int number = editors ? entity : *reinterpret_cast<const std::int16_t*>(centity + CENTITY_NUMBER);
 			if (number != entity)
 			{
 				return false;
@@ -746,11 +748,52 @@ namespace
 	}
 
 	// The editor's lights, into the scene about to be drawn.
+	// Lights for a moment: the flashes of the actors' shots.
+	struct Flash
+	{
+		float origin[3], color[3];
+		float radius, intensity;
+		double from, until;
+	};
+	Flash g_flashes[12] = {};
+	std::atomic<float> g_shake_amount{0.0f}, g_shake_speed{1.0f};
+	double g_shake_time = 0.0;
+
 	void add_lights()
 	{
 		if (!g_original_add_omni_light)
 		{
 			return;
+		}
+
+		{
+			const double now = theater_state().position_exact;
+			__try
+			{
+				static const float up[3] = {0.0f, 0.0f, 1.0f};
+				float bulb[4];
+				memcpy(bulb, g_game_bulb, sizeof(bulb));
+				for (Flash& flash : g_flashes)
+				{
+					if (flash.until <= flash.from)
+					{
+						continue;
+					}
+
+					if (now >= flash.until || now < flash.from - 50.0)
+					{
+						flash.until = flash.from = 0.0;
+					}
+					else if (now >= flash.from)
+					{
+						const float left = static_cast<float>((flash.until - now) / (flash.until - flash.from)) * flash.intensity;
+						g_original_add_omni_light(flash.origin, up, flash.radius, flash.color[0] * left, flash.color[1] * left, flash.color[2] * left, bulb);
+					}
+				}
+			}
+			__except (EXCEPTION_EXECUTE_HANDLER)
+			{
+			}
 		}
 
 		int spots = 0;
@@ -796,9 +839,60 @@ namespace
 			angles_to_axis(pose.angles, axis);
 		}
 
+		float origin[3];
+		memcpy(origin, pose.origin, sizeof(origin));
+		const float shake = g_shake_amount;
+		if (shake > 0.0f)
+		{
+			// held by hand: a slow sway of where it points and where it is, worked out from the recording's time
+			// (the same every time it is played or recorded)
+			const double t = g_shake_time / 1000.0 * g_shake_speed;
+			auto wave = [t](const double a, const double b, const double c) {
+				return static_cast<float>((std::sin(t * a + c) + 0.5 * std::sin(t * b + c * 2.3) + 0.25 * std::sin(t * (a + b) * 1.37 + c * 0.7)) / 1.75);
+			};
+			const float yaw = wave(1.9, 4.3, 0.3) * shake * 0.35f * 0.0174533f, pitch = wave(2.3, 5.1, 1.9) * shake * 0.3f * 0.0174533f,
+			            roll = wave(1.1, 3.7, 4.1) * shake * 0.15f * 0.0174533f;
+			float f[3], l[3], u[3];
+			for (int k = 0; k < 3; ++k)
+			{
+				f[k] = axis[0][k] + axis[1][k] * yaw - axis[2][k] * pitch;
+				l[k] = axis[1][k] - axis[0][k] * yaw + axis[2][k] * roll;
+			}
+
+			const float f_length = std::sqrt(f[0] * f[0] + f[1] * f[1] + f[2] * f[2]);
+			for (int k = 0; k < 3; ++k)
+			{
+				f[k] /= f_length > 0.0001f ? f_length : 1.0f;
+			}
+
+			const float along = l[0] * f[0] + l[1] * f[1] + l[2] * f[2];
+			for (int k = 0; k < 3; ++k)
+			{
+				l[k] -= f[k] * along;
+			}
+
+			const float l_length = std::sqrt(l[0] * l[0] + l[1] * l[1] + l[2] * l[2]);
+			for (int k = 0; k < 3; ++k)
+			{
+				l[k] /= l_length > 0.0001f ? l_length : 1.0f;
+			}
+
+			u[0] = f[1] * l[2] - f[2] * l[1];
+			u[1] = f[2] * l[0] - f[0] * l[2];
+			u[2] = f[0] * l[1] - f[1] * l[0];
+			for (int k = 0; k < 3; ++k)
+			{
+				origin[k] += (axis[1][k] * wave(1.3, 2.9, 2.2) + axis[2][k] * wave(1.7, 3.3, 5.0)) * shake * 0.35f;
+			}
+
+			memcpy(axis[0], f, sizeof(f));
+			memcpy(axis[1], l, sizeof(l));
+			memcpy(axis[2], u, sizeof(u));
+		}
+
 		memcpy(&at<float>(REFDEF_AXIS), axis, sizeof(axis));
-		memcpy(&at<float>(REFDEF_ORIGIN), pose.origin, sizeof(pose.origin));
-		memcpy(&at<float>(VIEW_ORIGIN), pose.origin, sizeof(pose.origin));
+		memcpy(&at<float>(REFDEF_ORIGIN), origin, sizeof(origin));
+		memcpy(&at<float>(VIEW_ORIGIN), origin, sizeof(origin));
 	}
 
 	Pose g_applied;  // this frame's, for the field of view at the frame's next step
@@ -808,6 +902,7 @@ namespace
 		g_original_calc_view(client);
 
 		const TheaterState state = theater_state();
+		g_shake_time = state.position_exact;
 		// (the editor's effects are played here, early in the client game's frame, as the game's own are)
 		effects_game_frame(state);
 		scene_game_frame(state);
@@ -1387,4 +1482,57 @@ void camera_points_import(const unsigned char* bytes, const int size)
 	{
 		memcpy(g_points.data(), bytes + 4, g_points.size() * sizeof(Point));
 	}
+}
+
+// Straight down from a place (from a little above it, so that one already in the ground comes up onto it).
+bool camera_ground_under(const float at[3], float out[3])
+{
+	const float start[3] = {at[0], at[1], at[2] + 40.0f}, end[3] = {at[0], at[1], at[2] - 4096.0f};
+	float fraction = 1.0f, normal[3] = {};
+	if (!trace_world(start, end, &fraction, normal) || fraction >= 1.0f)
+	{
+		return false;
+	}
+
+	out[0] = at[0];
+	out[1] = at[1];
+	out[2] = start[2] + (end[2] - start[2]) * fraction;
+	return true;
+}
+
+void scene_flash_light(const float origin[3], const float color[3], const float radius, const float intensity, const double from_ms, const double length_ms)
+{
+	Flash* free = &g_flashes[0];
+	for (Flash& flash : g_flashes)
+	{
+		if (flash.until <= flash.from)
+		{
+			free = &flash;
+			break;
+		}
+
+		if (flash.from < free->from)
+		{
+			free = &flash;
+		}
+	}
+
+	memcpy(free->origin, origin, sizeof(free->origin));
+	memcpy(free->color, color, sizeof(free->color));
+	free->radius = radius;
+	free->intensity = intensity;
+	free->from = from_ms;
+	free->until = from_ms + length_ms;
+}
+
+void camera_shake(float* amount, float* speed)
+{
+	*amount = g_shake_amount;
+	*speed = g_shake_speed;
+}
+
+void camera_set_shake(const float amount, const float speed)
+{
+	g_shake_amount = amount;
+	g_shake_speed = speed;
 }

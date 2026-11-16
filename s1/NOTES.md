@@ -497,3 +497,18 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
   its tooltip. Log: "hud keep: frame N: the scene was taken after X plain draws on the back buffer, Y draws came after it".
 - ASSUMPTIONS TO CHECK IN THE LOG: the game puts the scene on the back buffer with unblended draws and draws the HUD blended straight onto it. If
   the marker fires too early (a blended full-screen pass before the scene is finished), ReShade's effects would vanish wherever B differs from A.
+
+## 0.78 (built while the user was away, 16 Nov; NOTHING here has been run in the game)
+- Asked: build every idea I listed except speed ramps: motion blur at capture, clone a recorded player as an actor, muzzle flash light, camera
+  attached to things + shake, focus pulls, Look + players' swaps saved with the recording, copy/duplicate + group move, snap to ground, one-click
+  looks, kill list, render queue, killstreak sequences, tracers/shells/ragdoll, library thumbnails. User still has not said whether 0.76 (kill feed)
+  and 0.77 (HUD out of ReShade) work.
+- Done in this build:
+  * capture.cpp motion blur: g_blur pictures per written frame (game stepped at rate*g_blur, never finer than 1 ms), summed in linear light for the
+    first g_shutter part of the frame, averaged. UI: Record tab "Motion blur" + "Shutter".
+  * Duplicate for actors/props (actors_duplicate, with the swapper's changes) and lights; "Put on the ground" (camera_ground_under: trace_world
+    straight down) for an actor and its path; dragging one of several effects selected in the timeline slides them all.
+  * Shots: a light for 60 ms at each (scene_flash_light: an omni light added in add_lights, fading; Actor.shot_light/_color/_reach) and a shell
+    effect at tag_brass (Actor.shell_effect; vfx/shelleject/*). Only the actors' shots, not the match's players'.
+  * Camera: "Held by hand" sway (camera_set_shake; sines of the recording's time, applied in apply()); the bone camera can ride on an actor or
+    prop (bone_matrix takes entities 1983..2047 without the number check; the UI lists them).

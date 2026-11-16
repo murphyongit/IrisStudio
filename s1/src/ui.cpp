@@ -1187,6 +1187,30 @@ namespace
 			if (held_kind == 0 && held_index < effect_count)
 			{
 				PlacedEffect changed = effects[held_index];
+				// (the others selected with it in the timeline are slid along by as much)
+				float moved[3];
+				for (int k = 0; k < 3; ++k)
+				{
+					moved[k] = origin[k] - changed.origin[k];
+				}
+
+				if (g_fx_selected.count(held_index) != 0 && (moved[0] != 0.0f || moved[1] != 0.0f || moved[2] != 0.0f))
+				{
+					for (const int other : g_fx_selected)
+					{
+						if (other != held_index && other >= 0 && other < effect_count)
+						{
+							PlacedEffect along = effects[other];
+							for (int k = 0; k < 3; ++k)
+							{
+								along.origin[k] += moved[k];
+							}
+
+							effects_set(other, along);
+						}
+					}
+				}
+
 				memcpy(changed.origin, origin, sizeof(changed.origin));
 				memcpy(changed.angles, angles, sizeof(changed.angles));
 				effects_set(held_index, changed);
@@ -1691,6 +1715,42 @@ namespace
 	{
 		bool changed = false;
 		const ImGuiStyle& style = ImGui::GetStyle();
+		if (ImGui::Button("Duplicate"))
+		{
+			const int copy = actors_duplicate(index);
+			if (copy < 0)
+			{
+				ui_log("Not duplicated: all %d actors and props are in use.", ACTORS_MAX);
+			}
+			else
+			{
+				g_actor_open = copy;
+				g_actor_clip = -1;
+			}
+		}
+
+		ImGui::SetItemTooltip("Another one like it (its outfit, gun, animations, path and shots) a step to its side.");
+		ImGui::SameLine();
+		if (ImGui::Button("Put on the ground"))
+		{
+			float ground[3];
+			if (camera_ground_under(actor.origin, ground))
+			{
+				memcpy(actor.origin, ground, sizeof(actor.origin));
+				changed = true;
+			}
+
+			for (int p = 0; p < actor.path_count && p < ACTOR_PATH_MAX && !actor.prop; ++p)
+			{
+				if (camera_ground_under(actor.path[p], ground))
+				{
+					memcpy(actor.path[p], ground, sizeof(ground));
+					changed = true;
+				}
+			}
+		}
+
+		ImGui::SetItemTooltip(actor.prop ? "Dropped straight down onto whatever is under it." : "It, and every point of its path, dropped straight down onto whatever is under them.");
 		if (actor.prop)
 		{
 			row_label("Model");
@@ -1893,9 +1953,62 @@ namespace
 			changed = true;
 		}
 
+		bool any_shots = false;
+		for (int e = 0; e < actor.event_count && e < ACTOR_EVENTS_MAX; ++e)
+		{
+			any_shots = any_shots || actor.events[e].kind == 0;
+		}
+
+		if (any_shots)
+		{
+			row_label("Light at each shot");
+			changed = ImGui::Checkbox("##shotLight", &actor.shot_light) || changed;
+			ImGui::SetItemTooltip("Each shot lights what is around the gun for a moment, as a real muzzle flash does: it shows most in a dark scene.");
+			if (actor.shot_light)
+			{
+				ImGui::SameLine();
+				changed = ImGui::ColorEdit3("##shotLightColour", actor.shot_light_color, ImGuiColorEditFlags_NoInputs) || changed;
+				row_label("The light reaches");
+				ui::Default(420.0f);
+				changed = ui::SliderFloat("##shotLightReach", &actor.shot_light_reach, 50.0f, 2000.0f, "%.0f") || changed;
+			}
+
+			row_label("Shell thrown out");
+			const char* shell_slash = strrchr(actor.shell_effect, '/');
+			if (ImGui::BeginCombo("##shell", actor.shell_effect[0] ? (shell_slash ? shell_slash + 1 : actor.shell_effect) : "None"))
+			{
+				if (ImGui::Selectable("None", actor.shell_effect[0] == 0))
+				{
+					actor.shell_effect[0] = 0;
+					changed = true;
+				}
+
+				static char shells[400][96];
+				const int shell_count = effects_find("shelleject", shells, 400);
+				for (int f = 0; f < shell_count; ++f)
+				{
+					if (ImGui::Selectable(shells[f], strcmp(shells[f], actor.shell_effect) == 0))
+					{
+						strncpy_s(actor.shell_effect, shells[f], _TRUNCATE);
+						changed = true;
+					}
+				}
+
+				ImGui::EndCombo();
+			}
+
+			ImGui::SetItemTooltip("An effect played at the gun's ejection port at each shot (the empty shell flying out).");
+		}
+
 		ImGui::BeginDisabled(actor.event_count >= ACTOR_EVENTS_MAX);
 		if (ImGui::Button("Add shots"))
 		{
+			if (!actor.shell_effect[0] && !any_shots)
+			{
+				static const char* const SHELLS[] = {"shelleject/rifle", "shelleject/assault", "shelleject/lmg", "shelleject/pistol"};
+				first_effect(SHELLS, 4, actor.shell_effect);
+			}
+
 			ActorEvent event;
 			event.kind = 0;
 			event.at_ms = state.position_ms;
@@ -1953,6 +2066,26 @@ namespace
 			}
 
 			float fov = camera.fov;
+			{
+				float sway = 0.0f, sway_speed = 1.0f;
+				camera_shake(&sway, &sway_speed);
+				row_label("Held by hand");
+				ui::Default(0.0f);
+				bool swayed = ui::SliderFloat("##sway", &sway, 0.0f, 10.0f, "%.1f");
+				ImGui::SetItemTooltip("A slow sway of the camera, as if it were held by hand (0: none). It is worked out from the recording's time,\nso it is the same every time you play or record the shot. It is on top of every camera: free, a path, on a bone.");
+				if (sway > 0.0f)
+				{
+					row_label("Sway speed");
+					ui::Default(1.0f);
+					swayed = ui::SliderFloat("##swaySpeed", &sway_speed, 0.2f, 4.0f, "%.2fx") || swayed;
+				}
+
+				if (swayed)
+				{
+					camera_set_shake(sway, sway_speed);
+				}
+			}
+
 			row_label("Field of View");
 			ImGui::BeginDisabled(camera.mode != CameraMode::Free && camera.mode != CameraMode::Bone);
 			ImGui::SetNextItemWidth(-look_key_width());
@@ -1989,7 +2122,18 @@ namespace
 			BoneCamera wanted = bone.camera;
 			bool changed = false;
 			char label[48];
+			static Actor rigs[ACTORS_MAX];
+			const int rig_count = actors_list(rigs, ACTORS_MAX);
 			auto name_of = [&](const int entity, char* out, const size_t size) {
+				for (int a = 0; a < rig_count; ++a)
+				{
+					if (rigs[a].handle == entity)
+					{
+						snprintf(out, size, "%s", rigs[a].name);
+						return;
+					}
+				}
+
 				snprintf(out, size, entity == bone.nearest ? "Player %d (nearest the camera)" : "Player %d", entity);
 			};
 			if (wanted.entity >= 0)
@@ -2016,6 +2160,24 @@ namespace
 							changed = true;
 						}
 					}
+				}
+
+				// (the editor's own actors and props: the camera rides on them the same way)
+				for (int a = 0; a < rig_count; ++a)
+				{
+					ImGui::PushID(5000 + a);
+					if (ImGui::Selectable(rigs[a].name, rigs[a].handle == wanted.entity))
+					{
+						wanted.entity = rigs[a].handle;
+						if (rigs[a].prop)
+						{
+							strncpy_s(wanted.bone, "tag_origin", _TRUNCATE);
+						}
+
+						changed = true;
+					}
+
+					ImGui::PopID();
 				}
 
 				ImGui::EndCombo();
@@ -2395,6 +2557,19 @@ namespace
 					}
 
 					ImGui::SetItemTooltip("Move this light to where the camera is now");
+					ImGui::SameLine();
+					if (ImGui::SmallButton("Duplicate"))
+					{
+						const int copy = scene_add_light();
+						if (copy >= 0)
+						{
+							SceneLight twin = light;
+							twin.origin[0] += 40.0f;
+							scene_set_light(copy, twin);
+						}
+					}
+
+					ImGui::SetItemTooltip("Another light like this one, a step beside it");
 					ImGui::SameLine();
 					if (ImGui::SmallButton(ICON_TRASH))
 					{

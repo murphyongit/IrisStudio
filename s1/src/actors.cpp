@@ -1029,6 +1029,22 @@ namespace
 		{
 			say("actors: %s's effect %s is not loaded in this match", actor.name, event.effect);
 		}
+
+		if (event.kind == 0)
+		{
+			// a shot also lights what is around it for a moment, and throws a shell out
+			if (actor.shot_light && actor.shot_light_reach > 0.0f)
+			{
+				const float at[3] = {origin[0] + axis[0][0] * 14.0f, origin[1] + axis[0][1] * 14.0f, origin[2] + axis[0][2] * 14.0f};
+				scene_flash_light(at, actor.shot_light_color, actor.shot_light_reach, 900.0f, now, 60.0);
+			}
+
+			float out_of[3] = {}, thrown[3][3] = {};
+			if (actor.shell_effect[0] && bone(actor.handle, model, "tag_brass", out_of, thrown))
+			{
+				effects_play_once(actor.shell_effect, out_of, thrown);
+			}
+		}
 	}
 }
 
@@ -2183,4 +2199,42 @@ void deaths_import(const char* text)
 	}
 
 	g_death_any = !g_death_all.empty() || !g_death_of.empty();
+}
+
+int actors_duplicate(const int index)
+{
+	int source = 0, made = 0, copy = -1;
+	{
+		std::lock_guard<std::mutex> lock(g_lock);
+		if (index < 0 || index >= g_count || g_count >= ACTORS_MAX)
+		{
+			return -1;
+		}
+
+		Actor actor = g_actors[index];
+		source = actor.handle;
+		actor.handle = made = free_handle();
+		if (!actor.prop)
+		{
+			snprintf(actor.name, sizeof(actor.name), "actor%d", g_next_number++);
+		}
+
+		// (a step to its right)
+		actor.origin[0] += std::sin(actor.yaw * TO_RAD) * 40.0f;
+		actor.origin[1] -= std::cos(actor.yaw * TO_RAD) * 40.0f;
+		g_actors[g_count] = actor;
+		g_outfits[g_count] = g_outfits[index];
+		g_outfit_changes[g_count] = ++g_change_counter;
+		g_now[g_count] = ActorNow();
+		copy = g_count++;
+	}
+
+	// the editor's changes to its outfit (other parts, camouflage) go with it
+	static char changes[16384];
+	if (models_export(source, changes, sizeof(changes)) > 0)
+	{
+		models_import(made, changes);
+	}
+
+	return copy;
 }

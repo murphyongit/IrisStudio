@@ -15,6 +15,7 @@
 
 #include <atomic>
 #include <cfloat>
+#include <cmath>
 #include <condition_variable>
 #include <cstdio>
 #include <cstring>
@@ -58,6 +59,12 @@ namespace
 	// what the tab is set to
 	Format g_format = Format::Video;
 	int g_codec = 2, g_size = 0, g_rate = 60;
+	// Motion blur: each frame written is several of the game's drawn one after another in the frame's time and
+	// laid over each other (in linear light). g_blur: how many (1: none); g_shutter: over how much of the
+	// frame's time the "shutter" is open (0.5: half, a film camera's look), the rest are drawn and not used.
+	int g_blur = 1, g_blur_now = 1, g_blur_at = 0, g_blur_used = 0;
+	float g_shutter = 0.5f;
+	std::vector<std::uint32_t> g_blur_sum;
 	float g_start = 0.0f, g_end = 0.0f;
 	std::string g_timeframe_for;
 
@@ -491,14 +498,77 @@ namespace
 			return;
 		}
 
-		std::vector<unsigned char> frame(static_cast<size_t>(g_width) * g_height * 4);
-		for (int y = 0; y < g_height; ++y)
+		std::vector<unsigned char> frame;
+		if (g_blur_now > 1)
 		{
-			memcpy(frame.data() + static_cast<size_t>(y) * g_width * 4, static_cast<const unsigned char*>(mapped.pData) + static_cast<size_t>(y) * mapped.RowPitch,
-			       static_cast<size_t>(g_width) * 4);
+			// (a byte of the picture to linear light, 12 bits, and back)
+			static std::uint16_t to_light[256];
+			static unsigned char to_byte[4096];
+			static bool tables = false;
+			if (!tables)
+			{
+				tables = true;
+				for (int i = 0; i < 256; ++i)
+				{
+					to_light[i] = static_cast<std::uint16_t>(std::pow(i / 255.0, 2.2) * 4095.0 + 0.5);
+				}
+
+				for (int i = 0; i < 4096; ++i)
+				{
+					to_byte[i] = static_cast<unsigned char>(std::pow(i / 4095.0, 1.0 / 2.2) * 255.0 + 0.5);
+				}
+			}
+
+			const size_t values = static_cast<size_t>(g_width) * g_height * 4;
+			if (g_blur_sum.size() != values || g_blur_at == 0)
+			{
+				g_blur_sum.assign(values, 0);
+				g_blur_used = 0;
+			}
+
+			// the shutter is open for the first part of the frame's time
+			const int open = (std::max)(1, static_cast<int>(static_cast<float>(g_blur_now) * g_shutter + 0.5f));
+			if (g_blur_at < open)
+			{
+				for (int y = 0; y < g_height; ++y)
+				{
+					const unsigned char* row = static_cast<const unsigned char*>(mapped.pData) + static_cast<size_t>(y) * mapped.RowPitch;
+					std::uint32_t* sum = g_blur_sum.data() + static_cast<size_t>(y) * g_width * 4;
+					for (int x = 0; x < g_width * 4; ++x)
+					{
+						sum[x] += to_light[row[x]];
+					}
+				}
+
+				++g_blur_used;
+			}
+
+			context->Unmap(g_staging, 0);
+			if (++g_blur_at < g_blur_now)
+			{
+				return;
+			}
+
+			g_blur_at = 0;
+			frame.resize(values);
+			const std::uint32_t used = static_cast<std::uint32_t>(g_blur_used > 0 ? g_blur_used : 1);
+			for (size_t i = 0; i < values; ++i)
+			{
+				frame[i] = (i & 3) == 3 ? 255 : to_byte[g_blur_sum[i] / used];
+			}
+		}
+		else
+		{
+			frame.resize(static_cast<size_t>(g_width) * g_height * 4);
+			for (int y = 0; y < g_height; ++y)
+			{
+				memcpy(frame.data() + static_cast<size_t>(y) * g_width * 4, static_cast<const unsigned char*>(mapped.pData) + static_cast<size_t>(y) * mapped.RowPitch,
+				       static_cast<size_t>(g_width) * 4);
+			}
+
+			context->Unmap(g_staging, 0);
 		}
 
-		context->Unmap(g_staging, 0);
 		{
 			// the writer is waited for rather than a frame dropped: the clock only goes on when a frame is drawn
 			std::unique_lock<std::mutex> lock(g_lock);
@@ -564,7 +634,16 @@ void capture_frame(const TheaterState& state, ID3D11Device* device, ID3D11Device
 			return;
 		}
 
-		theater_capture(static_cast<float>(g_rate));
+		// (with motion blur the game is stepped that many times for each frame written; not finer than a
+		// thousandth of a second a step)
+		g_blur_now = g_blur;
+		while (g_blur_now > 1 && g_rate * g_blur_now > 1000)
+		{
+			g_blur_now /= 2;
+		}
+
+		g_blur_at = 0;
+		theater_capture(static_cast<float>(g_rate * g_blur_now));
 		theater_set_paused(false);
 		g_skip = 2;  // the frames already on their way were drawn before the clock was stepped
 		g_stop = false;
@@ -709,6 +788,39 @@ void capture_draw_tab(const TheaterState& state)
 			}
 
 			ImGui::EndCombo();
+		}
+
+		{
+			ui_row_label("Motion blur");
+			char label[48];
+			snprintf(label, sizeof(label), g_blur > 1 ? "%d pictures in each frame" : "Off", g_blur);
+			if (ImGui::BeginCombo("##blur", label))
+			{
+				for (const int option : {1, 4, 8, 16, 32})
+				{
+					snprintf(label, sizeof(label), option > 1 ? "%d pictures in each frame" : "Off", option);
+					if (ImGui::Selectable(label, option == g_blur))
+					{
+						g_blur = option;
+					}
+				}
+
+				ImGui::EndCombo();
+			}
+
+			ImGui::SetItemTooltip("Real motion blur: the game draws this many pictures for every frame of the video, each a moment later, and they are\nlaid over each other. More is smoother and takes that many times longer to record.\nThe game is not stepped finer than a thousandth of a second: at 60 frames a second 16 is the most that is used.");
+			if (g_blur > 1)
+			{
+				float shutter = g_shutter * 360.0f;
+				ui_row_label("Shutter");
+				ui::Default(180.0f);
+				if (ui::SliderFloat("##shutter", &shutter, 30.0f, 360.0f, "%.0f degrees"))
+				{
+					g_shutter = shutter / 360.0f;
+				}
+
+				ImGui::SetItemTooltip("How much of each frame's time is blurred together. 180: half, the look of a film camera. 360: all of it, the most blur.");
+			}
 		}
 
 		ImGui::EndDisabled();

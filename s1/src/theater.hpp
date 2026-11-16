@@ -205,6 +205,12 @@ struct Actor
 	float speed = 300.0f;            // along its path, units a second
 	int event_count = 0;
 	ActorEvent events[ACTOR_EVENTS_MAX];
+	// (added after 0.77) at each of its shots: a light for a moment (its colour, how far it reaches), and a
+	// shell thrown out of its gun (an effect; "": none)
+	bool shot_light = true;
+	float shot_light_color[3] = {1.0f, 0.72f, 0.42f};
+	float shot_light_reach = 420.0f;
+	char shell_effect[96] = "";
 };
 struct ActorNow
 {
@@ -222,6 +228,15 @@ int actors_handles(int* out, int max);
 int actors_add(const float origin[3], float yaw, int dressed_as, std::uint32_t ms);
 // A prop: one model of the game's at a place (-1: no room).
 int actors_add_prop(const char* model, const float origin[3], float yaw, std::uint32_t ms);
+// Another like one (its outfit and the editor's changes to it too), a step to its side (-1: no room).
+int actors_duplicate(int index);
+// Straight down from a place: what is under it (false: nothing within reach).
+bool camera_ground_under(const float at[3], float out[3]);
+// (the game's thread) A light for a moment (a shot's flash): from a time of the recording, for so long, fading.
+void scene_flash_light(const float origin[3], const float color[3], float radius, float intensity, double from_ms, double length_ms);
+// The camera held by hand: how much it sways (0: not at all) and how fast.
+void camera_shake(float* amount, float* speed);
+void camera_set_shake(float amount, float speed);
 // The gun in an actor's hands: which model it is ("" none), and another put there (false: no player's gun to go by).
 bool actors_gun(int index, char out[64]);
 bool actors_give_gun(int index, const char* model);
