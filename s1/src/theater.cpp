@@ -38,7 +38,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.75 (recorder, playback, IrisStudio's editor)";
+	constexpr char VERSION[] = "0.76 (recorder, playback, IrisStudio's editor)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -262,9 +262,18 @@ namespace
 	// reached from before and from after (0.33). So such a jump goes to ROLL_MS before its time, always by
 	// way of the recording's start, and plays up to it at ROLL_SPEED: the same moment is then reached the
 	// same way every time. The position shown meanwhile is the one being gone to.
-	constexpr std::uint32_t ROLL_MS = 3000;
-	constexpr float ROLL_SPEED = 8.0f;
+	// (0.76: seven seconds, and for every jump, playing or frozen: the kill feed, the score popups and the
+	// medals are then made by the recording itself over those seconds, each at its own time, so they are at the
+	// jump's end exactly as they were in the match. What stood on the HUD before the jump, and what the
+	// messages given in one go on the way put there, is run out first: see g_hud_flush_until.)
+	constexpr std::uint32_t ROLL_MS = 7000;
+	constexpr float ROLL_SPEED = 14.0f;
 	std::atomic<std::int64_t> g_roll_to{-1};
+	// The HUD emptied of what passes with time (a kill feed line, a popup): asked for by a jump, done once the
+	// jump's messages have been given: for a moment every step of the HUD is told ten seconds have passed.
+	std::atomic<bool> g_hud_flush_pending{false};
+	std::atomic<ULONGLONG> g_hud_flush_until{0};
+	constexpr ULONGLONG HUD_FLUSH_MS = 150;
 	bool g_caught_up = false;
 	// a recording asked for by name (the editor's list), and when it may start
 	char g_wanted_name[128] = {};
@@ -888,12 +897,9 @@ namespace
 		++g_rewinds;
 		// (the client game begins again: what the editor made in it is let go of first)
 		actors_release();
-		// (the HUD's script takes down the kill feed's lines and the popups left from later in the recording)
-		static int flushes = 0;
-		char flush[48];
-		snprintf(flush, sizeof(flush), "set s1iris_hud_flush %d", ++flushes);
-		theater_command(flush);
-		theater_hud_wake();
+		// (the kill feed's lines and the popups left from later in the recording, and those the messages given
+		// on the way make, are run out once it has caught up)
+		g_hud_flush_pending = true;
 		g_faults_noted = 0;
 		log_stream("before going back");
 		g_log_ticks = 12;
@@ -913,22 +919,25 @@ namespace
 
 	void jump_to(const std::uint64_t target)
 	{
-		if (!g_paused)
+		const std::uint64_t clock = g_clock;
+		const std::uint64_t from = target > ROLL_MS ? target - ROLL_MS : 0;
+		if (!g_paused && target >= clock)
 		{
-			g_roll_to = -1;
-			if (target < g_clock)
+			// (forward while playing: no need to begin again. What lies between is given in one go up to seven
+			// seconds before the time, the HUD emptied, and the rest played up to it.)
+			if (from > clock)
 			{
-				go_back_to(target);
-			}
-			else
-			{
-				g_clock = target;
+				g_clock = from;
+				g_clock_fraction = 0.0f;
+				g_caught_up = false;
+				g_hud_flush_pending = true;
 			}
 
+			g_roll_to = static_cast<std::int64_t>(target);
 			return;
 		}
 
-		go_back_to(target > ROLL_MS ? target - ROLL_MS : 0);
+		go_back_to(from);
 		g_caught_up = false;
 		g_roll_to = static_cast<std::int64_t>(target);
 	}
@@ -1062,15 +1071,10 @@ namespace
 
 			if (g_rebuild_request.exchange(false))
 			{
-				if (g_paused)
-				{
-					jump_to(place);
-				}
-				else
-				{
-					g_roll_to = -1;
-					go_back_to(place);
-				}
+				// (given again from the start, and played up to where it was)
+				go_back_to(place > ROLL_MS ? place - ROLL_MS : 0);
+				g_caught_up = false;
+				g_roll_to = static_cast<std::int64_t>(place);
 			}
 
 			if (g_restart_request.exchange(false))
@@ -1164,6 +1168,11 @@ namespace
 
 		g_caught_up = state == CA_ACTIVE && !g_need_snapshot &&
 			(g_next_record >= g_records.size() || g_records[g_next_record].ms + BEHIND_MS > due);
+		if (g_caught_up && g_hud_flush_pending.exchange(false))
+		{
+			// (a jump's messages are all given: now the HUD is emptied)
+			g_hud_flush_until = GetTickCount64() + HUD_FLUSH_MS;
+		}
 
 		if (now - g_play_report > 5000)
 		{
@@ -1570,8 +1579,9 @@ namespace
 			{
 				g_roll_to = -1;
 			}
-			else if (!g_caught_up || msec <= 0)
+			else if (!g_caught_up || msec <= 0 || g_hud_flush_pending || GetTickCount64() < g_hud_flush_until)
 			{
+				// (not yet caught up, or the HUD is being emptied: it waits)
 				pin_client_time(0);
 				return 0;
 			}
@@ -2070,6 +2080,22 @@ namespace
 		static Root roots[6] = {};
 		static int told = 0;
 		int given = real;
+		if (g_play == Play::Playing && GetTickCount64() < g_hud_flush_until)
+		{
+			// (a jump: ten seconds pass for the HUD at every step for a moment, and whatever was on it for a time
+			// is gone)
+			for (Root& one : roots)
+			{
+				if (one.root == root)
+				{
+					one.clock = g_clock;
+				}
+			}
+
+			g_original_lui_step(client, root, other, 10000, flag, lua);
+			return;
+		}
+
 		if (g_play == Play::Playing)
 		{
 			Root* mine = nullptr;

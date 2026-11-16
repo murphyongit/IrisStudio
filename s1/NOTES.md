@@ -474,3 +474,14 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
   on the finished picture. Advice given: brightness 0, darkness from the dark/medium tints with the light tint white, sun brightness down, glow on.
 - Look tab: new "Exposure" section with the r_tonemap* settings (UseTweaks, ExposureAdjust -20..20, Auto, AutoExposureAdjust, Min/MaxExposureAdjust,
   LockAutoExposureAdjust, curve r_tonemap, Shoulder, Toe, HighlightRange, Black, White, Gamma). NOT known which act: ask the user, remove the dead ones.
+
+## 0.76: the kill feed exact after any jump
+- User: after rewinding or skipping, kills are duplicated in the kill feed and lines do not go away; wants it "exactly correct at every given second".
+- Why: LUI is stepped with a delta (hooked_lui_step gives the recording's clock's advance, 0 when it goes back). A rewind left the later lines standing
+  (delta 0) and the messages given in one go on the way added every kill since the start as fresh lines; a skip forward did the same for the span
+  skipped. The Lua "flush" (close what was added) needed ten quiet seconds to learn the HUD's own parts and the script was not even attached 0.68-0.74.
+- Now (theater.cpp): every jump, frozen or playing, goes to ROLL_MS = 7 s before its time, the HUD is emptied (g_hud_flush_pending -> once caught
+  up, for HUD_FLUSH_MS = 150 ms every LUI step is given 10 s), then the last 7 s are played at ROLL_SPEED 14 with the HUD on the recording's clock:
+  each kill line, popup and medal is made at its own time and has its right age at the end. Forward while playing: no restart (clock set to
+  target-7 s, flush, roll). Rebuild (theater_rebuild) also rolls. go_back_to no longer sends s1iris_hud_flush nor wakes the HUD to real time.
+  Limits: a line older than 7 s before the jump's time is not rebuilt; the Lua flush code is now dead (left in).
