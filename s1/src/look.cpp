@@ -1160,10 +1160,17 @@ namespace
 		return names;
 	}
 
+	// A preset's file: in the presets folder by its name; or the file itself, when a whole path is given (the look
+	// kept beside a recording).
+	std::string preset_path(const std::string& name)
+	{
+		return name.find(':') != std::string::npos ? name : presets_folder() + "\\" + name + ".txt";
+	}
+
 	bool save_preset(const std::string& name)
 	{
 		FILE* file = nullptr;
-		if (fopen_s(&file, (presets_folder() + "\\" + name + ".txt").c_str(), "w") != 0 || !file)
+		if (fopen_s(&file, preset_path(name).c_str(), "w") != 0 || !file)
 		{
 			return false;
 		}
@@ -1290,7 +1297,7 @@ namespace
 	{
 		std::set<std::string> groups;
 		FILE* file = nullptr;
-		if (fopen_s(&file, (presets_folder() + "\\" + name + ".txt").c_str(), "r") != 0 || !file)
+		if (fopen_s(&file, preset_path(name).c_str(), "r") != 0 || !file)
 		{
 			return groups;
 		}
@@ -1320,7 +1327,7 @@ namespace
 	bool load_preset(const std::string& name, const std::set<std::string>* only)
 	{
 		FILE* file = nullptr;
-		if (fopen_s(&file, (presets_folder() + "\\" + name + ".txt").c_str(), "r") != 0 || !file)
+		if (fopen_s(&file, preset_path(name).c_str(), "r") != 0 || !file)
 		{
 			return false;
 		}
@@ -1678,6 +1685,11 @@ void look_toggle_hud()
 	}
 }
 
+namespace
+{
+	void draw_focus();
+}
+
 void look_draw_tab(const TheaterState& state)
 {
 	(void)state;
@@ -1728,6 +1740,11 @@ void look_draw_tab(const TheaterState& state)
 
 		reset = false;
 		const bool open = ui_section(section.icon, section.label, &reset, section.open);
+		if (open && strstr(section.label, "epth of"))
+		{
+			draw_focus();
+		}
+
 		if (reset)
 		{
 			for (const Entry& entry : section.entries)
@@ -1866,8 +1883,139 @@ void look_track_remove_key(const int index, const int key)
 	}
 }
 
+namespace
+{
+	// The depth of field's sharp distance kept on a player or an actor: 0 off, 1 a player (its entity), 2 an actor
+	// or prop (its handle). How much around it stays sharp: a part of the distance.
+	int g_focus_kind = 0, g_focus_id = 0;
+	float g_focus_range = 0.35f, g_focus_sent = -1.0f, g_focus_range_sent = -1.0f;
+
+	void focus_frame(const TheaterState& state)
+	{
+		if (!state.playing || g_focus_kind == 0)
+		{
+			g_focus_sent = -1.0f;
+			return;
+		}
+
+		float place[3] = {}, eye[3] = {};
+		if (!(g_focus_kind == 2 ? actors_origin_of(g_focus_id, place) : actors_entity_origin(g_focus_id, place)))
+		{
+			return;
+		}
+
+		place[2] += 48.0f;
+		camera_view_origin(eye);
+		const float far_off = std::sqrt((place[0] - eye[0]) * (place[0] - eye[0]) + (place[1] - eye[1]) * (place[1] - eye[1]) + (place[2] - eye[2]) * (place[2] - eye[2]));
+		// (only when it has changed enough to see: each setting is a command to the game)
+		if (g_focus_sent > 0.0f && std::fabs(far_off - g_focus_sent) < g_focus_sent * 0.01f + 0.5f && g_focus_range == g_focus_range_sent)
+		{
+			return;
+		}
+
+		g_focus_sent = far_off;
+		g_focus_range_sent = g_focus_range;
+		const float near_end = far_off * (1.0f - g_focus_range), far_start = far_off * (1.0f + g_focus_range);
+		const struct
+		{
+			const char* name;
+			float value;
+		} wanted[] = {{"r_dof_enable", 1.0f}, {"r_dof_tweak", 1.0f}, {"r_dof_nearStart", near_end * 0.4f}, {"r_dof_nearEnd", near_end},
+		              {"r_dof_farStart", far_start}, {"r_dof_farEnd", far_start * 2.5f + 100.0f}};
+		for (const auto& one : wanted)
+		{
+			if (const Dvar dvar = find(one.name))
+			{
+				set(dvar, "%g", one.value);
+			}
+		}
+	}
+
+	void draw_focus()
+	{
+		static Actor actors[ACTORS_MAX];
+		const int actor_count = actors_list(actors, ACTORS_MAX);
+		const BoneState players = camera_bone_state();
+		char label[64] = "Nothing (set by hand below)";
+		if (g_focus_kind == 1)
+		{
+			snprintf(label, sizeof(label), "Player %d", g_focus_id);
+		}
+
+		for (int a = 0; a < actor_count && g_focus_kind == 2; ++a)
+		{
+			if (actors[a].handle == g_focus_id)
+			{
+				snprintf(label, sizeof(label), "%s", actors[a].name);
+			}
+		}
+
+		ui_row_label("Keep in focus");
+		if (ImGui::BeginCombo("##focusOn", label))
+		{
+			if (ImGui::Selectable("Nothing (set by hand below)", g_focus_kind == 0))
+			{
+				g_focus_kind = 0;
+			}
+
+			for (int entity = 0; entity < 64; ++entity)
+			{
+				if (players.entities & (1ull << entity))
+				{
+					snprintf(label, sizeof(label), entity == players.nearest ? "Player %d (nearest the camera)" : "Player %d", entity);
+					if (ImGui::Selectable(label, g_focus_kind == 1 && g_focus_id == entity))
+					{
+						g_focus_kind = 1;
+						g_focus_id = entity;
+					}
+				}
+			}
+
+			for (int a = 0; a < actor_count; ++a)
+			{
+				ImGui::PushID(7000 + a);
+				if (ImGui::Selectable(actors[a].name, g_focus_kind == 2 && g_focus_id == actors[a].handle))
+				{
+					g_focus_kind = 2;
+					g_focus_id = actors[a].handle;
+				}
+
+				ImGui::PopID();
+			}
+
+			ImGui::EndCombo();
+		}
+
+		ImGui::SetItemTooltip("The depth of field's sharp distance follows this player or actor as it and the camera move: a focus pull that\nmakes itself. It turns the depth of field on and sets the near and far distances below as it goes.");
+		if (g_focus_kind != 0)
+		{
+			float range = g_focus_range * 100.0f;
+			ui_row_label("Sharp around it");
+			ui::Default(35.0f);
+			if (ui::SliderFloat("##focusRange", &range, 3.0f, 90.0f, "%.0f%% of the distance"))
+			{
+				g_focus_range = range / 100.0f;
+			}
+
+			ImGui::SetItemTooltip("How deep the sharp zone is around it. Small: only it is sharp, like a long lens wide open.");
+		}
+	}
+}
+
+// The look kept beside a recording (scene.cpp): written, and read back.
+bool look_save_file(const char* path)
+{
+	return save_preset(path);
+}
+
+bool look_load_file(const char* path)
+{
+	return load_preset(path, nullptr);
+}
+
 void look_frame(const TheaterState& state)
 {
+	focus_frame(state);
 	// the settings with keyframes: what the keyframes make of this frame's time
 	g_now_ms = state.position_ms;
 	if (state.playing)

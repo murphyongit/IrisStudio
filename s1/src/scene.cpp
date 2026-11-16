@@ -23,7 +23,9 @@ namespace
 {
 	constexpr std::uint32_t MAGIC = 0x43533153;  // "S1SC"
 	constexpr std::uint32_t ACTR = 0x52544341, OUTF = 0x4654554F, AMOD = 0x444F4D41, EFFX = 0x58464645, LITE = 0x4554494C, CAMP = 0x504D4143,
-	                        DETH = 0x48544544, STRM = 0x4D525453;
+	                        DETH = 0x48544544, STRM = 0x4D525453, PMOD = 0x444F4D50;
+	// (the match's players, and the first person's view model, whose outfits and guns the editor can change)
+	constexpr int PLAYERS = 42, FIRST_PERSON = 2048;
 	constexpr int LIGHTS_MAX = 32;
 
 	std::mutex g_storm_lock;
@@ -61,6 +63,18 @@ namespace
 		}
 
 		put(out, AMOD, 1, static_cast<std::uint32_t>(changes.size()), changes.data());
+		// and the editor's changes to the match's own players: "#entity", then its lines
+		std::string players;
+		for (int entity = 0; entity <= PLAYERS; ++entity)
+		{
+			const int which = entity == PLAYERS ? FIRST_PERSON : entity;
+			if (models_export(which, text, sizeof(text)) > 0)
+			{
+				players += "#" + std::to_string(which) + "\n" + text;
+			}
+		}
+
+		put(out, PMOD, 1, static_cast<std::uint32_t>(players.size()), players.data());
 		static PlacedEffect effects[EFFECTS_MAX];
 		const int effect_count = effects_placed(effects, EFFECTS_MAX);
 		put(out, EFFX, sizeof(PlacedEffect), static_cast<std::uint32_t>(effect_count), effects);
@@ -102,8 +116,8 @@ namespace
 		static PlacedEffect effects[EFFECTS_MAX];
 		static SceneLight lights[LIGHTS_MAX];
 		int actor_count = 0, outfit_count = 0, effect_count = 0, light_count = 0;
-		std::string changes, deaths;
-		bool have_deaths = false;
+		std::string changes, deaths, players;
+		bool have_deaths = false, have_players = false, again = false;
 		for (size_t at = 8; at + 12 <= block.size();)
 		{
 			std::uint32_t head[3];
@@ -122,6 +136,10 @@ namespace
 			case ACTR: actor_count = items(data, head[1], head[2], actors, ACTORS_MAX); break;
 			case OUTF: outfit_count = items(data, head[1], head[2], outfits, ACTORS_MAX); break;
 			case AMOD: changes.assign(data, bytes); break;
+			case PMOD:
+				players.assign(data, bytes);
+				have_players = true;
+				break;
 			case EFFX: effect_count = items(data, head[1], head[2], effects, EFFECTS_MAX); break;
 			case LITE: light_count = items(data, head[1], head[2], lights, LIGHTS_MAX); break;
 			case CAMP: camera_points_import(reinterpret_cast<const unsigned char*>(data), static_cast<int>(bytes)); break;
@@ -211,8 +229,35 @@ namespace
 			{
 				deaths_import(deaths.c_str());
 				// (a body takes its death when it is made: the recording is given again up to here)
-				theater_rebuild();
+				again = true;
 			}
+		}
+
+		// the match's players' outfits and guns
+		for (int entity = 0; entity <= PLAYERS && have_players; ++entity)
+		{
+			const int which = entity == PLAYERS ? FIRST_PERSON : entity;
+			const std::string mark = "#" + std::to_string(which) + "\n";
+			std::string wanted;
+			const size_t found = players.find(mark);
+			if (found != std::string::npos && (found == 0 || players[found - 1] == '\n'))
+			{
+				const size_t begin = found + mark.size(), end = players.find("\n#", begin - 1);
+				wanted = players.substr(begin, end == std::string::npos ? std::string::npos : end + 1 - begin);
+			}
+
+			models_export(which, text, sizeof(text));
+			if (wanted != text)
+			{
+				models_import(which, wanted.c_str());
+				// (a player's model takes its changes when it is made)
+				again = true;
+			}
+		}
+
+		if (again)
+		{
+			theater_rebuild();
 		}
 	}
 
@@ -267,6 +312,7 @@ namespace
 		put(out, LITE, sizeof(SceneLight), 0, nullptr);
 		const std::uint32_t no_points[1] = {0};
 		put(out, CAMP, 1, 0, no_points);
+		put(out, PMOD, 1, 0, no_points);
 		const StormState storm;
 		put(out, STRM, sizeof(StormState), 1, &storm);
 		return out;
@@ -389,6 +435,14 @@ void scene_ui_frame(const TheaterState& state, const bool busy, const bool touch
 		DeleteFileA((file_of(g_name) + ".loading").c_str());
 	}
 
+	static ULONGLONG look_saved_at = 0;
+	if (active && (!state.playing || tick - look_saved_at > 10000))
+	{
+		// the Look tab's settings as they are now, kept beside the recording (every ten seconds, and at its end)
+		look_saved_at = tick;
+		look_save_file((file_of(g_name) + ".look").c_str());
+	}
+
 	if (!state.playing)
 	{
 		if (active && g_dirty_at)
@@ -453,6 +507,16 @@ void scene_ui_frame(const TheaterState& state, const bool busy, const bool touch
 			unpack(empty_block());
 		}
 
+		// its look, if one was kept with it (else the look stays as it is)
+		const std::string look = file_of(g_name) + ".look";
+		if (GetFileAttributesA(look.c_str()) != INVALID_FILE_ATTRIBUTES)
+		{
+			look_load_file(look.c_str());
+			snprintf(line, sizeof(line), "scene: %s.look read", g_name);
+			theater_log(line);
+		}
+
+		look_saved_at = tick;
 		g_base = pack();
 		g_undo.clear();
 		g_redo.clear();

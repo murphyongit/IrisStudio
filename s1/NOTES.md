@@ -512,3 +512,12 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
     effect at tag_brass (Actor.shell_effect; vfx/shelleject/*). Only the actors' shots, not the match's players'.
   * Camera: "Held by hand" sway (camera_set_shake; sines of the recording's time, applied in apply()); the bone camera can ride on an actor or
     prop (bone_matrix takes entities 1983..2047 without the number check; the UI lists them).
+  * Look > Depth of Field: "Keep in focus" a player or actor (look.cpp focus_frame: distance camera->target each frame, sets r_dof_enable/tweak,
+    nearStart/nearEnd/farStart/farEnd; "Sharp around it" = part of the distance).
+  * Saved with the recording now also: the match players' (and first person's, 2048) outfit/gun/camo changes (scene block section PMOD, applied
+    with one theater_rebuild; undo covers them) and the Look tab (theater\<recording>.look, a preset file written every 10 s and at the end, read
+    at the start if there; look.cpp preset_path takes a whole path when the name has ':').
+- NOT built (say so): cloning a recorded player (drawing a player's DObj twice shares its bone cache; needs its own tree copy), ragdoll deaths,
+  tracers (the game draws them in code, no effect for them), the match players' own shots lighting the scene (no hook on their fire event),
+  ready-made killstreak sequences, kill list (needs CG_Obituary / the event entity's fields on PC), library thumbnails, a queue of several shots
+  (one camera path per scene), one-click looks (values need an eye on the picture: ask the user to save a Night preset and ship that).

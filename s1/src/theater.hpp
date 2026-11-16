@@ -328,6 +328,8 @@ void hud_keep_release();
 bool hud_keep_get();
 void hud_keep_set(bool on);
 const char* hud_keep_status();
+bool look_save_file(const char* path);
+bool look_load_file(const char* path);
 bool scene_can_undo();
 bool scene_can_redo();
 void scene_undo();
