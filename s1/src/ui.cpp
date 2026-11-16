@@ -3312,6 +3312,91 @@ namespace
 
 			}
 
+			if (section(ICON_FLAG, "Kills", nullptr, false))
+			{
+				static SceneKill kills[2000];
+				static int by = -1;
+				const int kill_count = scene_kills(kills, 2000);
+				if (state.scanning)
+				{
+					ImGui::TextDisabled("Looking through the whole recording... (%d found so far)", kill_count);
+				}
+				else if (ImGui::Button("Find every kill in this recording"))
+				{
+					theater_scan();
+				}
+
+				ImGui::SetItemTooltip("The recording is played through fast from its start (a few seconds), every kill in the kill feed is noted, and it\ncomes back to where you were. Kills are also noted by themselves as you watch.");
+				if (kill_count > 0)
+				{
+					char label[64];
+					snprintf(label, sizeof(label), by < 0 ? "Everybody" : "Player %d", by);
+					row_label("Kills by");
+					if (ImGui::BeginCombo("##killsBy", label))
+					{
+						if (ImGui::Selectable("Everybody", by < 0))
+						{
+							by = -1;
+						}
+
+						std::set<int> killers;
+						for (int k = 0; k < kill_count; ++k)
+						{
+							killers.insert(kills[k].attacker);
+						}
+
+						for (const int killer : killers)
+						{
+							int theirs = 0;
+							for (int k = 0; k < kill_count; ++k)
+							{
+								theirs += kills[k].attacker == killer;
+							}
+
+							snprintf(label, sizeof(label), killer < 0 || killer >= 42 ? "The map (%d)" : "Player %d (%d)", killer < 0 || killer >= 42 ? theirs : killer, theirs);
+							if (ImGui::Selectable(label, by == killer))
+							{
+								by = killer;
+							}
+						}
+
+						ImGui::EndCombo();
+					}
+
+					ImGui::BeginChild("##killList", {0.0f, g_font_size * 14.0f}, ImGuiChildFlags_Border);
+					for (int k = 0; k < kill_count; ++k)
+					{
+						const SceneKill& kill = kills[k];
+						if (by >= 0 && kill.attacker != by)
+						{
+							continue;
+						}
+
+						char line[200], who[32];
+						if (kill.attacker < 0 || kill.attacker >= 42)
+						{
+							snprintf(who, sizeof(who), "the map");
+						}
+						else
+						{
+							snprintf(who, sizeof(who), "Player %d", kill.attacker);
+						}
+
+						const char* icon = strncmp(kill.icon, "hud_icon_", 9) == 0 ? kill.icon + 9 : kill.icon;
+						snprintf(line, sizeof(line), "%d:%05.2f   %s killed Player %d   %s##kill%d", static_cast<int>(kill.ms / 60000), (kill.ms % 60000) / 1000.0f, who,
+						         kill.victim, icon, k);
+						if (ImGui::Selectable(line))
+						{
+							// (a little before it, to see it coming)
+							theater_seek(kill.ms > 2500 ? kill.ms - 2500 : 0);
+						}
+					}
+
+					ImGui::EndChild();
+					ImGui::TextDisabled("Click a kill to go to just before it. The players' numbers are the ones used everywhere else here.");
+				}
+			}
+
 			if (section(ICON_BOLT, "Storm", nullptr, false))
 			{
 				StormState storm = storm_state();

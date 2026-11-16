@@ -236,6 +236,9 @@ namespace
 	// the key thread's requests, taken on the main thread
 	std::atomic<bool> g_pause_request{false}, g_slower_request{false}, g_faster_request{false}, g_skip_request{false};
 	std::atomic<bool> g_back_request{false}, g_restart_request{false}, g_rebuild_request{false};
+	// The whole recording played through fast (the list of kills): asked for; under way; where to go back to.
+	std::atomic<bool> g_scan_request{false}, g_scanning{false};
+	std::atomic<std::uint64_t> g_scan_back{0};
 	// what the panel asks for: a place in the recording (ms; -1 for none), and how long the recording is
 	std::atomic<std::int64_t> g_seek_request{-1};
 	std::atomic<std::uint32_t> g_length_ms{0};
@@ -1064,8 +1067,25 @@ namespace
 				show("S1iris: 10 seconds back");
 			}
 
-			if (const std::int64_t seek = g_seek_request.exchange(-1); seek >= 0)
+			if (g_scanning && g_roll_to < 0)
 			{
+				// (played through: back to where it was)
+				g_scanning = false;
+				g_seek_request = static_cast<std::int64_t>(g_scan_back.load());
+			}
+
+			if (g_scan_request.exchange(false) && !g_scanning && g_length_ms > 0)
+			{
+				g_scan_back = place;
+				go_back_to(0);
+				g_caught_up = false;
+				g_roll_to = static_cast<std::int64_t>(g_length_ms > 200 ? g_length_ms - 100 : g_length_ms);
+				g_scanning = true;
+				show("S1iris: looking through the whole recording for kills");
+			}
+			else if (const std::int64_t seek = g_seek_request.exchange(-1); seek >= 0)
+			{
+				g_scanning = false;
 				jump_to(static_cast<std::uint64_t>(seek));
 			}
 
@@ -1587,7 +1607,8 @@ namespace
 			}
 			else
 			{
-				int step = static_cast<int>(static_cast<float>(msec > 50 ? 50 : msec) * ROLL_SPEED);
+				// (a search for kills goes through the whole recording: faster)
+				int step = static_cast<int>(static_cast<float>(msec > 50 ? 50 : msec) * (g_scanning ? 40.0f : ROLL_SPEED));
 				if (clock + static_cast<std::uint64_t>(step) >= static_cast<std::uint64_t>(roll))
 				{
 					step = static_cast<int>(static_cast<std::uint64_t>(roll) - clock);
@@ -2560,6 +2581,10 @@ TheaterState theater_state()
 	state.settled = g_settled && roll < 0;
 	state.rewinds = g_rewinds;
 	state.capture_fps = g_capture_fps;
+	state.clock_ms = static_cast<double>(g_clock.load()) + g_clock_fraction;
+	// (false from a jump until the messages given in one go on its way are all in)
+	state.caught_up = !g_hud_flush_pending.load();
+	state.scanning = g_scanning;
 	strncpy_s(state.name, g_shown_name, _TRUNCATE);
 	strncpy_s(state.map, g_shown_map, _TRUNCATE);
 	return state;
@@ -2570,6 +2595,7 @@ void theater_slower() { g_slower_request = true; }
 void theater_faster() { g_faster_request = true; }
 void theater_seek(const std::uint32_t ms) { g_seek_request = ms; }
 void theater_rebuild() { g_rebuild_request = true; }
+void theater_scan() { g_scan_request = true; }
 
 void theater_set_speed(const float speed)
 {

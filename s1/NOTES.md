@@ -521,3 +521,8 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
   tracers (the game draws them in code, no effect for them), the match players' own shots lighting the scene (no hook on their fire event),
   ready-made killstreak sequences, kill list (needs CG_Obituary / the event entity's fields on PC), library thumbnails, a queue of several shots
   (one camera path per scene), one-click looks (values need an eye on the picture: ask the user to save a Night preset and ship that).
+  * Kill list (added after the note above): LUI_Obituary on PC = 0x1400D9940(client, attacker, victim, Material* icon, bool, lua_State*) (found by
+    the "obituary"/"attacker"/"victim"/"icon" strings; attacker >= 42 means none). scene.cpp hooks it and notes (clock, attacker, victim, icon
+    name), not while a jump's burst is being given (TheaterState.caught_up = !g_hud_flush_pending), deduped within 2 s. theater_scan(): go_back_to(0)
+    and a roll to the end at 40x, then a seek back. Scene > Kills: "Find every kill", "Kills by", click = seek to 2.5 s before. No player names
+    (none are read anywhere yet): "Player N" as elsewhere.

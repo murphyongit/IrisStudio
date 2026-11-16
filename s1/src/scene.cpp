@@ -17,6 +17,8 @@
 
 #include <windows.h>
 
+#include <MinHook.h>
+
 void theater_log(const char* text);
 
 namespace
@@ -410,6 +412,94 @@ int scene_take_effects(const char* recording)
 	return taken;
 }
 
+// ---- the kills. The game tells its HUD of each kill for the kill feed with 0x1400D9940(client, attacker,
+// victim, the picture's material, a flag, the HUD's Lua): hooked, each is noted with the recording's time. Not
+// while a jump's messages are given in one go (they all come at once then, at no time of their own); the seven
+// seconds played up to a jump's time, and a search through the whole recording, give them at their own times.
+namespace
+{
+	constexpr std::uintptr_t LUI_OBITUARY = 0x1400D9940;
+	using obituary_t = void (*)(int, int, int, void*, bool, void*);
+	obituary_t g_original_obituary = nullptr;
+	std::mutex g_kill_lock;
+	std::vector<SceneKill> g_kills;
+	char g_kills_of[96] = "";
+	bool g_kill_hook_tried = false;
+
+	void note_kill(const int attacker, const int victim, void* icon)
+	{
+		const TheaterState state = theater_state();
+		if (!state.playing || !state.caught_up)
+		{
+			return;
+		}
+
+		SceneKill kill;
+		kill.ms = static_cast<std::uint32_t>(state.clock_ms);
+		kill.attacker = attacker;
+		kill.victim = victim;
+		if (icon && !IsBadReadPtr(icon, sizeof(void*)))
+		{
+			const char* name = *static_cast<const char* const*>(icon);
+			if (name && !IsBadStringPtrA(name, sizeof(kill.icon)))
+			{
+				strncpy_s(kill.icon, name, _TRUNCATE);
+			}
+		}
+
+		std::lock_guard<std::mutex> lock(g_kill_lock);
+		if (strcmp(g_kills_of, state.name) != 0)
+		{
+			strncpy_s(g_kills_of, state.name, _TRUNCATE);
+			g_kills.clear();
+		}
+
+		size_t at = 0;
+		for (; at < g_kills.size() && g_kills[at].ms <= kill.ms; ++at)
+		{
+		}
+
+		// (the same kill seen again, the recording having been played over it again: within two seconds of it)
+		for (const SceneKill& known : g_kills)
+		{
+			const std::uint32_t apart = known.ms > kill.ms ? known.ms - kill.ms : kill.ms - known.ms;
+			if (known.attacker == attacker && known.victim == victim && apart < 2000)
+			{
+				return;
+			}
+		}
+
+		if (g_kills.size() < 2000)
+		{
+			g_kills.insert(g_kills.begin() + static_cast<std::ptrdiff_t>(at), kill);
+		}
+	}
+
+	void hooked_obituary(const int client, const int attacker, const int victim, void* icon, const bool flag, void* lua)
+	{
+		note_kill(attacker, victim, icon);
+		g_original_obituary(client, attacker, victim, icon, flag, lua);
+	}
+}
+
+int scene_kills(SceneKill* out, const int max)
+{
+	std::lock_guard<std::mutex> lock(g_kill_lock);
+	const TheaterState state = theater_state();
+	if (strcmp(g_kills_of, state.name) != 0)
+	{
+		return 0;
+	}
+
+	const int count = static_cast<int>(g_kills.size()) < max ? static_cast<int>(g_kills.size()) : max;
+	for (int i = 0; i < count; ++i)
+	{
+		out[i] = g_kills[static_cast<size_t>(i)];
+	}
+
+	return count;
+}
+
 bool scene_can_undo() { return !g_undo.empty(); }
 bool scene_can_redo() { return !g_redo.empty(); }
 void scene_undo() { g_ask_undo = true; }
@@ -604,6 +694,15 @@ namespace
 // (the game's thread, each frame)
 void scene_game_frame(const TheaterState& state)
 {
+	if (!g_kill_hook_tried)
+	{
+		g_kill_hook_tried = true;
+		const bool hooked = MH_CreateHook(reinterpret_cast<LPVOID>(LUI_OBITUARY), reinterpret_cast<LPVOID>(&hooked_obituary),
+		                                  reinterpret_cast<LPVOID*>(&g_original_obituary)) == MH_OK &&
+		                    MH_EnableHook(reinterpret_cast<LPVOID>(LUI_OBITUARY)) == MH_OK;
+		theater_log(hooked ? "kills: the game's kill feed call is hooked" : "kills: the game's kill feed call could NOT be hooked");
+	}
+
 	const StormState storm = storm_state();
 	const SunState sun = sun_state();
 	if (!storm.on || !state.playing || !state.settled)

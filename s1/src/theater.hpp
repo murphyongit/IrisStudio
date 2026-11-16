@@ -16,9 +16,15 @@ struct TheaterState
 	std::uint32_t rewinds = 0;    // how many times playback has gone back (the game begins its match again each time)
 	double position_exact = 0.0;  // the position with the part of a millisecond playback keeps
 	char name[96] = {}, map[64] = {};
+	// (0.78) where the recording really is while a jump is still playing up to its time (position_ms is then
+	// the time being gone to); whether every message due has been given; a search for kills is running
+	double clock_ms = 0.0;
+	bool caught_up = false, scanning = false;
 };
 
 TheaterState theater_state();
+// The whole recording played through fast from its start (for the list of kills), then back to where it was.
+void theater_scan();
 void theater_pause_toggle();
 void theater_slower();
 void theater_faster();
@@ -330,6 +336,15 @@ void hud_keep_set(bool on);
 const char* hud_keep_status();
 bool look_save_file(const char* path);
 bool look_load_file(const char* path);
+// The kills seen in the recording so far (scene.cpp hooks the game's "a kill for the kill feed"): when, who (the
+// players' numbers), and the picture shown for it (the weapon's).
+struct SceneKill
+{
+	std::uint32_t ms = 0;
+	int attacker = -1, victim = -1;
+	char icon[64] = "";
+};
+int scene_kills(SceneKill* out, int max);
 bool scene_can_undo();
 bool scene_can_redo();
 void scene_undo();
