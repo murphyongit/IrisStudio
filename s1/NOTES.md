@@ -468,3 +468,9 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
   The mock in my test now refuses duplicate ids too. Lua only: no new DLL.
 - Also in that log: 19:33:51 "GAME ERROR (kind 3): PLATFORM_DISCONNECTED_FROM_SERVER; playback 2 at 5.07 s" during playback, then the usual fatal
   error at close. Not looked into; asked the user.
+
+## 0.75: an Exposure section
+- User: a dark night look made with the film tweaks leaves muzzle flashes, explosions and lamps dim and grey. Cause: r_filmTweakBrightness works
+  on the finished picture. Advice given: brightness 0, darkness from the dark/medium tints with the light tint white, sun brightness down, glow on.
+- Look tab: new "Exposure" section with the r_tonemap* settings (UseTweaks, ExposureAdjust -20..20, Auto, AutoExposureAdjust, Min/MaxExposureAdjust,
+  LockAutoExposureAdjust, curve r_tonemap, Shoulder, Toe, HighlightRange, Black, White, Gamma). NOT known which act: ask the user, remove the dead ones.

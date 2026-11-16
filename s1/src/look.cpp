@@ -643,6 +643,25 @@ namespace
 		  {"Medium tint", "r_filmTweakMediumTint"},
 		  {"Dark tint", "r_filmTweakDarkTint"},
 		  {"Invert", "r_filmTweakInvert"}}},
+		// The exposure, before the picture is brought down to what a screen shows: darkening here keeps what is
+		// far brighter than the scene (a muzzle flash, an explosion, a lamp) bright, where the Film section's
+		// brightness, which works on the finished picture, pulls those down to grey with everything else.
+		// (0.75: not yet known which of these act in this game.)
+		{ICON_SLIDERS, "Exposure", false,
+		 {{"Use the values below", "r_tonemapUseTweaks"},
+		  {"Exposure", "r_tonemapExposureAdjust"},
+		  {"Automatic exposure", "r_tonemapAuto"},
+		  {"Automatic exposure, shift", "r_tonemapAutoExposureAdjust"},
+		  {"Automatic: darkest", "r_tonemapMinExposureAdjust"},
+		  {"Automatic: brightest", "r_tonemapMaxExposureAdjust"},
+		  {"Automatic: held where it is", "r_tonemapLockAutoExposureAdjust"},
+		  {"Curve", "r_tonemap"},
+		  {"Highlights roll off", "r_tonemapShoulder"},
+		  {"Shadows roll off", "r_tonemapToe"},
+		  {"Highlight range", "r_tonemapHighlightRange"},
+		  {"Black point", "r_tonemapBlack"},
+		  {"White point", "r_tonemapWhite"},
+		  {"Gamma", "r_tonemapGamma"}}},
 		// How finely models are drawn. The game smooths some models by subdividing them (r_subdiv,
 		// r_adaptiveSubdiv) and swaps to coarser ones with distance (the rest).
 		{ICON_PERSON, "Models", false,
