@@ -915,6 +915,18 @@ namespace
 			send_hud_hidden();
 		}
 
+		{
+			// ReShade's effects kept off the HUD (hudkeep.cpp)
+			bool keep = hud_keep_get();
+			ui_row_label("Sharp under ReShade");
+			if (ImGui::Checkbox("##hudKeep", &keep))
+			{
+				hud_keep_set(keep);
+			}
+
+			ImGui::SetItemTooltip("ReShade's effects (a blur, a depth of field, a colour grade) are made on the scene alone, and the game's HUD\n(the kill feed, the score popups, everything drawn flat over the picture) is put back over the result untouched.\nNow: %s", hud_keep_status());
+		}
+
 		const int count = atoi(dvar_string("s1iris_hud_count").c_str());
 		if (count <= 0)
 		{

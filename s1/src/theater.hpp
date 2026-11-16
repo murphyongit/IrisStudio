@@ -304,6 +304,15 @@ void scene_game_frame(const TheaterState& state);
 // and those effects (with their places and times) added to this recording's.
 int scene_recordings(char names[][96], int counts[], int max);
 int scene_take_effects(const char* recording);
+// hudkeep.cpp: the HUD kept out of ReShade's effects.
+struct IDXGISwapChain;
+struct ID3D11Device;
+struct ID3D11DeviceContext;
+void hud_keep_frame(IDXGISwapChain* real, ID3D11Device* device, ID3D11DeviceContext* context);
+void hud_keep_release();
+bool hud_keep_get();
+void hud_keep_set(bool on);
+const char* hud_keep_status();
 bool scene_can_undo();
 bool scene_can_redo();
 void scene_undo();

@@ -485,3 +485,15 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
   each kill line, popup and medal is made at its own time and has its right age at the end. Forward while playing: no restart (clock set to
   target-7 s, flush, roll). Rebuild (theater_rebuild) also rolls. go_back_to no longer sends s1iris_hud_flush nor wakes the HUD to real time.
   Limits: a line older than 7 s before the jump's time is not rebuilt; the Lua flush code is now dead (left in).
+
+## 0.77: the HUD kept out of ReShade's effects (hudkeep.cpp; untested when written)
+- User: the kill feed and the +100 popup must never be blurred by ReShade (6.8.0 as dxgi.dll, add-ons searched for; no add-on used here).
+- Facts: ui.cpp's Present hook is on the REAL dxgi Present (found from a throwaway swap chain), i.e. after ReShade's effects. The game's own swap
+  chain pointer is at 0x1409E42F0 (ReShade.log: "Redirecting IDXGIFactory::CreateSwapChain(... ppSwapChain = 00000001409E42F0)"): ReShade's object.
+- hudkeep.cpp: MinHook on the real immediate context's DrawIndexed(12)/Draw(13)/DrawIndexedInstanced(20)/DrawInstanced(21)/OMSetRenderTargets(33)/
+  OMSetRenderTargetsAndUnorderedAccessViews(34). Marker "the HUD begins" = first draw with blending while the real back buffer is the target: back
+  buffer copied (A). ReShade's Present (vtable[8] of the game's swap chain, MinHooked): finished picture copied (B), A put in the back buffer.
+  Real Present: R copied, then out = lerp(R + (B - A), B, saturate(max|B - A| * 5)). Look > HUD: "Sharp under ReShade" (on by default), status in
+  its tooltip. Log: "hud keep: frame N: the scene was taken after X plain draws on the back buffer, Y draws came after it".
+- ASSUMPTIONS TO CHECK IN THE LOG: the game puts the scene on the back buffer with unblended draws and draws the HUD blended straight onto it. If
+  the marker fires too early (a blended full-screen pass before the scene is finished), ReShade's effects would vanish wherever B differs from A.
