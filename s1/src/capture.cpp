@@ -501,24 +501,11 @@ namespace
 		std::vector<unsigned char> frame;
 		if (g_blur_now > 1)
 		{
-			// (a byte of the picture to linear light, 12 bits, and back)
-			static std::uint16_t to_light[256];
-			static unsigned char to_byte[4096];
-			static bool tables = false;
-			if (!tables)
-			{
-				tables = true;
-				for (int i = 0; i < 256; ++i)
-				{
-					to_light[i] = static_cast<std::uint16_t>(std::pow(i / 255.0, 2.2) * 4095.0 + 0.5);
-				}
-
-				for (int i = 0; i < 4096; ++i)
-				{
-					to_byte[i] = static_cast<unsigned char>(std::pow(i / 4095.0, 1.0 / 2.2) * 255.0 + 0.5);
-				}
-			}
-
+			// Laid over each other in (nearly) linear light, so that a bright thing moving leaves a bright streak:
+			// each value is squared, the squares are averaged, and the root is taken. Every shade keeps its own
+			// square, so nothing is lost in the dark. The picture is four bytes a pixel, or (a 10 bit picture)
+			// three values of 10 bits in a pixel's 32.
+			const bool ten = g_picture_format == DXGI_FORMAT_R10G10B10A2_UNORM;
 			const size_t values = static_cast<size_t>(g_width) * g_height * 4;
 			if (g_blur_sum.size() != values || g_blur_at == 0)
 			{
@@ -534,9 +521,24 @@ namespace
 				{
 					const unsigned char* row = static_cast<const unsigned char*>(mapped.pData) + static_cast<size_t>(y) * mapped.RowPitch;
 					std::uint32_t* sum = g_blur_sum.data() + static_cast<size_t>(y) * g_width * 4;
-					for (int x = 0; x < g_width * 4; ++x)
+					if (ten)
 					{
-						sum[x] += to_light[row[x]];
+						const std::uint32_t* pixels = reinterpret_cast<const std::uint32_t*>(row);
+						for (int x = 0; x < g_width; ++x)
+						{
+							const std::uint32_t pixel = pixels[x], a = pixel & 0x3FF, b = (pixel >> 10) & 0x3FF, c = (pixel >> 20) & 0x3FF;
+							sum[x * 4] += a * a;
+							sum[x * 4 + 1] += b * b;
+							sum[x * 4 + 2] += c * c;
+						}
+					}
+					else
+					{
+						for (int x = 0; x < g_width * 4; ++x)
+						{
+							const std::uint32_t value = row[x];
+							sum[x] += value * value;
+						}
 					}
 				}
 
@@ -551,10 +553,25 @@ namespace
 
 			g_blur_at = 0;
 			frame.resize(values);
-			const std::uint32_t used = static_cast<std::uint32_t>(g_blur_used > 0 ? g_blur_used : 1);
-			for (size_t i = 0; i < values; ++i)
+			const float used = static_cast<float>(g_blur_used > 0 ? g_blur_used : 1);
+			if (ten)
 			{
-				frame[i] = (i & 3) == 3 ? 255 : to_byte[g_blur_sum[i] / used];
+				std::uint32_t* out = reinterpret_cast<std::uint32_t*>(frame.data());
+				for (size_t i = 0; i < values; i += 4)
+				{
+					const std::uint32_t a = static_cast<std::uint32_t>(std::sqrt(static_cast<float>(g_blur_sum[i]) / used) + 0.5f),
+					                    b = static_cast<std::uint32_t>(std::sqrt(static_cast<float>(g_blur_sum[i + 1]) / used) + 0.5f),
+					                    c = static_cast<std::uint32_t>(std::sqrt(static_cast<float>(g_blur_sum[i + 2]) / used) + 0.5f);
+					out[i / 4] = (a > 1023 ? 1023 : a) | ((b > 1023 ? 1023 : b) << 10) | ((c > 1023 ? 1023 : c) << 20) | 0xC0000000u;
+				}
+			}
+			else
+			{
+				for (size_t i = 0; i < values; ++i)
+				{
+					const std::uint32_t value = static_cast<std::uint32_t>(std::sqrt(static_cast<float>(g_blur_sum[i]) / used) + 0.5f);
+					frame[i] = (i & 3) == 3 ? 255 : static_cast<unsigned char>(value > 255 ? 255 : value);
+				}
 			}
 		}
 		else

@@ -526,3 +526,13 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
     name), not while a jump's burst is being given (TheaterState.caught_up = !g_hud_flush_pending), deduped within 2 s. theater_scan(): go_back_to(0)
     and a roll to the end at 40x, then a seek back. Scene > Kills: "Find every kill", "Kills by", click = seek to 2.5 s before. No player names
     (none are read anywhere yet): "Player N" as elsewhere.
+- User (13:07, still away): "the motion blur settings were there in prior builds but didn't visually affect anything, make sure they work on
+  paper" = the Look tab's r_mb* rows (the game's own motion blur): removed from the Look tab as dead. The NEW capture blur checked on paper: blend is
+  now sum of squares / root (every 8-bit shade survives a still picture; a white dot seen in 1 of 8 pictures comes out 90, not 32), 10-bit pictures
+  handled; at 60 fps x16 the clock steps 1 or 2 ms a picture and 960 pictures advance exactly 1000 ms.
+- Also asked: "adjust normals to create bump map effects on the floor or other textures with normal maps" (T5 Iris has Bump strength + Surface
+  depth by patching ps_3_0 shaders; not possible that way with DXBC). surfaces.cpp: PSSetShaderResources (real context vtable 8) hooked once the
+  slider leaves 1; BC5_UNORM/SNORM Texture2D views are taken for normal maps (AddRef'd while listed), a copy R8G8 with every mip redrawn with
+  xy * strength (clamped to 0.99) is made at Present (10 a frame, 1.4 GB cap) and given in place of the original; swept every 300 frames (dropped when
+  only our reference is left). Look > Surfaces > "Bump strength" 0..4, kept in StormState.bump (so saved with the recording, undo). Log line after
+  400 frames: "surfaces: textures seen by format ...". ASSUMPTION: AW's normal maps are BC5 two-channel. No "surface depth" (parallax).

@@ -316,6 +316,9 @@ struct StormState
 	float flash = 3.0f;        // how much brighter the sun's light is at a strike
 	float distance = 6000.0f;  // how far from the camera the bolts are
 	bool bolts = true;
+	// (added after 0.77; kept here because this is saved with the recording) how strongly the surfaces' normal
+	// maps stand out: 1 the game's own (surfaces.cpp)
+	float bump = 1.0f;
 };
 StormState storm_state();
 void storm_set(const StormState& storm);
@@ -331,6 +334,9 @@ struct ID3D11Device;
 struct ID3D11DeviceContext;
 void hud_keep_frame(IDXGISwapChain* real, ID3D11Device* device, ID3D11DeviceContext* context);
 void hud_keep_release();
+// surfaces.cpp: bump strength.
+void surfaces_frame(ID3D11Device* device, ID3D11DeviceContext* context, float strength);
+void surfaces_status(int* found, int* made, int* megabytes);
 bool hud_keep_get();
 void hud_keep_set(bool on);
 const char* hud_keep_status();

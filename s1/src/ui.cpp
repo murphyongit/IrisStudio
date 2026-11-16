@@ -5209,6 +5209,8 @@ namespace
 
 		// (first of all: the HUD put back over what ReShade made of the picture)
 		hud_keep_frame(swap_chain, g_device, g_context);
+		// (and the normal maps waiting to be drawn again with the bump strength asked for)
+		surfaces_frame(g_device, g_context, theater_state().playing ? storm_state().bump : 1.0f);
 		const TheaterState state = theater_state();
 		const bool f1 = GetForegroundWindow() == g_window && (GetAsyncKeyState(VK_F1) & 0x8000) != 0 && !theater_keys_blocked();
 		if (f1 && !g_f1_was_down && state.playing)

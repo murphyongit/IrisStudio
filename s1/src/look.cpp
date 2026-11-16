@@ -680,12 +680,6 @@ namespace
 		  {"Post processing", "r_postfx_enable"},
 		  {"Post processing", "r_postFX"},
 		  {"Distortion", "r_distortion"},
-		  {"Motion blur", "r_mbEnable"},
-		  {"Motion blur", "r_mbFastEnable"},
-		  {"Motion blur quality", "r_mbFastPreset"},
-		  {"Motion blur, the world", "r_mbDebugStaticVelocityScalar"},
-		  {"Motion blur, models", "r_mbDebugModelVelocityScalar"},
-		  {"Motion blur, the gun", "r_mbDebugViewModelVelocityScalar"},
 		  {"Blood", "cg_blood"},
 		  {"Shell casings", "cg_brass"},
 		  {"Field of view (first person)", "cg_fov"},
@@ -1801,6 +1795,25 @@ void look_draw_tab(const TheaterState& state)
 		if (strcmp(section.label, "Fog") == 0)
 		{
 			passes_draw_fog();
+		}
+	}
+
+	if (ui_section(ICON_SLIDERS, "Surfaces", nullptr, false))
+	{
+		StormState scene = storm_state();
+		ui_row_label("Bump strength");
+		ui::Default(1.0f);
+		if (ui::SliderFloat("##bump", &scene.bump, 0.0f, 4.0f, "%.2fx"))
+		{
+			storm_set(scene);
+		}
+
+		ImGui::SetItemTooltip("How strongly the fine relief of surfaces stands out (their normal maps): the grain of a floor, the joints of a wall,\nthe weave of cloth. 1: as the game has it. 0: smooth. Above 1: deeper, which shows most under a low sun, a light or rain.\nIt takes a second or two to take hold after a change, and uses more of the graphics card's memory while it is not 1.");
+		if (scene.bump != 1.0f)
+		{
+			int found = 0, made = 0, megabytes = 0;
+			surfaces_status(&found, &made, &megabytes);
+			ImGui::TextDisabled("%d of %d surfaces' maps done (%d MB)", made, found, megabytes);
 		}
 	}
 
