@@ -463,3 +463,8 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
   pcall. look.cpp shows and logs these ("hud script: state ..., error ...") when no parts are listed. READ THE LOG NEXT TIME.
 - Scene > Effects: "Bring in another recording's effects..." (scene_recordings / scene_take_effects: the EFFX section of another .scene appended).
   A restored scene whose effects are not loaded loads the rain file by itself.
+- HUD list FOUND (log of 0.74): "attach: LUI Error: Element has duplicate id LUITimer": two LUI.UITimer on one element both carry the id "LUITimer"
+  and LUI refuses the second (added in 0.68 for the every-frame hiding), so the ticker was never put on the HUD. Each timer now gets its own id.
+  The mock in my test now refuses duplicate ids too. Lua only: no new DLL.
+- Also in that log: 19:33:51 "GAME ERROR (kind 3): PLATFORM_DISCONNECTED_FROM_SERVER; playback 2 at 5.07 s" during playback, then the usual fatal
+  error at close. Not looked into; asked the user.

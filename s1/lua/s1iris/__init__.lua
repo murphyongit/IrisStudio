@@ -246,7 +246,11 @@ local function attach(hud)
 		height = 1
 	})
 	ticker.id = "s1iris_ticker"
-	ticker:addElement(LUI.UITimer.new(100, "s1iris_tick"))
+	-- (each timer needs an id of its own: two with the game's "LUITimer" on one element is an LUI error, which
+	-- is what kept the list of parts from showing from 0.68 to 0.74)
+	local slow_timer = LUI.UITimer.new(100, "s1iris_tick")
+	slow_timer.id = "s1iris_tick_timer"
+	ticker:addElement(slow_timer)
 	ticker:registerEventHandler("s1iris_tick", function()
 		local ok, problem = pcall(tick, hud)
 		if not ok and not tick_failed then
@@ -254,7 +258,9 @@ local function attach(hud)
 			report("error", "tick: " .. tostring(problem))
 		end
 	end)
-	ticker:addElement(LUI.UITimer.new(1, "s1iris_fast"))
+	local fast_timer = LUI.UITimer.new(1, "s1iris_fast")
+	fast_timer.id = "s1iris_fast_timer"
+	ticker:addElement(fast_timer)
 	ticker:registerEventHandler("s1iris_fast", function()
 		pcall(fast, hud)
 	end)
