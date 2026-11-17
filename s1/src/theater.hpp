@@ -25,6 +25,21 @@ struct TheaterState
 };
 
 TheaterState theater_state();
+
+// exposure.cpp: the exposure and the tone curve. The map's own values as last drawn with (seen: a scene has been
+// drawn), the editor's, and which of the editor's are used (a bit for each of the floats, and the three below).
+constexpr int TONE_FLOATS = 18;
+constexpr std::uint32_t TONE_SET_CURVE = 1u << 24, TONE_SET_AUTO = 1u << 25, TONE_SET_LOCK = 1u << 26;
+struct ToneState
+{
+	bool seen = false;
+	int curve = 0;
+	bool automatic = false, lock = false;
+	float f[TONE_FLOATS] = {};
+};
+void tone_start();
+bool tone_get(ToneState* map, ToneState* mine, std::uint32_t* set);
+void tone_set(const ToneState& mine, std::uint32_t set);
 // The whole recording played through fast from its start (for the list of kills), then back to where it was.
 void theater_scan();
 void theater_pause_toggle();

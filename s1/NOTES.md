@@ -593,3 +593,18 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
   lists 10 and 12 (weapons, viewmodels) entirely (0x1400224EC: test r14d; je end) and forgets what it held; far ahead the CHANGED lists had unloaded
   the first weapons. models.cpp hooked_stream_sync now gives a BEGIN as CHANGED (flag 1) when the recording has gone back since the last BEGIN of the
   same playback (rewinds counter) and the stream is active: gone -> unloaded, new -> loaded, weapons too, and no more +1 per rewind on the counts.
+
+## 0.83
+- User: "exposure seems broken, most if not all sliders do nothing". True: the Exposure section set r_tonemap* through the console; the exe has no
+  such names (S1x finds something by those names, but nothing changed). What IS there: the lightset fields table 0x1409B1010 (89 x {name, hash}:
+  sunenable.. tonemap.. ssao.. mdao; ClientSideLightSet = 0x198 bytes, name[0x40] then the fields in that order; CG_LightSetInit 0x140017510 fills
+  one from nameless dvars at 0x140C1E090.. (value at dvar+0x10)), and the renderer's copy 0x1405D0590(scene, view): if the bool dvar at
+  [0x140C1E1C8] ("use tweaks") then from the dvars [0x140C1E1D0..0x140C1E280], else from view+0x300.. into scene+0x1DB0 (curve int), +0x1DB4 auto,
+  +0x1DB5 blend, +0x1DB6 lock, then 18 floats from +0x1DB8: autoexposureadjust, maxexposure, exposure, exposureadjust, adaptspeed, black, white,
+  crossover, shoulder, toe, darkev, midev, lightev, dark/mid/light exposureadjust, min/max exposureadjust. (Tail: adaptspeed = 0 if view+0x3B8 == 0,
+  = 1 if 0x1405E3AE0(3).)
+- exposure.cpp hooks 0x1405D0590, remembers what the map gave and writes the editor's changed values over it. Look > Exposure is drawn by
+  look.cpp draw_tone (the map's values shown; a changed one is marked *). Saved in presets and the recording's .look as tone_value/tone_curve/
+  tone_auto/tone_lock lines (group "Exposure").
+- NOT known: the sign and units of each value (which way is darker), the curve kinds' numbers (0..3 guessed from the shader names linear/reinhard/
+  hist/filmic). Ask the user what each does; rename and re-range after.

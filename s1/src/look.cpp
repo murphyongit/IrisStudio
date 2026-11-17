@@ -647,21 +647,8 @@ namespace
 		// far brighter than the scene (a muzzle flash, an explosion, a lamp) bright, where the Film section's
 		// brightness, which works on the finished picture, pulls those down to grey with everything else.
 		// (0.75: not yet known which of these act in this game.)
-		{ICON_SLIDERS, "Exposure", false,
-		 {{"Use the values below", "r_tonemapUseTweaks"},
-		  {"Exposure", "r_tonemapExposureAdjust"},
-		  {"Automatic exposure", "r_tonemapAuto"},
-		  {"Automatic exposure, shift", "r_tonemapAutoExposureAdjust"},
-		  {"Automatic: darkest", "r_tonemapMinExposureAdjust"},
-		  {"Automatic: brightest", "r_tonemapMaxExposureAdjust"},
-		  {"Automatic: held where it is", "r_tonemapLockAutoExposureAdjust"},
-		  {"Curve", "r_tonemap"},
-		  {"Highlights roll off", "r_tonemapShoulder"},
-		  {"Shadows roll off", "r_tonemapToe"},
-		  {"Highlight range", "r_tonemapHighlightRange"},
-		  {"Black point", "r_tonemapBlack"},
-		  {"White point", "r_tonemapWhite"},
-		  {"Gamma", "r_tonemapGamma"}}},
+		// (0.83: these were settings set through the console, "r_tonemap...", and did nothing; now exposure.cpp
+		// writes the values into the scene, and the section is drawn by draw_tone below.)
 		// How finely models are drawn. The game smooths some models by subdividing them (r_subdiv,
 		// r_adaptiveSubdiv) and swaps to coarser ones with distance (the rest).
 		{ICON_PERSON, "Models", false,
@@ -1201,6 +1188,35 @@ namespace
 			fprintf(file, "sun_direction %g %g\n", sun.pitch, sun.yaw);
 		}
 
+		{
+			// the exposure and the tone curve: only what was changed
+			ToneState map, mine;
+			std::uint32_t tone_bits = 0;
+			tone_get(&map, &mine, &tone_bits);
+			for (int i = 0; i < TONE_FLOATS; ++i)
+			{
+				if (tone_bits & (1u << i))
+				{
+					fprintf(file, "tone_value %d %g\n", i, mine.f[i]);
+				}
+			}
+
+			if (tone_bits & TONE_SET_CURVE)
+			{
+				fprintf(file, "tone_curve %d\n", mine.curve);
+			}
+
+			if (tone_bits & TONE_SET_AUTO)
+			{
+				fprintf(file, "tone_auto %d\n", mine.automatic ? 1 : 0);
+			}
+
+			if (tone_bits & TONE_SET_LOCK)
+			{
+				fprintf(file, "tone_lock %d\n", mine.lock ? 1 : 0);
+			}
+		}
+
 		const SkyState sky = sky_state();
 		if (sky.changed)
 		{
@@ -1222,6 +1238,7 @@ namespace
 	const char* const GROUP_HUD = "HUD";
 	const char* const GROUP_SUN = "Sun";
 	const char* const GROUP_SKY = "Sky";
+	const char* const GROUP_TONE = "Exposure";
 	const char* const GROUP_OTHER = "Other settings";
 
 	std::vector<std::string> all_groups()
@@ -1233,6 +1250,11 @@ namespace
 			if (strcmp(section.label, GROUP_SUN) == 0)
 			{
 				groups.push_back(GROUP_SKY);
+			}
+
+			if (strcmp(section.label, "Film") == 0)
+			{
+				groups.push_back(GROUP_TONE);
 			}
 		}
 
@@ -1281,6 +1303,11 @@ namespace
 		if (strncmp(line, "sun_", 4) == 0)
 		{
 			return GROUP_SUN;
+		}
+
+		if (strncmp(line, "tone_", 5) == 0)
+		{
+			return GROUP_TONE;
 		}
 
 		return strncmp(line, "sky", 3) == 0 ? GROUP_SKY : std::string();
@@ -1338,6 +1365,14 @@ namespace
 			sky_reset();
 		}
 
+		ToneState tone_map, tone_mine;
+		std::uint32_t tone_bits = 0;
+		tone_get(&tone_map, &tone_mine, &tone_bits);
+		if (wanted(GROUP_TONE))
+		{
+			tone_bits = 0;
+		}
+
 		char line[2048];
 		while (fgets(line, sizeof(line), file))
 		{
@@ -1349,6 +1384,7 @@ namespace
 			}
 
 			float a = 0.0f, b = 0.0f, c = 0.0f;
+			int n = 0;
 			if (strncmp(line, "dvar ", 5) == 0)
 			{
 				char* value = strchr(line + 5, ' ');
@@ -1374,6 +1410,29 @@ namespace
 
 				send_hud_hidden();
 			}
+			else if (sscanf_s(line, "tone_value %d %f", &n, &a) == 2)
+			{
+				if (n >= 0 && n < TONE_FLOATS)
+				{
+					tone_mine.f[n] = a;
+					tone_bits |= 1u << n;
+				}
+			}
+			else if (sscanf_s(line, "tone_curve %d", &n) == 1)
+			{
+				tone_mine.curve = n;
+				tone_bits |= TONE_SET_CURVE;
+			}
+			else if (sscanf_s(line, "tone_auto %d", &n) == 1)
+			{
+				tone_mine.automatic = n != 0;
+				tone_bits |= TONE_SET_AUTO;
+			}
+			else if (sscanf_s(line, "tone_lock %d", &n) == 1)
+			{
+				tone_mine.lock = n != 0;
+				tone_bits |= TONE_SET_LOCK;
+			}
 			else if (sscanf_s(line, "sun_color %f %f %f", &a, &b, &c) == 3)
 			{
 				const float color[3] = {a, b, c};
@@ -1397,6 +1456,7 @@ namespace
 			}
 		}
 
+		tone_set(tone_mine, tone_bits);
 		fclose(file);
 		// what was changed before in a section brought in, and is not in the preset, goes back to the game's own
 		const auto originals = g_originals;
@@ -1682,6 +1742,142 @@ void look_toggle_hud()
 namespace
 {
 	void draw_focus();
+
+	// The Exposure section: the map's own values shown, each changed by dragging; what was changed is the
+	// editor's from then on (exposure.cpp), until its reset button puts the map's back.
+	void draw_tone(const bool reset)
+	{
+		struct Field
+		{
+			int index;
+			const char* label;
+			const char* tip;
+			float speed, low, high;
+			const char* format;
+		};
+		static const Field FIELDS[] = {
+			{3, "Exposure shift", "Shifts the whole exposure, in stops. This is the one to darken or brighten a scene with: what is far brighter\nthan the scene (a muzzle flash, an explosion, a lamp) stays bright, as it would for a camera.", 0.02f, -12.0f, 12.0f, "%.2f"},
+			{0, "Automatic: shift", "The same, added to the exposure the game finds by itself.", 0.02f, -12.0f, 12.0f, "%.2f"},
+			{16, "Automatic: least shift", "How far the automatic exposure may go one way.", 0.02f, -12.0f, 12.0f, "%.2f"},
+			{17, "Automatic: most shift", "How far the automatic exposure may go the other way.", 0.02f, -12.0f, 12.0f, "%.2f"},
+			{4, "Automatic: how fast it follows", "How quickly the automatic exposure follows a change of light (walking out of a dark room).", 0.001f, 0.0f, 1.0f, "%.3f"},
+			{2, "Exposure when not automatic", "The exposure used with \"Automatic exposure\" off.", 0.05f, -20.0f, 30.0f, "%.2f"},
+			{1, "Most exposure", "The limit of the exposure.", 0.05f, -20.0f, 30.0f, "%.2f"},
+			{6, "White point", "How bright a thing has to be to come out pure white. Higher: more of the brightest things keep their colour and shape.", 0.5f, 0.01f, 5000.0f, "%.2f"},
+			{8, "Highlights roll off", "How gently the brightest parts run up to white (the curve's shoulder).", 0.002f, 0.0f, 4.0f, "%.3f"},
+			{7, "Crossover", "Where the curve passes from its shadows' part to its highlights' part.", 0.01f, 0.0f, 100.0f, "%.2f"},
+			{9, "Shadows roll off", "How gently the darkest parts run down to black (the curve's toe).", 0.002f, 0.0f, 4.0f, "%.3f"},
+			{5, "Black point", "How dark a thing has to be to come out pure black.", 0.0005f, 0.0f, 1.0f, "%.4f"},
+			{10, "Dark scene: level", "The automatic exposure's own curve: how dark a scene counts as dark...", 0.05f, -20.0f, 30.0f, "%.2f"},
+			{13, "Dark scene: shift", "...and how much the exposure is shifted in such a scene.", 0.02f, -12.0f, 12.0f, "%.2f"},
+			{11, "Middle scene: level", "The same for a scene of middling brightness.", 0.05f, -20.0f, 30.0f, "%.2f"},
+			{14, "Middle scene: shift", "The same for a scene of middling brightness.", 0.02f, -12.0f, 12.0f, "%.2f"},
+			{12, "Bright scene: level", "The same for a bright scene.", 0.05f, -20.0f, 30.0f, "%.2f"},
+			{15, "Bright scene: shift", "The same for a bright scene.", 0.02f, -12.0f, 12.0f, "%.2f"},
+		};
+		ToneState map, mine;
+		std::uint32_t bits = 0;
+		const bool hooked = tone_get(&map, &mine, &bits);
+		const std::uint32_t before = bits;
+		bool changed = false;
+		if (reset)
+		{
+			bits = 0;
+		}
+
+		if (!hooked)
+		{
+			ImGui::TextDisabled("Not available: the game's tone mapping could not be reached (see the log).");
+			return;
+		}
+
+		if (!map.seen)
+		{
+			ImGui::TextDisabled("The values show once a recording is playing.");
+			return;
+		}
+
+		ImGui::PushTextWrapPos(0.0f);
+		ImGui::TextDisabled("These are the map's own values. Change one and it is yours from then on (marked *); its reset button gives the map's back. They act at once, paused or playing.");
+		ImGui::PopTextWrapPos();
+		{
+			bool automatic = (bits & TONE_SET_AUTO) ? mine.automatic : map.automatic;
+			ui_row_label((bits & TONE_SET_AUTO) ? "Automatic exposure *" : "Automatic exposure");
+			if (ImGui::Checkbox("##toneAuto", &automatic))
+			{
+				mine.automatic = automatic;
+				bits = automatic == map.automatic ? bits & ~TONE_SET_AUTO : bits | TONE_SET_AUTO;
+				changed = true;
+			}
+
+			ImGui::SetItemTooltip("The game finds the exposure by itself from how bright the picture is, as a camera does, and follows changes of light.\nOff: the exposure is the one below, and stays put.");
+			bool lock = (bits & TONE_SET_LOCK) ? mine.lock : map.lock;
+			ui_row_label((bits & TONE_SET_LOCK) ? "Automatic: held where it is *" : "Automatic: held where it is");
+			if (ImGui::Checkbox("##toneLock", &lock))
+			{
+				mine.lock = lock;
+				bits = lock == map.lock ? bits & ~TONE_SET_LOCK : bits | TONE_SET_LOCK;
+				changed = true;
+			}
+
+			ImGui::SetItemTooltip("The automatic exposure stops following the light and keeps what it has now.");
+		}
+
+		for (const Field& field : FIELDS)
+		{
+			const std::uint32_t bit = 1u << field.index;
+			float value = (bits & bit) ? mine.f[field.index] : map.f[field.index];
+			char label[80];
+			snprintf(label, sizeof(label), "%s%s", field.label, (bits & bit) ? " *" : "");
+			ui_row_label(label);
+			char id[32];
+			snprintf(id, sizeof(id), "##tone%d", field.index);
+			ui::Default(map.f[field.index]);
+			if (ui::DragFloat(id, &value, field.speed, field.low, field.high, field.format))
+			{
+				if (value == map.f[field.index])
+				{
+					// (its reset button: the map's own again)
+					bits &= ~bit;
+				}
+				else
+				{
+					mine.f[field.index] = value;
+					bits |= bit;
+				}
+
+				changed = true;
+			}
+
+			ImGui::SetItemTooltip("%s", field.tip);
+		}
+
+		{
+			int curve = (bits & TONE_SET_CURVE) ? mine.curve : map.curve;
+			ui_row_label((bits & TONE_SET_CURVE) ? "Curve's kind *" : "Curve's kind");
+			if (ImGui::SliderInt("##toneCurve", &curve, 0, 3))
+			{
+				if (curve == map.curve)
+				{
+					bits &= ~TONE_SET_CURVE;
+				}
+				else
+				{
+					mine.curve = curve;
+					bits |= TONE_SET_CURVE;
+				}
+
+				changed = true;
+			}
+
+			ImGui::SetItemTooltip("Which of the game's curves brings the light down to the screen's range. The map's own is %d.", map.curve);
+		}
+
+		if (changed || bits != before)
+		{
+			tone_set(mine, bits);
+		}
+	}
 }
 
 void look_draw_tab(const TheaterState& state)
@@ -1701,6 +1897,21 @@ void look_draw_tab(const TheaterState& state)
 
 	for (const Section& section : SECTIONS)
 	{
+		// (the Exposure section comes after the Film's)
+		if (strcmp(section.label, "Models") == 0)
+		{
+			reset = false;
+			const bool tone_open = ui_section(ICON_SLIDERS, "Exposure", &reset, false);
+			if (tone_open)
+			{
+				draw_tone(reset);
+			}
+			else if (reset)
+			{
+				tone_set(ToneState(), 0);
+			}
+		}
+
 		// (the Sky section comes after the Sun's)
 		if (strcmp(section.label, "Lighting") == 0)
 		{
