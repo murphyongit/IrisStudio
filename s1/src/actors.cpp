@@ -2249,3 +2249,21 @@ bool actors_entity_bone(const int entity, const char* name, float out[3])
 	void* model = model_of(entity);
 	return model && bone(entity, model, name, out);
 }
+
+bool actors_entity_yaw(const int handle, float* out)
+{
+	if (handle < 0 || handle >= 2048)
+	{
+		return false;
+	}
+
+	__try
+	{
+		*out = reinterpret_cast<const float*>(entity_at(handle) + CENTITY_ANGLES)[1];
+		return std::isfinite(*out);
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		return false;
+	}
+}

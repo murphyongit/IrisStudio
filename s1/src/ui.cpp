@@ -631,6 +631,142 @@ namespace
 		return index;
 	}
 
+	// An actor where the player nearest the camera stands, facing as it does and dressed as it is: a stand-in to
+	// direct in its place.
+	int add_actor_as_nearest()
+	{
+		const BoneState players = camera_bone_state();
+		float at[3];
+		float yaw = 0.0f;
+		if (players.nearest < 0 || !actors_entity_origin(players.nearest, at))
+		{
+			ui_log("No copy made: no player is in the picture right now.");
+			return -1;
+		}
+
+		actors_entity_yaw(players.nearest, &yaw);
+		const int index = actors_add(at, yaw, players.nearest, theater_state().position_ms);
+		if (index < 0)
+		{
+			ui_log("No copy made: all %d actors are in use.", ACTORS_MAX);
+		}
+		else
+		{
+			g_actor_open = index;
+			g_actor_clip = 0;
+		}
+
+		return index;
+	}
+
+	// The model in memory whose name has one of these words in it (the first word that finds any; of those it
+	// finds, the shortest name: the thing itself, not a piece of it).
+	bool model_like(const char* const* words, const int count, char out[64])
+	{
+		static char found[400][64];
+		for (int w = 0; w < count; ++w)
+		{
+			const int any = models_find(words[w], 3, -1, found, 400);
+			int best = -1;
+			for (int i = 0; i < any; ++i)
+			{
+				if (best < 0 || strlen(found[i]) < strlen(found[best]))
+				{
+					best = i;
+				}
+			}
+
+			if (best >= 0)
+			{
+				strncpy_s(out, 64, found[best], _TRUNCATE);
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	// An effect placed for a killstreak's sequence: when, for how long, again every so often, on which prop.
+	int sequence_effect(const char* name, const float at[3], const std::uint32_t ms, const std::uint32_t length_ms, const std::uint32_t every_ms, const int on_actor)
+	{
+		const int index = effects_add(name, at, ms);
+		static PlacedEffect placed[256];
+		const int count = effects_placed(placed, 256);
+		if (index >= 0 && index < count)
+		{
+			PlacedEffect effect = placed[index];
+			if (length_ms)
+			{
+				effect.length_ms = length_ms;
+			}
+
+			effect.every_ms = every_ms;
+			effect.on_actor = on_actor;
+			effects_set(index, effect);
+		}
+
+		return index;
+	}
+
+	// A care package's drop on a place, from the time the recording is at: the marker's smoke, the pod coming
+	// down out of the sky with its trail, its burst as it brakes, the hit on the ground and the fire on it after.
+	// All of it is ordinary things of the scene (a prop on a path, placed effects): each can be changed after.
+	void add_care_package_at(const float point[3])
+	{
+		static const char* const words[] = {"orbital_carepackage", "carepackage", "care_package", "drop_pod", "droppod", "orbital_pod", "crate"};
+		const std::uint32_t now = theater_state().position_ms;
+		const std::uint32_t falls_at = now + 2500, falls_ms = 1500;
+		const float height = 6000.0f;
+		sequence_effect("fx/smoke/signal_smoke_airdrop", point, now, 0, 0, 0);
+		char model[64] = "";
+		if (model_like(words, static_cast<int>(sizeof(words) / sizeof(words[0])), model))
+		{
+			const float high[3] = {point[0], point[1], point[2] + height};
+			const int prop = actors_add_prop(model, high, 0.0f, falls_at);
+			static Actor actors[ACTORS_MAX];
+			const int count = actors_list(actors, ACTORS_MAX);
+			if (prop >= 0 && prop < count)
+			{
+				Actor pod = actors[prop];
+				strncpy_s(pod.name, "Care package", _TRUNCATE);
+				pod.path_count = 1;
+				memcpy(pod.path[0], point, sizeof(pod.path[0]));
+				pod.speed = height / (falls_ms / 1000.0f);
+				pod.clips[0].length_ms = 60000;
+				pod.stays = true;
+				actors_set(prop, pod);
+				sequence_effect("vfx/trail/orbital_pod_trail", high, falls_at, falls_ms, 50, pod.handle);
+				g_actor_open = prop;
+			}
+			else
+			{
+				ui_log("Care package: its effects are placed, but all %d actors and props are in use: no pod.", ACTORS_MAX);
+			}
+		}
+		else
+		{
+			ui_log("Care package: its effects are placed, but no care package model is in memory on this map. Add any prop (Scene > Actors > Add a prop) and give it a path down to "
+			       "the place; the names of all models are in theater\\models_list.txt.");
+		}
+
+		const float brakes[3] = {point[0], point[1], point[2] + height * 0.15f};
+		sequence_effect("vfx/explosion/orbital_pod_decel_explosion_pieces", brakes, falls_at + falls_ms * 85 / 100, 0, 0, 0);
+		sequence_effect("vfx/explosion/exo_droppod_groundhit", point, falls_at + falls_ms, 0, 0, 0);
+		sequence_effect("vfx/fire/pod_care_package_fire", point, falls_at + falls_ms, 12000, 0, 0);
+	}
+
+	// Shells from above on a place: three blasts, one after another, around it.
+	void add_strike_at(const float point[3])
+	{
+		const std::uint32_t now = theater_state().position_ms;
+		static const float around[3][2] = {{0.0f, 0.0f}, {170.0f, 90.0f}, {-120.0f, 150.0f}};
+		for (int i = 0; i < 3; ++i)
+		{
+			const float at[3] = {point[0] + around[i][0], point[1] + around[i][1], point[2]};
+			sequence_effect("vfx/explosion/orbitalsupport_105mm_explosion", at, now + 1000 + i * 700, 0, 0, 0);
+		}
+	}
+
 	// A clip for an animation after an actor's last ("Then"), or the animation of one of its clips changed.
 	void use_animation(const int actor_index, const int clip_index, const char* animation)
 	{
@@ -1390,6 +1526,23 @@ namespace
 		if (ImGui::MenuItem(ICON_PERSON "  Add an actor here"))
 		{
 			add_actor_at(point);
+		}
+
+		if (ImGui::BeginMenu(ICON_BOLT "  Killstreak here"))
+		{
+			if (ImGui::MenuItem("Care package drop"))
+			{
+				add_care_package_at(point);
+			}
+
+			ImGui::SetItemTooltip("From the time the recording is at: the marker's smoke, then the pod comes down out of the sky with its trail,\nbrakes with a burst, hits the ground and burns. It is made of a prop on a path and placed effects:\nall of them are in the Scene tab after, to move, retime or remove (Ctrl+Z takes the lot back).");
+			if (ImGui::MenuItem("Shell strike (three blasts)"))
+			{
+				add_strike_at(point);
+			}
+
+			ImGui::SetItemTooltip("Three large explosions around this place, a second from the time the recording is at.\nWith the camera's \"Held by hand\" sway turned up for the moment it reads as a hit nearby.");
+			ImGui::EndMenu();
 		}
 
 		if (ImGui::MenuItem(ICON_CUBE "  Add a prop here..."))
@@ -3073,6 +3226,13 @@ namespace
 				}
 
 				ImGui::SetItemTooltip("A model of the game's (a vehicle, a drone, a crate) where the camera is. Or right click a place on the picture.\nIt takes one of the %d places actors have.", ACTORS_MAX);
+				ImGui::SameLine();
+				if (ImGui::Button("Copy the nearest player"))
+				{
+					add_actor_as_nearest();
+				}
+
+				ImGui::SetItemTooltip("An actor exactly where the player nearest the camera stands right now, facing the same way and dressed the same:\na stand-in you can direct (animations, a path, shots) in that player's place.");
 				ImGui::SameLine();
 				ImGui::TextDisabled("%d of %d", actor_count, ACTORS_MAX);
 				if (actor_count == 0)

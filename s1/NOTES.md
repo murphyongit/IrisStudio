@@ -567,3 +567,10 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
   BG_GetNumWeapons()"); scene.cpp hooks it (12 register-size arguments handed on), entity number at centity+0x144, light at its tag_flash (else
   origin + 50). Off by default: Scene > Gunfire. Settings in StormState (shots_light/_reach/_color).
 - models.cpp writes theater\models_list.txt (every loaded model's name), to plan killstreak sequences from.
+- Killstreak sequences (ui.cpp, right click the picture > "Killstreak here"): made of ORDINARY scene things, so they save, undo and can be edited.
+  Care package drop: fx/smoke/signal_smoke_airdrop now; a prop (first loaded model like orbital_carepackage / carepackage / care_package /
+  drop_pod / droppod / orbital_pod / crate, shortest name) from 6000 up, down a one-point path in 1.5 s starting 2.5 s on, with
+  vfx/trail/orbital_pod_trail on it every 50 ms; vfx/explosion/orbital_pod_decel_explosion_pieces at 85% of the fall;
+  vfx/explosion/exo_droppod_groundhit and vfx/fire/pod_care_package_fire at the hit. Shell strike: 3 x vfx/explosion/orbitalsupport_105mm_explosion.
+  The model's real name is NOT known yet (guessed by words): read theater\models_list.txt once the user has run 0.80.
+- "Copy the nearest player" (Scene > Actors): an actor at that player's origin and yaw (centity angles +0x44, plain floats), dressed as it.

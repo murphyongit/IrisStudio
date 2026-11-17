@@ -265,6 +265,8 @@ int actors_animations(const char* text, int group, char names[][64], int max);
 float actors_animation_length(const char* name, bool* loops);
 void actors_preview(const char* animation, int dressed_as_actor, int dressed_as_entity);
 bool actors_entity_origin(int handle, float out[3]);
+// The way an entity of the game's faces (a player: the way it looks), in degrees; false: no such entity.
+bool actors_entity_yaw(int handle, float* out);
 // death animations for the match's own players (-1: everybody without a choice of their own)
 bool deaths_any();
 void deaths_set(int entity, const char* animation);
