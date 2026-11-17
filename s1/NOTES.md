@@ -536,3 +536,19 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
   xy * strength (clamped to 0.99) is made at Present (10 a frame, 1.4 GB cap) and given in place of the original; swept every 300 frames (dropped when
   only our reference is left). Look > Surfaces > "Bump strength" 0..4, kept in StormState.bump (so saved with the recording, undo). Log line after
   400 frames: "surfaces: textures seen by format ...". ASSUMPTION: AW's normal maps are BC5 two-channel. No "surface depth" (parallax).
+
+## 0.79: the Direct3D hooks moved onto the game's own context; the picture held during a jump
+- User on 0.78 (screenshot: HUD blurred with a ReShade blur): HUD still blurred; bump strength does nothing; motion blur "looks great" (slow, as
+  expected); kill list/feed work, but going from the free camera to first person makes the feed "jump around"; asked about the features left out.
+- Log of 0.78: "hud keep: ... its Present is hooked", "Direct3D's drawing is hooked", then NOTHING (no picture ever had its HUD put back);
+  "surfaces: textures seen by format:; normal maps found 0": the PSSetShaderResources hook on the REAL immediate context's vtable saw no call of the
+  game's with self == the real context. Cause not known (r_cmdbuf_worker is 0, so deferred contexts are unlikely; maybe the real object's functions
+  are reached another way). ReShade.log gives the game's own pointers: ppDevice 0x1409DD3E8, ppImmediateContext 0x1409DD3F0 (D3D11CreateDeviceAnd
+  SwapChain, Flags 0x80), swap chain 0x1409E42F0.
+- 0.79: both modules hook the vtable of the object at 0x1409DD3F0 (ReShade's wrapper when ReShade is there; its class is the same for deferred
+  contexts) and act on whatever context calls (per-context "the back buffer is the target", a lock in surfaces). Our own drawing stays on the real
+  context by direct calls. Diagnostics: "hud keep: after N pictures: X draws seen, ReShade's Present ran Y times, Z pictures had their HUD put back;
+  contexts: [...]" at 400 and 4000 pictures; "surfaces: N calls seen; textures by format ...". READ THESE NEXT.
+- picture_hold (hudkeep.cpp): while TheaterState.jumping (roll, flush pending/window) and no video is being recorded, the picture from before the
+  jump is shown: no fast-forward blip, and the kill feed is not seen being rebuilt (the "jumping around" on free camera -> first person, which
+  rebuilds).

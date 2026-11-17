@@ -20,6 +20,8 @@ struct TheaterState
 	// the time being gone to); whether every message due has been given; a search for kills is running
 	double clock_ms = 0.0;
 	bool caught_up = false, scanning = false;
+	// (0.79) a jump is under way: its messages are being given, the HUD emptied, or its last seconds played up to it
+	bool jumping = false;
 };
 
 TheaterState theater_state();
@@ -334,6 +336,7 @@ struct ID3D11Device;
 struct ID3D11DeviceContext;
 void hud_keep_frame(IDXGISwapChain* real, ID3D11Device* device, ID3D11DeviceContext* context);
 void hud_keep_release();
+void picture_hold(IDXGISwapChain* real, ID3D11Device* device, ID3D11DeviceContext* context, bool playing, bool hold);
 // surfaces.cpp: bump strength.
 void surfaces_frame(ID3D11Device* device, ID3D11DeviceContext* context, float strength);
 void surfaces_status(int* found, int* made, int* megabytes);

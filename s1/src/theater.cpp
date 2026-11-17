@@ -38,7 +38,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.78 (recorder, playback, IrisStudio's editor)";
+	constexpr char VERSION[] = "0.79 (recorder, playback, IrisStudio's editor)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -2585,6 +2585,7 @@ TheaterState theater_state()
 	// (false from a jump until the messages given in one go on its way are all in)
 	state.caught_up = !g_hud_flush_pending.load();
 	state.scanning = g_scanning;
+	state.jumping = g_roll_to >= 0 || g_hud_flush_pending || GetTickCount64() < g_hud_flush_until;
 	strncpy_s(state.name, g_shown_name, _TRUNCATE);
 	strncpy_s(state.map, g_shown_map, _TRUNCATE);
 	return state;

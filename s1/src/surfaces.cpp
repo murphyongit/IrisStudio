@@ -18,6 +18,7 @@
 #include <cstring>
 #include <iterator>
 #include <map>
+#include <mutex>
 #include <unordered_map>
 #include <vector>
 
@@ -43,9 +44,12 @@ namespace
 
 	using set_resources_t = void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*, UINT, UINT, ID3D11ShaderResourceView* const*);
 	set_resources_t g_original_set_resources = nullptr;
-	ID3D11DeviceContext* g_context = nullptr;
 	std::atomic<float> g_strength{1.0f};
-	// (all of these on the thread that draws: the hook and the picture's end are both on it)
+	// (0.79) hooked on the game's own context object (see hudkeep.cpp), whichever thread and context it draws
+	// with: the list is under a lock
+	constexpr std::uintptr_t GAME_CONTEXT = 0x1409DD3F0;
+	std::mutex g_lock;
+	unsigned g_calls = 0;
 	std::unordered_map<ID3D11ShaderResourceView*, Entry> g_seen;
 	std::vector<ID3D11ShaderResourceView*> g_queue;
 	std::map<int, int> g_formats;
@@ -103,14 +107,16 @@ namespace
 	void STDMETHODCALLTYPE hooked_set_resources(ID3D11DeviceContext* self, const UINT start, const UINT count, ID3D11ShaderResourceView* const* views)
 	{
 		const float strength = g_strength;
-		if (self != g_context || g_inside || strength == 1.0f || !views || count == 0 || count > 32)
+		if (g_inside || strength == 1.0f || !views || count == 0 || count > 128)
 		{
 			g_original_set_resources(self, start, count, views);
 			return;
 		}
 
-		ID3D11ShaderResourceView* given[32];
+		thread_local ID3D11ShaderResourceView* given[128];
 		bool changed = false;
+		std::unique_lock<std::mutex> lock(g_lock);
+		++g_calls;
 		for (UINT i = 0; i < count; ++i)
 		{
 			ID3D11ShaderResourceView* view = views[i];
@@ -151,6 +157,7 @@ namespace
 			}
 		}
 
+		lock.unlock();
 		g_original_set_resources(self, start, count, changed ? given : views);
 	}
 
@@ -305,10 +312,10 @@ float4 pixel(float4 position : SV_Position) : SV_Target
 				                                 1.0f};
 				context->OMSetRenderTargets(1, &target, nullptr);
 				context->RSSetViewports(1, &viewport);
-				g_original_set_resources(context, 0, 1, &source);
+				context->PSSetShaderResources(0, 1, &source);
 				context->Draw(3, 0);
 				ID3D11ShaderResourceView* none = nullptr;
-				g_original_set_resources(context, 0, 1, &none);
+				context->PSSetShaderResources(0, 1, &none);
 			}
 
 			release(original);
@@ -381,7 +388,7 @@ float4 pixel(float4 position : SV_Position) : SV_Target
 			c->GSSetShader(geometry, nullptr, 0);
 			c->HSSetShader(hull, nullptr, 0);
 			c->DSSetShader(domain, nullptr, 0);
-			g_original_set_resources(c, 0, 1, &resource);
+			c->PSSetShaderResources(0, 1, &resource);
 			c->PSSetConstantBuffers(0, 1, &constants);
 			c->IASetInputLayout(layout);
 			c->IASetPrimitiveTopology(topology);
@@ -425,7 +432,7 @@ float4 pixel(float4 position : SV_Position) : SV_Target
 // How many normal maps have been found and how many drawn again, for the editor to show.
 void surfaces_status(int* found, int* made, int* megabytes)
 {
-	// (read from the editor's drawing, which is on the same thread as the picture's end)
+	std::lock_guard<std::mutex> lock(g_lock);
 	*found = *made = 0;
 	for (const auto& one : g_seen)
 	{
@@ -450,6 +457,7 @@ void surfaces_frame(ID3D11Device* device, ID3D11DeviceContext* context, const fl
 		g_strength = 1.0f;
 		g_told = false;
 		g_on_since = 0;
+		std::lock_guard<std::mutex> lock(g_lock);
 		if (!g_seen.empty())
 		{
 			forget_all();
@@ -460,8 +468,19 @@ void surfaces_frame(ID3D11Device* device, ID3D11DeviceContext* context, const fl
 
 	if (!g_hooked)
 	{
-		g_context = context;
-		void** table = *reinterpret_cast<void***>(context);
+		// (the object the game itself draws with: ReShade's, in front of the real one, when ReShade is there)
+		ID3D11DeviceContext* games_context = nullptr;
+		if (!IsBadReadPtr(reinterpret_cast<const void*>(GAME_CONTEXT), sizeof(void*)))
+		{
+			games_context = *reinterpret_cast<ID3D11DeviceContext**>(GAME_CONTEXT);
+		}
+
+		if (!games_context || IsBadReadPtr(games_context, sizeof(void*)))
+		{
+			return;
+		}
+
+		void** table = *reinterpret_cast<void***>(games_context);
 		if (!make_tools(device) || MH_CreateHook(table[8], reinterpret_cast<LPVOID>(&hooked_set_resources), reinterpret_cast<LPVOID*>(&g_original_set_resources)) != MH_OK ||
 		    MH_EnableHook(table[8]) != MH_OK)
 		{
@@ -481,6 +500,7 @@ void surfaces_frame(ID3D11Device* device, ID3D11DeviceContext* context, const fl
 	}
 
 	// a few of those waiting are drawn again
+	std::unique_lock<std::mutex> lock(g_lock);
 	if (!g_queue.empty())
 	{
 		g_inside = true;
@@ -558,9 +578,14 @@ void surfaces_frame(ID3D11Device* device, ID3D11DeviceContext* context, const fl
 			strncat_s(formats, one, _TRUNCATE);
 		}
 
-		int found = 0, made = 0, megabytes = 0;
-		surfaces_status(&found, &made, &megabytes);
-		say("surfaces: textures seen by format (DXGI number:how many; 83 and 84 are BC5):%s; normal maps found %d, drawn again %d (%d MB)", formats, found, made,
-		    megabytes);
+		int found = 0, made = 0;
+		for (const auto& one : g_seen)
+		{
+			found += one.second.normal;
+			made += one.second.made != nullptr;
+		}
+
+		say("surfaces: %u calls seen; textures by format (DXGI number:how many; 83 and 84 are BC5):%s; normal maps found %d, drawn again %d (%d MB)", g_calls, formats,
+		    found, made, static_cast<int>(g_bytes / (1024 * 1024)));
 	}
 }

@@ -5212,6 +5212,9 @@ namespace
 		// (and the normal maps waiting to be drawn again with the bump strength asked for)
 		surfaces_frame(g_device, g_context, theater_state().playing ? storm_state().bump : 1.0f);
 		const TheaterState state = theater_state();
+		// (a jump is not shown being made: the picture from before it stays until it is there. Not while a video
+		// is recorded: every picture drawn then is one of the video's.)
+		picture_hold(swap_chain, g_device, g_context, state.playing, state.jumping && state.capture_fps <= 0.0f);
 		const bool f1 = GetForegroundWindow() == g_window && (GetAsyncKeyState(VK_F1) & 0x8000) != 0 && !theater_keys_blocked();
 		if (f1 && !g_f1_was_down && state.playing)
 		{

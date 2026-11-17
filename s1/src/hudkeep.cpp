@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <mutex>
 
 #include <windows.h>
 
@@ -32,6 +33,11 @@ void theater_log(const char* text);
 namespace
 {
 	constexpr std::uintptr_t GAME_SWAP_CHAIN = 0x1409E42F0;
+	// (0.79) the game's own device context (ReShade.log: "D3D11CreateDeviceAndSwapChain(... ppImmediateContext =
+	// 00000001409DD3F0)"): with ReShade this is ReShade's object, which hands every call on to the real one. The
+	// drawing is hooked HERE, on the object the game itself calls: hooked on the real context (0.77, 0.78) not one
+	// of the game's draws was seen.
+	constexpr std::uintptr_t GAME_CONTEXT = 0x1409DD3F0;
 
 	std::atomic<bool> g_on{true};
 	char g_status[160] = "waiting for the game to draw";
@@ -46,8 +52,56 @@ namespace
 	ID3D11DepthStencilState* g_no_depth = nullptr;
 	UINT g_width = 0, g_height = 0;
 	bool g_hooked = false, g_wrapper_hooked = false, g_no_wrapper = false, g_failed = false;
-	bool g_on_back = false, g_captured = false, g_swapped = false, g_inside = false;
+	bool g_captured = false, g_swapped = false, g_inside = false;
 	unsigned g_draws_before = 0, g_draws_after = 0, g_frames = 0;
+	// every context the game draws with (its immediate one; deferred ones if it records its drawing on them): whether
+	// the back buffer is its target, and how much it has drawn (for the log)
+	struct Seen
+	{
+		ID3D11DeviceContext* context = nullptr;
+		bool on_back = false;
+		int type = -1;
+		unsigned draws = 0;
+	};
+	Seen g_contexts[16];
+	std::atomic<int> g_context_count{0};
+	std::mutex g_context_lock;
+	unsigned g_wrapper_presents = 0, g_all_draws = 0, g_told_at = 0;
+	// The picture held still while a jump is under way (ui.cpp asks): the last one shown before it.
+	ID3D11Texture2D* g_held = nullptr;
+	bool g_held_good = false;
+
+	Seen* seen(ID3D11DeviceContext* self)
+	{
+		const int count = g_context_count;
+		for (int i = 0; i < count; ++i)
+		{
+			if (g_contexts[i].context == self)
+			{
+				return &g_contexts[i];
+			}
+		}
+
+		std::lock_guard<std::mutex> lock(g_context_lock);
+		const int now = g_context_count;
+		for (int i = 0; i < now; ++i)
+		{
+			if (g_contexts[i].context == self)
+			{
+				return &g_contexts[i];
+			}
+		}
+
+		if (now >= 16)
+		{
+			return nullptr;
+		}
+
+		g_contexts[now].context = self;
+		g_contexts[now].type = static_cast<int>(self->GetType());
+		g_context_count = now + 1;
+		return &g_contexts[now];
+	}
 
 	void say(const char* format, ...)
 	{
@@ -78,7 +132,20 @@ namespace
 	// (the game's thread that draws) A draw is about to be made.
 	void before_draw(ID3D11DeviceContext* self)
 	{
-		if (!g_on_back || self != g_context || g_inside || !g_scene || !g_on)
+		++g_all_draws;
+		if (g_inside)
+		{
+			return;
+		}
+
+		Seen* context = seen(self);
+		if (!context)
+		{
+			return;
+		}
+
+		++context->draws;
+		if (!context->on_back || !g_scene || !g_on)
 		{
 			return;
 		}
@@ -108,24 +175,28 @@ namespace
 			return;
 		}
 
-		// the HUD begins: the scene alone, as it is now
+		// the HUD begins: the scene alone, as it is now (on the context the game is drawing with: if that is one
+		// its drawing is only written down on, the copy is written down with it, in its place)
+		g_inside = true;
 		self->CopyResource(g_scene, g_back);
+		g_inside = false;
 		g_captured = true;
 	}
 
 	void note_targets(ID3D11DeviceContext* self, const UINT count, ID3D11RenderTargetView* const* views)
 	{
-		if (self != g_context || g_inside)
+		Seen* context = g_inside ? nullptr : seen(self);
+		if (!context)
 		{
 			return;
 		}
 
-		g_on_back = false;
+		context->on_back = false;
 		if (count > 0 && views && views[0] && g_back)
 		{
 			ID3D11Resource* resource = nullptr;
 			views[0]->GetResource(&resource);
-			g_on_back = resource == g_back;
+			context->on_back = resource == g_back;
 			if (resource)
 			{
 				resource->Release();
@@ -188,9 +259,10 @@ namespace
 
 		// (what is drawn from here to the end of the real Present is ReShade's and the editor's, not the game's:
 		// no "HUD begins" is looked for in it)
+		++g_wrapper_presents;
 		g_inside = true;
 		const HRESULT result = g_original_wrapper_present(self, sync, flags);
-		g_captured = g_swapped = g_on_back = false;
+		g_captured = g_swapped = false;
 		g_draws_before = g_draws_after = 0;
 		g_inside = false;
 		return result;
@@ -390,8 +462,68 @@ void hud_keep_release()
 	release(g_final);
 	release(g_made);
 	release(g_target);
+	release(g_held);
+	g_held_good = false;
 	g_back = nullptr;
-	g_captured = g_swapped = g_on_back = false;
+	g_captured = g_swapped = false;
+}
+
+// (the real Present, each frame) hold: a jump is under way: the picture from before it is shown until it is over,
+// instead of the seconds played fast up to the jump's time. Else the picture is kept for the next jump.
+void picture_hold(IDXGISwapChain* real, ID3D11Device* device, ID3D11DeviceContext* context, const bool playing, const bool hold)
+{
+	if (!playing)
+	{
+		g_held_good = false;
+		return;
+	}
+
+	ID3D11Texture2D* back = nullptr;
+	if (FAILED(real->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&back))) || !back)
+	{
+		return;
+	}
+
+	D3D11_TEXTURE2D_DESC desc;
+	back->GetDesc(&desc);
+	if (g_held)
+	{
+		D3D11_TEXTURE2D_DESC had;
+		g_held->GetDesc(&had);
+		if (had.Width != desc.Width || had.Height != desc.Height || had.Format != desc.Format)
+		{
+			release(g_held);
+			g_held_good = false;
+		}
+	}
+
+	if (!g_held && desc.SampleDesc.Count == 1)
+	{
+		desc.Usage = D3D11_USAGE_DEFAULT;
+		desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+		desc.CPUAccessFlags = 0;
+		desc.MiscFlags = 0;
+		device->CreateTexture2D(&desc, nullptr, &g_held);
+	}
+
+	if (g_held)
+	{
+		const bool was = g_inside;
+		g_inside = true;
+		if (hold && g_held_good)
+		{
+			context->CopyResource(back, g_held);
+		}
+		else if (!hold)
+		{
+			context->CopyResource(g_held, back);
+			g_held_good = true;
+		}
+
+		g_inside = was;
+	}
+
+	back->Release();
 }
 
 // (the real Present, after ReShade) The HUD put back over ReShade's picture; and the hooks set up the first time.
@@ -440,7 +572,20 @@ void hud_keep_frame(IDXGISwapChain* real, ID3D11Device* device, ID3D11DeviceCont
 	if (!g_hooked)
 	{
 		g_context = context;
-		void** table = *reinterpret_cast<void***>(context);
+		// (the object the game itself draws with: ReShade's, in front of the real one)
+		ID3D11DeviceContext* games_context = nullptr;
+		if (!IsBadReadPtr(reinterpret_cast<const void*>(GAME_CONTEXT), sizeof(void*)))
+		{
+			games_context = *reinterpret_cast<ID3D11DeviceContext**>(GAME_CONTEXT);
+		}
+
+		if (!games_context || IsBadReadPtr(games_context, sizeof(void*)))
+		{
+			return;
+		}
+
+		say("hud keep: the game's context %p, the real one %p", static_cast<void*>(games_context), static_cast<void*>(context));
+		void** table = *reinterpret_cast<void***>(games_context);
 		const bool hooked = hook_at(table, 12, reinterpret_cast<void*>(&hooked_draw_indexed), &g_original_draw_indexed) &&
 		                    hook_at(table, 13, reinterpret_cast<void*>(&hooked_draw), &g_original_draw) &&
 		                    hook_at(table, 20, reinterpret_cast<void*>(&hooked_draw_indexed_instanced), &g_original_draw_indexed_instanced) &&
@@ -518,6 +663,24 @@ void hud_keep_frame(IDXGISwapChain* real, ID3D11Device* device, ID3D11DeviceCont
 	else if (g_on && !g_captured)
 	{
 		snprintf(g_status, sizeof(g_status), "ready (no HUD is being drawn right now)");
+	}
+
+	// (what was seen, for the log: twice, a few seconds and a minute in)
+	++g_told_at;
+	if (g_told_at == 400 || g_told_at == 4000)
+	{
+		char contexts[200] = "";
+		const int count = g_context_count;
+		for (int i = 0; i < count; ++i)
+		{
+			char one[64];
+			snprintf(one, sizeof(one), " [%s %u draws%s]", g_contexts[i].type == 0 ? "immediate" : g_contexts[i].type == 1 ? "deferred" : "?", g_contexts[i].draws,
+			         g_contexts[i].on_back ? ", on the back buffer" : "");
+			strncat_s(contexts, one, _TRUNCATE);
+		}
+
+		say("hud keep: after %u pictures: %u draws seen, ReShade's Present ran %u times, %u pictures had their HUD put back; contexts:%s", g_told_at, g_all_draws,
+		    g_wrapper_presents, g_frames, contexts);
 	}
 
 	// (the editor draws next, blended, on the back buffer: not the game's HUD. Looked for again once ReShade's
