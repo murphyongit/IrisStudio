@@ -574,3 +574,4 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
   vfx/explosion/exo_droppod_groundhit and vfx/fire/pod_care_package_fire at the hit. Shell strike: 3 x vfx/explosion/orbitalsupport_105mm_explosion.
   The model's real name is NOT known yet (guessed by words): read theater\models_list.txt once the user has run 0.80.
 - "Copy the nearest player" (Scene > Actors): an actor at that player's origin and yaw (centity angles +0x44, plain floats), dressed as it.
+- Install note: device_commit_files can send an OLDER copy of an outputs file that was overwritten under the same name moments before; copy the build to a new name before committing, and always cmp after.
