@@ -254,6 +254,8 @@ void actors_import(const Actor* actors, const ModelsOutfit* outfits, int count);
 // The actor (by its handle) is made again: its outfit's changes are taken up.
 void actors_touch(int handle);
 bool actors_origin_of(int handle, float out[3]);
+// (the game's thread) Where a part of any entity's model is now (a player's "tag_flash"); false: no such part.
+bool actors_entity_bone(int entity, const char* name, float out[3]);
 int deaths_export(char* out, int size);
 void deaths_import(const char* text);
 void actors_set(int index, const Actor& actor);
@@ -321,6 +323,11 @@ struct StormState
 	// (added after 0.77; kept here because this is saved with the recording) how strongly the surfaces' normal
 	// maps stand out: 1 the game's own (surfaces.cpp)
 	float bump = 1.0f;
+	// (0.80) the shots of the match's own players light what is around them for a moment (scene.cpp hooks the
+	// game's "a weapon is fired")
+	bool shots_light = false;
+	float shots_reach = 420.0f;
+	float shots_color[3] = {1.0f, 0.72f, 0.42f};
 };
 StormState storm_state();
 void storm_set(const StormState& storm);

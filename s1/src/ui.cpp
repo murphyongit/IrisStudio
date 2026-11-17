@@ -3312,6 +3312,28 @@ namespace
 
 			}
 
+			if (section(ICON_LIGHTBULB, "Gunfire", nullptr, false))
+			{
+				StormState scene = storm_state();
+				bool changed = false;
+				row_label("Shots light the scene");
+				changed = ImGui::Checkbox("##shotsLight", &scene.shots_light) || changed;
+				ImGui::SetItemTooltip("Every shot of the match's own players lights what is around the gun for a moment, as a real muzzle flash does.\nIt shows most in a dark scene. (Your actors' shots have their own switch, with each actor.)");
+				if (scene.shots_light)
+				{
+					ImGui::SameLine();
+					changed = ImGui::ColorEdit3("##shotsColour", scene.shots_color, ImGuiColorEditFlags_NoInputs) || changed;
+					row_label("The light reaches");
+					ui::Default(420.0f);
+					changed = ui::SliderFloat("##shotsReach", &scene.shots_reach, 50.0f, 2000.0f, "%.0f") || changed;
+				}
+
+				if (changed)
+				{
+					storm_set(scene);
+				}
+			}
+
 			if (section(ICON_FLAG, "Kills", nullptr, false))
 			{
 				static SceneKill kills[2000];

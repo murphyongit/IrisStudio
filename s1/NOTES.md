@@ -552,3 +552,18 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
 - picture_hold (hudkeep.cpp): while TheaterState.jumping (roll, flush pending/window) and no video is being recorded, the picture from before the
   jump is shown: no fast-forward blip, and the kill feed is not seen being rebuilt (the "jumping around" on free camera -> first person, which
   rebuilds).
+
+## 0.80
+- User on 0.79: the HUD is sharp under ReShade now, bump strength works (normal maps are BC5_SNORM = 84; ~190 found, 379 MB at most seen), the
+  kill feed is right when skipping and when going first/third person. BUT ReShade's letterbox bars became translucent. Wants the next suggestions
+  built, with as few updates as possible.
+- Log of 0.79: the game draws ~1040 times a picture on its IMMEDIATE context (the wrapper at 0x1409DD3F0); every picture had its HUD put back.
+  Why the real-context hooks saw nothing is still not known.
+- Letterbox: the old blend lerp(R + (B-A), B, saturate(|B-A|*5)) showed the game's own pixel (the scene) wherever B differed a little from A: under
+  a see-through HUD panel, or with any slight full-screen difference, ReShade's black bars let the scene through. New blend: darker where the HUD
+  darkened (R * B/A), added where it lit (R + d), the game's pixel only where far lighter (smoothstep 0.25..0.6). The log now also says how many
+  plain/blended draws were on the back buffer in a match's picture.
+- Players' shots light the scene: CG_FireWeapon on PC = 0x1401E5880(client, centity*, event, ...) (found by "CG_FireWeapon: base weapon >=
+  BG_GetNumWeapons()"); scene.cpp hooks it (12 register-size arguments handed on), entity number at centity+0x144, light at its tag_flash (else
+  origin + 50). Off by default: Scene > Gunfire. Settings in StormState (shots_light/_reach/_color).
+- models.cpp writes theater\models_list.txt (every loaded model's name), to plan killstreak sequences from.

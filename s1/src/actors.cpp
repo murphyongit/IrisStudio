@@ -2238,3 +2238,14 @@ int actors_duplicate(const int index)
 
 	return copy;
 }
+
+bool actors_entity_bone(const int entity, const char* name, float out[3])
+{
+	if (entity < 0 || entity >= 2048)
+	{
+		return false;
+	}
+
+	void* model = model_of(entity);
+	return model && bone(entity, model, name, out);
+}

@@ -66,7 +66,7 @@ namespace
 	Seen g_contexts[16];
 	std::atomic<int> g_context_count{0};
 	std::mutex g_context_lock;
-	unsigned g_wrapper_presents = 0, g_all_draws = 0, g_told_at = 0;
+	unsigned g_wrapper_presents = 0, g_all_draws = 0, g_told_at = 0, g_last_before = 0, g_last_after = 0;
 	// The picture held still while a jump is under way (ui.cpp asks): the last one shown before it.
 	ID3D11Texture2D* g_held = nullptr;
 	bool g_held_good = false;
@@ -260,6 +260,8 @@ namespace
 		// (what is drawn from here to the end of the real Present is ReShade's and the editor's, not the game's:
 		// no "HUD begins" is looked for in it)
 		++g_wrapper_presents;
+		g_last_before = g_draws_before;
+		g_last_after = g_draws_after;
 		g_inside = true;
 		const HRESULT result = g_original_wrapper_present(self, sync, flags);
 		g_captured = g_swapped = false;
@@ -295,9 +297,16 @@ float4 pixel(float4 position : SV_Position) : SV_Target
 {
 	int3 at = int3(position.xy, 0);
 	float3 r = made.Load(at).rgb, a = scene.Load(at).rgb, b = final.Load(at).rgb;
+	// r: what ReShade made of the scene; a: the scene; b: the scene with the HUD. Where the HUD made a pixel
+	// darker (a see-through dark panel, dark letters) ReShade's pixel is darkened by as much (b / a): black bars
+	// that ReShade put there stay black under such a panel. Where it made it lighter, that much light is added;
+	// and where it is far lighter (letters, icons) the pixel is the game's own. A difference of a shade or two
+	// (grain) is only added on.
 	float3 over = b - a;
-	float much = saturate(max(abs(over.r), max(abs(over.g), abs(over.b))) * 5.0);
-	return float4(lerp(r + over, b, much), 1.0);
+	float3 darker = r * (b / max(a, 1.0 / 255.0));
+	float3 changed = lerp(r + over, darker, smoothstep(2.0 / 255.0, 14.0 / 255.0, -over));
+	float lit = max(over.r, max(over.g, over.b));
+	return float4(lerp(changed, b, smoothstep(0.25, 0.6, lit)), 1.0);
 }
 )";
 
@@ -679,8 +688,9 @@ void hud_keep_frame(IDXGISwapChain* real, ID3D11Device* device, ID3D11DeviceCont
 			strncat_s(contexts, one, _TRUNCATE);
 		}
 
-		say("hud keep: after %u pictures: %u draws seen, ReShade's Present ran %u times, %u pictures had their HUD put back; contexts:%s", g_told_at, g_all_draws,
-		    g_wrapper_presents, g_frames, contexts);
+		say("hud keep: after %u pictures: %u draws seen, ReShade's Present ran %u times, %u pictures had their HUD put back; in this one %u plain draws on the back "
+		    "buffer before the first blended one, %u after; contexts:%s",
+		    g_told_at, g_all_draws, g_wrapper_presents, g_frames, g_last_before, g_last_after, contexts);
 	}
 
 	// (the editor draws next, blended, on the back buffer: not the game's HUD. Looked for again once ReShade's

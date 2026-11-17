@@ -475,6 +475,50 @@ namespace
 		}
 	}
 
+	// The game's "a weapon is fired" (CG_FireWeapon, 0x1401E5880: the client, the entity that fires, the event, and
+	// more, handed on as they came): the match's players' shots light the scene for a moment, if asked for.
+	constexpr std::uintptr_t CG_FIRE_WEAPON = 0x1401E5880;
+	using fire_t = void (*)(std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t,
+	                        std::uint64_t, std::uint64_t, std::uint64_t);
+	fire_t g_original_fire = nullptr;
+
+	void note_shot(const unsigned char* entity)
+	{
+		const StormState scene = storm_state();
+		if (!scene.shots_light || scene.shots_reach <= 0.0f || !entity || IsBadReadPtr(entity + 0x144, 2))
+		{
+			return;
+		}
+
+		const TheaterState state = theater_state();
+		if (!state.playing || !state.caught_up || state.jumping)
+		{
+			return;
+		}
+
+		const int number = *reinterpret_cast<const std::int16_t*>(entity + 0x144);
+		float at[3];
+		if (!actors_entity_bone(number, "tag_flash", at))
+		{
+			// (the player being watched in first person has no gun of the kind others see: from about its chest)
+			if (!actors_entity_origin(number, at))
+			{
+				return;
+			}
+
+			at[2] += 50.0f;
+		}
+
+		scene_flash_light(at, scene.shots_color, scene.shots_reach, 900.0f, state.position_exact, 60.0);
+	}
+
+	void hooked_fire(const std::uint64_t a, const std::uint64_t b, const std::uint64_t c, const std::uint64_t d, const std::uint64_t e, const std::uint64_t f,
+	                 const std::uint64_t g, const std::uint64_t h, const std::uint64_t i, const std::uint64_t j, const std::uint64_t k, const std::uint64_t l)
+	{
+		note_shot(reinterpret_cast<const unsigned char*>(b));
+		g_original_fire(a, b, c, d, e, f, g, h, i, j, k, l);
+	}
+
 	void hooked_obituary(const int client, const int attacker, const int victim, void* icon, const bool flag, void* lua)
 	{
 		note_kill(attacker, victim, icon);
@@ -701,6 +745,10 @@ void scene_game_frame(const TheaterState& state)
 		                                  reinterpret_cast<LPVOID*>(&g_original_obituary)) == MH_OK &&
 		                    MH_EnableHook(reinterpret_cast<LPVOID>(LUI_OBITUARY)) == MH_OK;
 		theater_log(hooked ? "kills: the game's kill feed call is hooked" : "kills: the game's kill feed call could NOT be hooked");
+		const bool fire = MH_CreateHook(reinterpret_cast<LPVOID>(CG_FIRE_WEAPON), reinterpret_cast<LPVOID>(&hooked_fire), reinterpret_cast<LPVOID*>(&g_original_fire)) ==
+		                      MH_OK &&
+		                  MH_EnableHook(reinterpret_cast<LPVOID>(CG_FIRE_WEAPON)) == MH_OK;
+		theater_log(fire ? "shots: the game's weapon fire call is hooked" : "shots: the game's weapon fire call could NOT be hooked");
 	}
 
 	const StormState storm = storm_state();

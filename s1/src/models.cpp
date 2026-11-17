@@ -1708,6 +1708,24 @@ namespace
 		}
 
 		std::sort(g_names.begin(), g_names.end());
+		{
+			// (the names, for looking up what there is, a killstreak's models say: theater\models_list.txt)
+			static size_t written = 0;
+			if (written != g_names.size())
+			{
+				written = g_names.size();
+				FILE* file = nullptr;
+				if (fopen_s(&file, (std::string(theater_folder()) + "\\models_list.txt").c_str(), "w") == 0 && file)
+				{
+					for (const std::string& name : g_names)
+					{
+						fprintf(file, "%s\n", name.c_str());
+					}
+
+					fclose(file);
+				}
+			}
+		}
 		note("models: the game has %d models loaded: %d outfit parts, %d world weapons and their parts", count, outfit, weapons);
 		dump_tables();
 	}
