@@ -2148,7 +2148,7 @@ namespace
 			{
 				// (what else a list's entry holds, for the weapons' camouflage: noted for the first person's
 				// and the players' lists a few times)
-				if ((handle == 2048 || handle < 18) && stride == 0x20 && g_noted_entries < 8)
+				if ((handle >= 2048 || handle < 18) && stride == 0x20 && g_noted_entries < 12)
 				{
 					++g_noted_entries;
 					std::string all;

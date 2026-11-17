@@ -631,3 +631,16 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
   (vehicle_airplane_shrike + jet_contrail, 7 blasts), laser from orbit (vfx/beam/orbital_laser_*), UAV (uav_drone_static, one circle of 12 points),
   Goliath pod (vehicle_drop_pod, goliath_pod_opening). Names taken from the user's models_list.txt / effects_list.txt.
 - Crash seen in the log at 10:28:57 (FAULT 14009CD1E, connection state 0, paused): leaving/closing while a recording plays; the old open question.
+
+## 0.85
+- User: the missing gun is the FIRST-PERSON gun and it never comes back; the "+100" stays for good after going back (only a jump far ahead cleared it).
+  So the popup does not go by the HUD's clock (the flush cannot end it). The game's fastfiles here (zone\ui_mp.ff, "S1ff0100": signed, not plain zlib)
+  could not be unpacked to read its Lua.
+- Fix tried: after every going back the HUD is made anew with the game's own LUI_CloseHud 0x1400D1F90 ("close_hud", immediate) and LUI_OpenHud
+  0x1400D9AA0 ("init_hud"); both take nothing and use the LUI state at 0x1412E2B50. Called from play_tick at a frame's start once the jump's messages
+  are given (theater.cpp rebuild_hud). The Lua script hooks LUI.MenuBuilder.m_types_build["mp_hud"], so it attaches to each new HUD. UNTESTED: whether
+  a HUD made mid-match shows everything (it should: late joiners get one), and whether the script's parts list survives.
+- First-person gun: still not understood. Facts: the sync handler is not called during playback (the local match under the recording is frozen:
+  "server steps skipped"); the log's only "entity 2048" list holds viewmodel_base_viewhands + vm_exo_arm_launcher_r (hands; the gun is likely another
+  DObj, 2049?). 0.85 logs lists for handles >= 2048 after jumps. Ideas: the client game's cached view weapon equals the current one after our restart so
+  the gun's DObj is never made again (find ChangeViewmodelDobj / the cache and clear it on go_back_to); or the vm_ model is unloaded.

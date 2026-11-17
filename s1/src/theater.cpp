@@ -38,7 +38,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.84 (recorder, playback, IrisStudio's editor)";
+	constexpr char VERSION[] = "0.85 (recorder, playback, IrisStudio's editor)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -909,9 +909,30 @@ namespace
 	// that time given as fast as the game takes them.
 	std::atomic<std::uint32_t> g_rewinds{0};
 
+	// (0.85) After a going back the HUD is made anew: the game's own "close the HUD" and "open the HUD"
+	// (LUI_CloseHud 0x1400D1F90 sends the menus "close_hud", LUI_OpenHud 0x1400D9AA0 "init_hud"; neither takes
+	// anything). A score popup left from later in the recording stayed for good (it does not go by the HUD's
+	// clock), and so could other parts; a new HUD has none of them, and builds itself from the values as they
+	// are. The editor's HUD script puts itself on every HUD that is built.
+	std::atomic<bool> g_hud_rebuild_wanted{false}, g_hud_rebuild_now{false};
+
+	void rebuild_hud()
+	{
+		__try
+		{
+			reinterpret_cast<void (*)()>(0x1400D1F90)();
+			reinterpret_cast<void (*)()>(0x1400D9AA0)();
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			g_hud_rebuild_wanted = false;
+		}
+	}
+
 	void go_back_to(const std::uint64_t ms)
 	{
 		++g_rewinds;
+		g_hud_rebuild_wanted = true;
 		// (the client game begins again: what the editor made in it is let go of first)
 		actors_release();
 		// (the kill feed's lines and the popups left from later in the recording, and those the messages given
@@ -1208,6 +1229,10 @@ namespace
 			g_hud_flush_until = GetTickCount64() + HUD_FLUSH_MS;
 			g_hud_flush_steps = HUD_FLUSH_STEPS;
 			g_hud_flush_root = nullptr;
+			if (g_hud_rebuild_wanted.exchange(false))
+			{
+				g_hud_rebuild_now = true;
+			}
 		}
 
 		if (now - g_play_report > 5000)
@@ -1236,6 +1261,12 @@ namespace
 		EnterCriticalSection(&g_play_lock);
 		play_step(main, frame_start);
 		LeaveCriticalSection(&g_play_lock);
+		// (the game's own thread, at a frame's start, outside the HUD's step)
+		if (main && frame_start && g_hud_rebuild_now.exchange(false))
+		{
+			rebuild_hud();
+			log_line("playback: the HUD was made anew after going back");
+		}
 	}
 
 	void hooked_parse(const int client, void* msg)
