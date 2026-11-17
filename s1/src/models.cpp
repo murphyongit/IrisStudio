@@ -622,7 +622,36 @@ namespace
 			}
 		}
 
-		g_original_stream_sync(client, changed ? copy : lists, flag);
+		// The lists BEGIN (0) each time a recording is gone back in: the game then forgets what it held and loads
+		// the lists again, all but the weapons' and the first-person guns' (lists 10 and 12: those it only takes
+		// from lists that CHANGED). After a jump far ahead (players had changed class: their first weapons counted
+		// off and unloaded) and back, the weapons of the match's start stayed unloaded: no guns. So within one
+		// playback, lists that begin again are given as changed: what is no longer on them is unloaded, what is
+		// new loaded, weapons too, and nothing is counted twice.
+		int given = flag;
+		if (client == 0 && flag == 0 && lists)
+		{
+			// (begun again in the same playback: the recording has gone back since the lists last began)
+			static char begun_for[96] = "";
+			static std::uint32_t begun_at_rewinds = 0;
+			const TheaterState state = theater_state();
+			if (state.playing && strcmp(begun_for, state.name) == 0 && state.rewinds > begun_at_rewinds &&
+			    *reinterpret_cast<const int*>(0x140BB1C10 + 0x5DB0) != 0)
+			{
+				given = 1;
+				static int told = 0;
+				if (told < 12)
+				{
+					++told;
+					theater_log("models: the lists begin again (the recording gone back in): given to the game as changed, so weapons are loaded as well");
+				}
+			}
+
+			strncpy_s(begun_for, state.playing ? state.name : "", _TRUNCATE);
+			begun_at_rewinds = state.rewinds;
+		}
+
+		g_original_stream_sync(client, changed ? copy : lists, given);
 	}
 
 	bool call_sync(unsigned char* lists, const int flag)

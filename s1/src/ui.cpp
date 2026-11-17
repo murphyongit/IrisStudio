@@ -3489,7 +3489,7 @@ namespace
 					row_label("Brightness");
 					ui::Default(1500.0f);
 					changed = ui::SliderFloat("##shotsBright", &scene.shots_bright, 100.0f, 12000.0f, "%.0f") || changed;
-					ImGui::SetItemTooltip("A light of your own in the Scene tab is 256 to begin with; the game's own lamps are in the thousands.");
+					ImGui::SetItemTooltip("How strong each shot's light is. (Ten times as strong for the same number as in the version before.)");
 					unsigned seen = 0, lit = 0, at_gun = 0;
 					scene_shots_status(&seen, &lit, &at_gun);
 					ImGui::TextDisabled("Shots the game has told of: %u.  Lit: %u (%u at the gun, the rest at the chest).", seen, lit, at_gun);

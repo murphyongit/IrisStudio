@@ -582,3 +582,14 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
   be readable) finds tag_flash (rejected if > 200 units from the entity's origin; then origin + 50), lights for 80 ms at StormState.shots_bright
   (1500, new, at the end). The log tells of the first 6 calls and the first 6 lights; Scene > Gunfire shows "Shots the game has told of / Lit /
   at the gun". If "told of" stays 0 in a firefight, CG_FireWeapon is not what remote players' shots go through: look at CG_EntityEvent's callers.
+
+## 0.82
+- User on 0.81: the players' shot light WORKS (log: entity 0 lit at its gun) but its most (12000) is too dim: "about 10x". Now the light is given
+  shots_bright * 10 (slider and saved numbers unchanged); the actors' own shot light 900 -> 15000, 80 ms.
+- "+100 popups stick when rewinding": the flush after a jump was 150 ms of the wall clock; a far jump's long frame used it up in one LUI step, and a
+  popup is a chain (each link begins a step after the last ended). Now also HUD_FLUSH_STEPS (16) steps of the first HUD root (at most 1.5 s more).
+  NOT verified how the popup hides (no LUI source here): if they still stick, dump the pointsPopup luafile or look at wrapper_for_pointsPopup in Lua.
+- "Guns invisible after a jump far ahead and back": CL stream sync handler 0x140022290 with flag 0 (lists BEGIN, as every going back gives) skips
+  lists 10 and 12 (weapons, viewmodels) entirely (0x1400224EC: test r14d; je end) and forgets what it held; far ahead the CHANGED lists had unloaded
+  the first weapons. models.cpp hooked_stream_sync now gives a BEGIN as CHANGED (flag 1) when the recording has gone back since the last BEGIN of the
+  same playback (rewinds counter) and the stream is active: gone -> unloaded, new -> loaded, weapons too, and no more +1 per rewind on the counts.

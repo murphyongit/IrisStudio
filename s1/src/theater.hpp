@@ -336,7 +336,7 @@ struct StormState
 	bool shots_light = false;
 	float shots_reach = 420.0f;
 	float shots_color[3] = {1.0f, 0.72f, 0.42f};
-	// (0.81) how bright (a light of the editor's own is 256 to begin with; the game's own lights are in the thousands)
+	// (0.81) how bright. (0.82: the light is given ten times this; 12000, the most then, was not bright enough)
 	float shots_bright = 1500.0f;
 };
 StormState storm_state();

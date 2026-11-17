@@ -1036,7 +1036,7 @@ namespace
 			if (actor.shot_light && actor.shot_light_reach > 0.0f)
 			{
 				const float at[3] = {origin[0] + axis[0][0] * 14.0f, origin[1] + axis[0][1] * 14.0f, origin[2] + axis[0][2] * 14.0f};
-				scene_flash_light(at, actor.shot_light_color, actor.shot_light_reach, 900.0f, now, 60.0);
+				scene_flash_light(at, actor.shot_light_color, actor.shot_light_reach, 15000.0f, now, 80.0);
 			}
 
 			float out_of[3] = {}, thrown[3][3] = {};

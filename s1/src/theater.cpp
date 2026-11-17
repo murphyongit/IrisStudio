@@ -38,7 +38,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.81 (recorder, playback, IrisStudio's editor)";
+	constexpr char VERSION[] = "0.82 (recorder, playback, IrisStudio's editor)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -277,6 +277,20 @@ namespace
 	std::atomic<bool> g_hud_flush_pending{false};
 	std::atomic<ULONGLONG> g_hud_flush_until{0};
 	constexpr ULONGLONG HUD_FLUSH_MS = 150;
+	// (0.82) ... and for a count of the HUD's own steps as well: a score popup is a chain (in, held, out), each
+	// link begun at the step after the one before it ended, and a far jump's long frame used the whole 150 ms
+	// up in one step: the popup was left held, for good with time frozen. Never longer than a second and a half.
+	constexpr int HUD_FLUSH_STEPS = 16;
+	constexpr ULONGLONG HUD_FLUSH_MOST_MS = 1500;
+	std::atomic<int> g_hud_flush_steps{0};
+	std::atomic<void*> g_hud_flush_root{nullptr};
+
+	bool hud_flushing()
+	{
+		const ULONGLONG now = GetTickCount64();
+		const ULONGLONG until = g_hud_flush_until;
+		return now < until || (g_hud_flush_steps > 0 && now < until + HUD_FLUSH_MOST_MS);
+	}
 	bool g_caught_up = false;
 	// a recording asked for by name (the editor's list), and when it may start
 	char g_wanted_name[128] = {};
@@ -1192,6 +1206,8 @@ namespace
 		{
 			// (a jump's messages are all given: now the HUD is emptied)
 			g_hud_flush_until = GetTickCount64() + HUD_FLUSH_MS;
+			g_hud_flush_steps = HUD_FLUSH_STEPS;
+			g_hud_flush_root = nullptr;
 		}
 
 		if (now - g_play_report > 5000)
@@ -1599,7 +1615,7 @@ namespace
 			{
 				g_roll_to = -1;
 			}
-			else if (!g_caught_up || msec <= 0 || g_hud_flush_pending || GetTickCount64() < g_hud_flush_until)
+			else if (!g_caught_up || msec <= 0 || g_hud_flush_pending || hud_flushing())
 			{
 				// (not yet caught up, or the HUD is being emptied: it waits)
 				pin_client_time(0);
@@ -2101,8 +2117,15 @@ namespace
 		static Root roots[6] = {};
 		static int told = 0;
 		int given = real;
-		if (g_play == Play::Playing && GetTickCount64() < g_hud_flush_until)
+		if (g_play == Play::Playing && hud_flushing())
 		{
+			// (its steps counted by the first of the HUD's roots to come: one a frame)
+			void* first = nullptr;
+			if (g_hud_flush_root.compare_exchange_strong(first, root) || first == root)
+			{
+				--g_hud_flush_steps;
+			}
+
 			// (a jump: ten seconds pass for the HUD at every step for a moment, and whatever was on it for a time
 			// is gone)
 			for (Root& one : roots)
@@ -2585,7 +2608,7 @@ TheaterState theater_state()
 	// (false from a jump until the messages given in one go on its way are all in)
 	state.caught_up = !g_hud_flush_pending.load();
 	state.scanning = g_scanning;
-	state.jumping = g_roll_to >= 0 || g_hud_flush_pending || GetTickCount64() < g_hud_flush_until;
+	state.jumping = g_roll_to >= 0 || g_hud_flush_pending || hud_flushing();
 	strncpy_s(state.name, g_shown_name, _TRUNCATE);
 	strncpy_s(state.map, g_shown_map, _TRUNCATE);
 	return state;

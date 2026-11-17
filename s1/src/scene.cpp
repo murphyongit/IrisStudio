@@ -504,7 +504,7 @@ namespace
 			return;
 		}
 
-		scene_flash_on_entity(number, scene.shots_color, scene.shots_reach, scene.shots_bright > 0.0f ? scene.shots_bright : 1500.0f, 80.0);
+		scene_flash_on_entity(number, scene.shots_color, scene.shots_reach, (scene.shots_bright > 0.0f ? scene.shots_bright : 1500.0f) * 10.0f, 80.0);
 	}
 
 	void hooked_fire(const std::uint64_t a, const std::uint64_t b, const std::uint64_t c, const std::uint64_t d, const std::uint64_t e, const std::uint64_t f,
