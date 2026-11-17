@@ -38,6 +38,24 @@ struct ToneState
 	float f[TONE_FLOATS] = {};
 };
 void tone_start();
+
+// reshadelink.cpp: a number of the editor's written into a setting of one of ReShade's effects every picture
+// (the focus, for any depth of field effect). Status: 0 no ReShade in the game, 1 ReShade would not take the
+// editor as an add-on, 2 taken (no picture drawn with effects yet), 3 working.
+struct ReshadeSetting
+{
+	char effect[64];
+	char name[64];
+	char label[64];
+	float value;
+};
+void reshade_link_frame();
+int reshade_link_status();
+void reshade_link_list_request();
+int reshade_link_list(ReshadeSetting* out, int max);
+// send: write the value; not: only read what ReShade has there (reshade_link_current).
+void reshade_link_send(bool send, const char* effect, const char* name, float value);
+bool reshade_link_current(float* value, bool* missing);
 bool tone_get(ToneState* map, ToneState* mine, std::uint32_t* set);
 void tone_set(const ToneState& mine, std::uint32_t set);
 // The whole recording played through fast from its start (for the list of kills), then back to where it was.

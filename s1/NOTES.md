@@ -608,3 +608,26 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
   tone_auto/tone_lock lines (group "Exposure").
 - NOT known: the sign and units of each value (which way is darker), the curve kinds' numbers (0..3 guessed from the shader names linear/reinhard/
   hist/filmic). Ask the user what each does; rename and re-range after.
+
+## 0.84
+- User (Nov 17): wants to rack focus with the editor's focus driving HIS ReShade depth of field (any DOF effect); the gun still disappears when
+  skipping; a paused recording loops the sounds that were playing; the drones' HUD stays after skipping; more scorestreaks; score popups "better but
+  still issues" (not said which).
+- ReShade focus: src/reshadelink.cpp registers the DLL as a ReShade add-on (headers of ReShade v6.0.0, add-on API 10, in s1/third_party/reshade,
+  BSD-3; Dear ImGui must NOT be included in that file) and, in reshade_begin_effects, lists the effects' single-float uniforms (not those with a
+  "source" annotation), reads the chosen one or writes distance * scale into it. Look > Depth of Field > "Focus in ReShade": choose the setting, "Match"
+  (scale = ReShade's present value / the distance), send; distance = the pinned player's/actor's, else a keyframable one (track "reshade_focus").
+  Saved as a "reshade_focus on only scale distance effect name" line. UNTESTED: whether the user's ReShade takes the add-on (status 1 = refused).
+- The 0.82 gun fix was WRONG in its premise: the log of 0.83 shows the sync handler called only twice in a session (both flag 0, before playback),
+  never on the 31 jumps back, so "lists begin again" never happened. What loads/unloads weapons during playback is not the handler (the periodic
+  update 0x140023B4A? SV_StreamSync_* names exist on Xbox). NOT fixed. 0.84 only writes the players'/first-person lists to the log 2 s after a jump.
+  Ask the user: which gun (own first person / others'), does it come back by itself, does Rebuild bring it back.
+- Paused = silent: look.cpp sound_follows_pause sets snd_volume 0 while paused (what it was is kept in theater\volume_to_put_back.txt until put
+  back, and put back at the next start if the game was closed while paused). The cause of the looping itself was not looked for.
+- HUD values across jumps: CG_OmnvarsChanged 0x1401C41B0(client, before, now) tells LUI of a value only when the two snapshots differ; in playback
+  the "before" snapshot's omnvar regions (+0x5118 per-client, +0x4C44 game) are now swapped for what the HUD was last told (theater.cpp
+  compare_with_told), so a drone's screen (ui_assaultdrone_*, ui_killstreak_remote, ui_streak_overlay_state) is told off after a jump to before it.
+- More sequences (ui.cpp, right click > Killstreak here): missile strike (scorestreak_missile + playermech_lethal_rocket_trail), bombing run
+  (vehicle_airplane_shrike + jet_contrail, 7 blasts), laser from orbit (vfx/beam/orbital_laser_*), UAV (uav_drone_static, one circle of 12 points),
+  Goliath pod (vehicle_drop_pod, goliath_pod_opening). Names taken from the user's models_list.txt / effects_list.txt.
+- Crash seen in the log at 10:28:57 (FAULT 14009CD1E, connection state 0, paused): leaving/closing while a recording plays; the old open question.

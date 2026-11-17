@@ -755,6 +755,172 @@ namespace
 		sequence_effect("vfx/fire/pod_care_package_fire", point, falls_at + falls_ms, 12000, 0, 0);
 	}
 
+	// A prop for a scorestreak's sequence: the model by its name (else by words in it), from a place along a
+	// path of up to four more places at a speed, there from a time for as long as the way takes (stays: and
+	// after). -1: no such model in memory, or no room.
+	int sequence_prop(const char* title, const char* model_name, const float from[3], const float* way, const int way_count, const float speed,
+	                  const std::uint32_t at_ms, const bool stays, const float pitch)
+	{
+		const char* const words[] = {model_name};
+		char model[64] = "";
+		if (!model_like(words, 1, model))
+		{
+			ui_log("%s: no model \"%s\" is in memory on this map; its effects are placed without it.", title, model_name);
+			return -1;
+		}
+
+		const int prop = actors_add_prop(model, from, 0.0f, at_ms);
+		static Actor actors[ACTORS_MAX];
+		const int count = actors_list(actors, ACTORS_MAX);
+		if (prop < 0 || prop >= count)
+		{
+			ui_log("%s: all %d actors and props are in use; its effects are placed without the model.", title, ACTORS_MAX);
+			return -1;
+		}
+
+		Actor made = actors[prop];
+		strncpy_s(made.name, title, _TRUNCATE);
+		float length = 0.0f;
+		const float* last = from;
+		made.path_count = way_count;
+		for (int i = 0; i < way_count; ++i)
+		{
+			const float* next = way + i * 3;
+			memcpy(made.path[i], next, sizeof(made.path[i]));
+			const float d[3] = {next[0] - last[0], next[1] - last[1], next[2] - last[2]};
+			length += std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+			last = next;
+		}
+
+		made.speed = speed;
+		made.pitch = pitch;
+		made.clips[0].length_ms = stays || speed <= 0.0f ? 60000u : static_cast<std::uint32_t>(length / speed * 1000.0f);
+		made.stays = stays;
+		actors_set(prop, made);
+		g_actor_open = prop;
+		return made.handle;
+	}
+
+	// The way from the camera to a place, flat and of length one (east if they are over one another).
+	void flat_way_to(const float point[3], float out[2])
+	{
+		float eye[3];
+		camera_view_origin(eye);
+		out[0] = point[0] - eye[0];
+		out[1] = point[1] - eye[1];
+		const float length = std::sqrt(out[0] * out[0] + out[1] * out[1]);
+		if (length < 1.0f)
+		{
+			out[0] = 1.0f;
+			out[1] = 0.0f;
+		}
+		else
+		{
+			out[0] /= length;
+			out[1] /= length;
+		}
+	}
+
+	// A missile out of the sky on a place, coming from behind the camera: its smoke, the blast, and the
+	// smaller ones of its cluster around it after.
+	void add_missile_at(const float point[3])
+	{
+		const std::uint32_t now = theater_state().position_ms;
+		const std::uint32_t starts = now + 500, flies_ms = 1300;
+		float way[2];
+		flat_way_to(point, way);
+		const float from[3] = {point[0] - way[0] * 2600.0f, point[1] - way[1] * 2600.0f, point[2] + 4500.0f};
+		const float to[3] = {point[0], point[1], point[2]};
+		const float length = std::sqrt(2600.0f * 2600.0f + 4500.0f * 4500.0f);
+		const int missile = sequence_prop("Missile", "scorestreak_missile", from, to, 1, length / (flies_ms / 1000.0f), starts, false, 60.0f);
+		if (missile >= 0)
+		{
+			sequence_effect("vfx/trail/playermech_lethal_rocket_trail", from, starts, flies_ms, 40, missile);
+		}
+
+		sequence_effect("vfx/explosion/orbitalsupport_105mm_explosion", point, starts + flies_ms, 0, 0, 0);
+		static const float around[4][2] = {{210.0f, 60.0f}, {-150.0f, 190.0f}, {-90.0f, -220.0f}, {170.0f, -160.0f}};
+		for (int i = 0; i < 4; ++i)
+		{
+			const float at[3] = {point[0] + around[i][0], point[1] + around[i][1], point[2]};
+			sequence_effect("vfx/explosion/clusterbomb_explode", at, starts + flies_ms + 450 + i * 160, 0, 0, 0);
+		}
+	}
+
+	// A bombing run over a place: the plane low across it, the way the camera looks, and a row of blasts under it.
+	void add_bombing_run_at(const float point[3])
+	{
+		const std::uint32_t now = theater_state().position_ms;
+		const std::uint32_t starts = now + 500;
+		const float speed = 4200.0f, reach = 7000.0f, height = 1400.0f;
+		float way[2];
+		flat_way_to(point, way);
+		const float from[3] = {point[0] - way[0] * reach, point[1] - way[1] * reach, point[2] + height};
+		const float to[3] = {point[0] + way[0] * reach, point[1] + way[1] * reach, point[2] + height};
+		const int plane = sequence_prop("Bombing run", "vehicle_airplane_shrike", from, to, 1, speed, starts, false, 0.0f);
+		if (plane >= 0)
+		{
+			sequence_effect("vfx/trail/jet_contrail", from, starts, static_cast<std::uint32_t>(2.0f * reach / speed * 1000.0f), 60, plane);
+		}
+
+		for (int i = -3; i <= 3; ++i)
+		{
+			// (each as the plane has passed over it, and the time a bomb falls)
+			const float along = i * 260.0f;
+			const float at[3] = {point[0] + way[0] * along, point[1] + way[1] * along, point[2]};
+			const std::uint32_t over = starts + static_cast<std::uint32_t>((reach + along) / speed * 1000.0f);
+			sequence_effect(i % 2 ? "fx/explosions/clusterbomb_exp" : "vfx/explosion/orbitalsupport_105mm_explosion", at, over + 350, 0, 0, 0);
+		}
+	}
+
+	// The laser from orbit on a place: it warms up, burns for some seconds, ends, and the ground smoulders.
+	void add_laser_at(const float point[3])
+	{
+		const std::uint32_t now = theater_state().position_ms;
+		sequence_effect("vfx/beam/orbital_laser_warmup_large", point, now + 300, 0, 0, 0);
+		sequence_effect("vfx/beam/orbital_laser_flash", point, now + 1900, 0, 0, 0);
+		sequence_effect("vfx/beam/orbital_laser_lightbeam_lg", point, now + 2000, 5000, 0, 0);
+		sequence_effect("vfx/beam/orbital_laser_fire_large", point, now + 2000, 5000, 0, 0);
+		sequence_effect("vfx/beam/orbital_laser_ending", point, now + 7000, 0, 0, 0);
+		sequence_effect("vfx/beam/orbital_laser_smoldering", point, now + 7000, 8000, 0, 0);
+	}
+
+	// A drone circling high over a place, once around.
+	void add_uav_at(const float point[3])
+	{
+		const std::uint32_t now = theater_state().position_ms;
+		const float radius = 1800.0f, height = 2600.0f;
+		float way[12][3];
+		for (int i = 0; i < 12; ++i)
+		{
+			const float turn = (i + 1) * 6.2831853f / 12.0f;
+			way[i][0] = point[0] + std::cos(turn) * radius;
+			way[i][1] = point[1] + std::sin(turn) * radius;
+			way[i][2] = point[2] + height;
+		}
+
+		const float from[3] = {point[0] + radius, point[1], point[2] + height};
+		sequence_prop("UAV", "uav_drone_static", from, &way[0][0], 12, 450.0f, now, true, 0.0f);
+	}
+
+	// The big suit's pod: down out of the sky as the care package's, and it opens.
+	void add_goliath_pod_at(const float point[3])
+	{
+		const std::uint32_t now = theater_state().position_ms;
+		const std::uint32_t falls_at = now + 1500, falls_ms = 1400;
+		const float height = 6000.0f;
+		const float high[3] = {point[0], point[1], point[2] + height};
+		const float to[3] = {point[0], point[1], point[2]};
+		const int pod = sequence_prop("Goliath pod", "vehicle_drop_pod", high, to, 1, height / (falls_ms / 1000.0f), falls_at, true, 0.0f);
+		if (pod >= 0)
+		{
+			sequence_effect("vfx/trail/orbital_pod_trail", high, falls_at, falls_ms, 50, pod);
+		}
+
+		sequence_effect("vfx/explosion/exo_droppod_groundhit", point, falls_at + falls_ms, 0, 0, 0);
+		sequence_effect("vfx/explosion/goliath_pod_opening", point, falls_at + falls_ms + 1500, 0, 0, 0);
+	}
+
 	// Shells from above on a place: three blasts, one after another, around it.
 	void add_strike_at(const float point[3])
 	{
@@ -1536,6 +1702,36 @@ namespace
 			}
 
 			ImGui::SetItemTooltip("From the time the recording is at: the marker's smoke, then the pod comes down out of the sky with its trail,\nbrakes with a burst, hits the ground and burns. It is made of a prop on a path and placed effects:\nall of them are in the Scene tab after, to move, retime or remove (Ctrl+Z takes the lot back).");
+			if (ImGui::MenuItem("Missile strike"))
+			{
+				add_missile_at(point);
+			}
+
+			ImGui::SetItemTooltip("A missile dives on this place from behind the camera, with its smoke; one big blast and four smaller around it.");
+			if (ImGui::MenuItem("Bombing run"))
+			{
+				add_bombing_run_at(point);
+			}
+
+			ImGui::SetItemTooltip("The plane crosses low over this place, the way the camera is looking, and a row of blasts follows under it.");
+			if (ImGui::MenuItem("Laser from orbit (Vulcan)"))
+			{
+				add_laser_at(point);
+			}
+
+			ImGui::SetItemTooltip("The beam warms up, burns on this place for five seconds, ends, and leaves the ground smouldering.");
+			if (ImGui::MenuItem("UAV circling overhead"))
+			{
+				add_uav_at(point);
+			}
+
+			ImGui::SetItemTooltip("The drone flies one wide circle high above this place. (Its path is in the Scene tab: move or stretch it.)");
+			if (ImGui::MenuItem("Goliath pod"))
+			{
+				add_goliath_pod_at(point);
+			}
+
+			ImGui::SetItemTooltip("The big suit's pod comes down out of the sky on this place, hits the ground and opens.");
 			if (ImGui::MenuItem("Shell strike (three blasts)"))
 			{
 				add_strike_at(point);

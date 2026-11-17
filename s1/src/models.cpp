@@ -3255,6 +3255,29 @@ void models_game_frame(const TheaterState& state)
 		theater_rebuild();
 	}
 
+	{
+		// (0.84) "the gun can disappear when skipping around": the first-person view's and the players' lists of
+		// models are written to the log again two seconds after a jump has ended, twelve times a session at most
+		static bool was_jumping = false;
+		static ULONGLONG note_at = 0;
+		static int noted = 0;
+		if (was_jumping && !state.jumping && noted < 12)
+		{
+			note_at = GetTickCount64() + 2000;
+		}
+
+		was_jumping = state.jumping;
+		if (note_at && GetTickCount64() > note_at)
+		{
+			note_at = 0;
+			++noted;
+			g_noted_entries = 0;
+			char text[96];
+			snprintf(text, sizeof(text), "models: after a jump, at %.1f s: the lists as they are now follow (if the game reads them)", state.position_ms / 1000.0);
+			theater_log(text);
+		}
+	}
+
 	rename_gear(state);
 	remake_changed(state);
 	release_unworn(state);

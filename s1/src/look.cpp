@@ -41,6 +41,13 @@ namespace
 	std::map<std::string, ULONGLONG> g_missing;      // when a name the game did not have was last asked for
 	std::map<std::string, std::string> g_originals;  // what a setting was before the editor changed it
 
+	// The focus handed to ReShade (reshadelink.cpp): on, and the game's own blur left alone meanwhile; which
+	// setting of which effect; how much of that setting one unit of the game's distance is; the distance when
+	// nothing is pinned (it can have keyframes: "reshade_focus"); the pinned thing's distance (< 0: none).
+	bool g_rs_on = false, g_rs_only = true;
+	char g_rs_effect[64] = "", g_rs_name[64] = "";
+	float g_rs_scale = 0.001f, g_rs_distance = 500.0f, g_rs_pinned = -1.0f;
+
 	Dvar find(const char* name)
 	{
 		const auto found = g_found.find(name);
@@ -1188,6 +1195,11 @@ namespace
 			fprintf(file, "sun_direction %g %g\n", sun.pitch, sun.yaw);
 		}
 
+		if (g_rs_effect[0] && g_rs_name[0])
+		{
+			fprintf(file, "reshade_focus %d %d %g %g %s %s\n", g_rs_on ? 1 : 0, g_rs_only ? 1 : 0, g_rs_scale, g_rs_distance, g_rs_effect, g_rs_name);
+		}
+
 		{
 			// the exposure and the tone curve: only what was changed
 			ToneState map, mine;
@@ -1310,6 +1322,11 @@ namespace
 			return GROUP_TONE;
 		}
 
+		if (strncmp(line, "reshade_", 8) == 0)
+		{
+			return "Depth of Field";
+		}
+
 		return strncmp(line, "sky", 3) == 0 ? GROUP_SKY : std::string();
 	}
 
@@ -1409,6 +1426,27 @@ namespace
 				}
 
 				send_hud_hidden();
+			}
+			else if (int on = 0, alone = 0; sscanf_s(line, "reshade_focus %d %d %f %f", &on, &alone, &a, &b) == 4)
+			{
+				// (then the effect's file and the setting's name, neither with a space in it)
+				char effect[64] = "", name[64] = "";
+				const char* rest = line;
+				for (int skip = 0; skip < 5 && rest; ++skip)
+				{
+					rest = strchr(rest, ' ');
+					rest = rest ? rest + 1 : nullptr;
+				}
+
+				if (rest && sscanf_s(rest, "%63s %63s", effect, static_cast<unsigned>(sizeof(effect)), name, static_cast<unsigned>(sizeof(name))) == 2)
+				{
+					g_rs_on = on != 0;
+					g_rs_only = alone != 0;
+					g_rs_scale = a;
+					g_rs_distance = b;
+					strncpy_s(g_rs_effect, effect, _TRUNCATE);
+					strncpy_s(g_rs_name, name, _TRUNCATE);
+				}
 			}
 			else if (sscanf_s(line, "tone_value %d %f", &n, &a) == 2)
 			{
@@ -1742,6 +1780,7 @@ void look_toggle_hud()
 namespace
 {
 	void draw_focus();
+	void draw_reshade_focus();
 
 	// The Exposure section: the map's own values shown, each changed by dragging; what was changed is the
 	// editor's from then on (exposure.cpp), until its reset button puts the map's back.
@@ -2116,6 +2155,7 @@ namespace
 
 	void focus_frame(const TheaterState& state)
 	{
+		g_rs_pinned = -1.0f;
 		if (!state.playing || g_focus_kind == 0)
 		{
 			g_focus_sent = -1.0f;
@@ -2131,6 +2171,13 @@ namespace
 		place[2] += 48.0f;
 		camera_view_origin(eye);
 		const float far_off = std::sqrt((place[0] - eye[0]) * (place[0] - eye[0]) + (place[1] - eye[1]) * (place[1] - eye[1]) + (place[2] - eye[2]) * (place[2] - eye[2]));
+		g_rs_pinned = far_off;
+		if (g_rs_on && g_rs_only)
+		{
+			// (ReShade's effect does the blur: the game's own is left as it is)
+			return;
+		}
+
 		// (only when it has changed enough to see: each setting is a command to the game)
 		if (g_focus_sent > 0.0f && std::fabs(far_off - g_focus_sent) < g_focus_sent * 0.01f + 0.5f && g_focus_range == g_focus_range_sent)
 		{
@@ -2153,6 +2200,128 @@ namespace
 				set(dvar, "%g", one.value);
 			}
 		}
+	}
+
+	void draw_reshade_focus()
+	{
+		ImGui::Spacing();
+		ImGui::SeparatorText("Focus in ReShade");
+		const int status = reshade_link_status();
+		if (status < 2)
+		{
+			ImGui::PushTextWrapPos(0.0f);
+			ImGui::TextDisabled(status == 0 ? "No ReShade found in the game."
+			                                : "ReShade is there, but it would not let the editor in. It needs ReShade 6.0 or newer, the download \"with full add-on support\".");
+			ImGui::PopTextWrapPos();
+			return;
+		}
+
+		static ReshadeSetting settings[2000];
+		static int count = 0;
+		static char filter[48] = "focus";
+		static bool asked = false;
+		if (!asked)
+		{
+			asked = true;
+			reshade_link_list_request();
+		}
+
+		count = reshade_link_list(settings, 2000);
+		char shown[160];
+		snprintf(shown, sizeof(shown), "%s", g_rs_name[0] ? g_rs_name : "Choose...");
+		ui_row_label("ReShade setting");
+		if (ImGui::BeginCombo("##rsSetting", shown, ImGuiComboFlags_HeightLarge))
+		{
+			ImGui::SetNextItemWidth(-90.0f);
+			ImGui::InputTextWithHint("##rsFilter", "part of its name (empty: all)", filter, sizeof(filter));
+			ImGui::SameLine();
+			if (ImGui::Button("Read again"))
+			{
+				reshade_link_list_request();
+			}
+
+			for (int i = 0; i < count; ++i)
+			{
+				const ReshadeSetting& one = settings[i];
+				char text[220];
+				snprintf(text, sizeof(text), "%s  (%s, %s) = %g", one.label, one.effect, one.name, one.value);
+				bool fits = !filter[0];
+				for (const char* at = text; !fits && *at; ++at)
+				{
+					fits = _strnicmp(at, filter, strlen(filter)) == 0;
+				}
+
+				if (fits && ImGui::Selectable(text, strcmp(one.effect, g_rs_effect) == 0 && strcmp(one.name, g_rs_name) == 0))
+				{
+					strncpy_s(g_rs_effect, one.effect, _TRUNCATE);
+					strncpy_s(g_rs_name, one.name, _TRUNCATE);
+				}
+			}
+
+			if (count == 0)
+			{
+				ImGui::TextDisabled("No settings read yet: turn an effect on in ReShade, then \"Read again\".");
+			}
+
+			ImGui::EndCombo();
+		}
+
+		ImGui::SetItemTooltip("The setting of your depth of field effect that says how far off the sharp plane is: its manual focus\n(\"Manual focus\", \"Focus plane\", \"Focus depth\"...). Turn the effect's autofocus off in ReShade so that it uses it.\nEvery number setting of every effect that is on is listed; type part of a name to narrow the list.");
+		if (!g_rs_name[0])
+		{
+			return;
+		}
+
+		float current = 0.0f;
+		bool missing = false;
+		const bool have = reshade_link_current(&current, &missing);
+		if (missing)
+		{
+			ImGui::TextDisabled("ReShade has no such setting now (is the effect still on?).");
+		}
+
+		const float distance = g_rs_pinned > 0.0f ? g_rs_pinned : g_rs_distance;
+		ui_row_label("Send the focus to it");
+		ImGui::Checkbox("##rsOn", &g_rs_on);
+		ImGui::SetItemTooltip("Every picture the editor writes the focus distance into that setting: the pinned player's or actor's above\nif one is pinned, else the distance below (which can have keyframes: a rack focus).");
+		ui_row_label("Leave the game's own blur alone");
+		ImGui::Checkbox("##rsOnly", &g_rs_only);
+		ImGui::SetItemTooltip("On: a pinned focus only drives ReShade. Off: it drives the game's depth of field as well.");
+		if (g_rs_pinned <= 0.0f)
+		{
+			ui_row_label("Focus distance");
+			ui::Default(500.0f);
+			if (ui::DragFloat("##rsDistance", &g_rs_distance, 2.0f, 1.0f, 100000.0f, "%.0f units"))
+			{
+				key_changed("reshade_focus", &g_rs_distance);
+			}
+
+			ImGui::SetItemTooltip("How far from the camera the sharp plane is, in the game's units (a player is about 70 tall).\nThe diamond puts a keyframe: two keyframes with different distances are a rack focus.");
+			key_button("reshade_focus", "ReShade focus distance", 1, &g_rs_distance);
+		}
+		else
+		{
+			ImGui::TextDisabled("The pinned one is %.0f units away.", g_rs_pinned);
+		}
+
+		float per_hundred = g_rs_scale * 100.0f;
+		ui_row_label("ReShade's number per 100 units");
+		if (ImGui::DragFloat("##rsScale", &per_hundred, per_hundred * 0.01f + 0.00001f, 0.000001f, 100000.0f, "%.5f"))
+		{
+			g_rs_scale = per_hundred / 100.0f;
+		}
+
+		ImGui::SetItemTooltip("How the game's distance becomes the effect's own number (each effect counts distance its own way).\n\"Match\" below works it out for you.");
+		ImGui::BeginDisabled(g_rs_on || !have || distance <= 0.0f);
+		if (ImGui::Button("Match: ReShade is sharp at this distance now"))
+		{
+			g_rs_scale = current / distance;
+		}
+
+		ImGui::EndDisabled();
+		ImGui::SetItemTooltip("To set it up, once per effect:\n1. Leave \"Send the focus to it\" off.\n2. Pin a player or actor above (or set the distance to something you can see).\n3. In ReShade, move the effect's own focus until that player or thing is sharp.\n4. Press this. From then on the editor's distance drives the effect.");
+		ImGui::TextDisabled(g_rs_on ? "Sending %.5f (%.0f units)." : "ReShade has %.5f there now; the editor would send %.5f.", g_rs_on ? distance * g_rs_scale : current,
+		                    g_rs_on ? distance : distance * g_rs_scale);
 	}
 
 	void draw_focus()
@@ -2223,6 +2392,66 @@ namespace
 
 			ImGui::SetItemTooltip("How deep the sharp zone is around it. Small: only it is sharp, like a long lens wide open.");
 		}
+
+		draw_reshade_focus();
+	}
+
+	// While a recording is paused the game's sound is turned down to nothing (sounds that were playing went on,
+	// over and over), and put back when it plays again or stops. What it was is also kept in a file until it is
+	// put back, so that a game closed while paused does not start silent the next time.
+	void sound_follows_pause(const TheaterState& state)
+	{
+		static bool looked = false, silent = false;
+		static std::string was;
+		const std::string keep = std::string(theater_folder()) + "\\volume_to_put_back.txt";
+		const Dvar volume = find("snd_volume");
+		if (!volume)
+		{
+			return;
+		}
+
+		if (!looked)
+		{
+			looked = true;
+			FILE* file = nullptr;
+			char text[64] = "";
+			if (fopen_s(&file, keep.c_str(), "r") == 0 && file)
+			{
+				if (fgets(text, sizeof(text), file) && atof(text) > 0.0)
+				{
+					theater_command((std::string("snd_volume ") + text).c_str());
+				}
+
+				fclose(file);
+				DeleteFileA(keep.c_str());
+			}
+		}
+
+		const bool quiet = state.playing && state.paused;
+		if (quiet && !silent)
+		{
+			was = text_of(volume, volume.current());
+			if (atof(was.c_str()) <= 0.0)
+			{
+				return;
+			}
+
+			FILE* file = nullptr;
+			if (fopen_s(&file, keep.c_str(), "w") == 0 && file)
+			{
+				fputs(was.c_str(), file);
+				fclose(file);
+			}
+
+			theater_command("snd_volume 0");
+			silent = true;
+		}
+		else if (!quiet && silent)
+		{
+			theater_command(("snd_volume " + was).c_str());
+			DeleteFileA(keep.c_str());
+			silent = false;
+		}
 	}
 }
 
@@ -2240,6 +2469,8 @@ bool look_load_file(const char* path)
 void look_frame(const TheaterState& state)
 {
 	focus_frame(state);
+	sound_follows_pause(state);
+	reshade_link_frame();
 	// the settings with keyframes: what the keyframes make of this frame's time
 	g_now_ms = state.position_ms;
 	if (state.playing)
@@ -2256,6 +2487,10 @@ void look_frame(const TheaterState& state)
 				}
 
 				sun_set_color(v);
+			}
+			else if (track.id == "reshade_focus")
+			{
+				g_rs_distance = v[0] < 1.0f ? 1.0f : v[0];
 			}
 			else if (track.id == "sun_brightness")
 			{
@@ -2396,4 +2631,7 @@ void look_frame(const TheaterState& state)
 			theater_command("set s1iris_hud_hide \"\"");
 		}
 	}
+
+	// the focus for ReShade: the pinned one's distance, else the one set (or keyframed)
+	reshade_link_send(g_rs_on && state.playing, g_rs_effect, g_rs_name, (g_rs_pinned > 0.0f ? g_rs_pinned : g_rs_distance) * g_rs_scale);
 }

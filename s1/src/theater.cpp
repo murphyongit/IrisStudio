@@ -38,7 +38,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.83 (recorder, playback, IrisStudio's editor)";
+	constexpr char VERSION[] = "0.84 (recorder, playback, IrisStudio's editor)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -1855,8 +1855,62 @@ namespace
 		memset(value, 0, 8);
 	}
 
+	// (0.84) What the HUD was last told of these values. The game tells it of a value when a snapshot's differs
+	// from the one before; after a jump in a recording "the one before" is no longer what the HUD last heard (a
+	// drone's screen was on, the recording went back to before the drone: both snapshots say off, nothing is
+	// told, the drone's screen stays). So in a playback the game compares with what the HUD was last told.
+	constexpr size_t OMNVARS_MOST = 512;
+	std::uint8_t g_hud_client_values[OMNVARS_MOST * 8], g_hud_game_values[154 * 8];
+	std::uint64_t g_hud_values_for = ~0ull;
+
+	void compare_with_told(const int client, std::uint8_t* before, std::uint8_t* now)
+	{
+		const size_t per_client = (std::min)(static_cast<size_t>(*reinterpret_cast<unsigned*>(OMNVAR_CLIENT_COUNT)), OMNVARS_MOST) * 8;
+		const size_t game = (std::min)(static_cast<size_t>(*reinterpret_cast<unsigned*>(OMNVAR_GAME_COUNT)), sizeof(g_hud_game_values) / 8) * 8;
+		static std::uint8_t kept_client[OMNVARS_MOST * 8], kept_game[154 * 8];
+		const bool told = g_hud_values_for == g_playback_number && client == 0;
+		if (told)
+		{
+			memcpy(kept_client, before + SNAP_CLIENT_OMNVARS, per_client);
+			memcpy(kept_game, before + SNAP_GAME_OMNVARS, game);
+			memcpy(before + SNAP_CLIENT_OMNVARS, g_hud_client_values, per_client);
+			memcpy(before + SNAP_GAME_OMNVARS, g_hud_game_values, game);
+		}
+
+		g_original_omnvars_changed(client, before, now);
+		if (told)
+		{
+			memcpy(before + SNAP_CLIENT_OMNVARS, kept_client, per_client);
+			memcpy(before + SNAP_GAME_OMNVARS, kept_game, game);
+		}
+
+		if (client == 0)
+		{
+			memcpy(g_hud_client_values, now + SNAP_CLIENT_OMNVARS, per_client);
+			memcpy(g_hud_game_values, now + SNAP_GAME_OMNVARS, game);
+			g_hud_values_for = g_playback_number;
+		}
+	}
+
 	void hooked_omnvars_changed(const int client, std::uint8_t* before, std::uint8_t* now)
 	{
+		if (g_play == Play::Playing && before && now && before != now)
+		{
+			clear_options_menu(before);
+			clear_options_menu(now);
+			const int index = options_menu_index();
+			if (index >= 0)
+			{
+				if (void* stored = reinterpret_cast<void* (*)(int, int)>(OMNVAR_STORED)(client, index))
+				{
+					memset(stored, 0, 8);
+				}
+			}
+
+			compare_with_told(client, before, now);
+			return;
+		}
+
 		if (g_play != Play::Idle)
 		{
 			clear_options_menu(before);
