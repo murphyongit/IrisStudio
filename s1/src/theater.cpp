@@ -38,7 +38,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.85 (recorder, playback, IrisStudio's editor)";
+	constexpr char VERSION[] = "0.86 (recorder, playback, IrisStudio's editor)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -1724,6 +1724,14 @@ namespace
 	// Playback: the recorded player's position of a time, where the game asks for what it predicted.
 	bool hooked_get_predicted(unsigned char* cl, const int server_time, unsigned char* ps)
 	{
+		// (the player's state as the game hands it in, before anything is written into it: see "a scorestreak's view")
+		static unsigned char handed_in[PLAYER_STATE_SIZE];
+		const bool have_handed_in = ps && g_play == Play::Playing;
+		if (have_handed_in)
+		{
+			memcpy(handed_in, ps, PLAYER_STATE_SIZE);
+		}
+
 		const bool found = g_original_get_predicted(cl, server_time, ps);
 		if (g_play == Play::Idle && ps)
 		{
@@ -1794,6 +1802,29 @@ namespace
 						predicted.viewangles[i] += turn * t;
 					}
 				}
+			}
+		}
+
+		{
+			// (0.86) A scorestreak flown or aimed by the player (the laser from orbit, a drone, a missile): the
+			// server puts the view at the streak's own place, far from where the player's own body was predicted
+			// to be, and the body's place given here threw the view "to an arbitrary place in the map". Where the
+			// two are far apart the game's own is left as it is.
+			float served[3];
+			memcpy(served, handed_in + PS_ORIGIN, sizeof(served));
+			const float d[3] = {served[0] - predicted.origin[0], served[1] - predicted.origin[1], served[2] - predicted.origin[2]};
+			if (have_handed_in && std::isfinite(d[0] + d[1] + d[2]) && d[0] * d[0] + d[1] * d[1] + d[2] * d[2] > 400.0f * 400.0f)
+			{
+				static unsigned told = 0;
+				if (told < 6)
+				{
+					++told;
+					log_line("playback: at %.1f s the view is %.0f units from the player's own predicted place: left to the game (a scorestreak's view)",
+					         g_clock.load() / 1000.0, std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]));
+				}
+
+				memcpy(ps, handed_in, PLAYER_STATE_SIZE);
+				return false;
 			}
 		}
 

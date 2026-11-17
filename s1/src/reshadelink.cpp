@@ -96,7 +96,10 @@ void reshade_link_frame()
 	g_tried_at = GetTickCount64();
 	++g_tries;
 	g_found = reshade::internal::get_reshade_module_handle() != nullptr;
-	if (g_found && reshade::register_addon(nullptr))
+	// (0.85 gave no module: the header does not find the caller's own, and ReShade 6.8 refused without a word)
+	HMODULE own = nullptr;
+	GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, reinterpret_cast<LPCWSTR>(&reshade_link_frame), &own);
+	if (g_found && own && reshade::register_addon(own))
 	{
 		g_registered = true;
 		reshade::register_event<reshade::addon_event::reshade_begin_effects>(&on_begin_effects);

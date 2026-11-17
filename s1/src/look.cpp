@@ -2211,7 +2211,7 @@ namespace
 		{
 			ImGui::PushTextWrapPos(0.0f);
 			ImGui::TextDisabled(status == 0 ? "No ReShade found in the game."
-			                                : "ReShade is there, but it would not let the editor in. It needs ReShade 6.0 or newer, the download \"with full add-on support\".");
+			                                : "ReShade is there, but it would not let the editor in (its reason, if it gave one, is in ReShade.log in the game's folder).");
 			ImGui::PopTextWrapPos();
 			return;
 		}

@@ -644,3 +644,18 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
   "server steps skipped"); the log's only "entity 2048" list holds viewmodel_base_viewhands + vm_exo_arm_launcher_r (hands; the gun is likely another
   DObj, 2049?). 0.85 logs lists for handles >= 2048 after jumps. Ideas: the client game's cached view weapon equals the current one after our restart so
   the gun's DObj is never made again (find ChangeViewmodelDobj / the cache and clear it on go_back_to); or the vm_ model is unloaded.
+
+## 0.86
+- ReShade refused the add-on in 0.84/0.85: reshade.hpp's get_current_module_handle(nullptr) just returns nullptr (it does not find the caller), so
+  ReShadeRegisterAddon got a null module and ReShade 6.8.0.2158 returned false without a log line. Now the DLL's own handle is passed
+  (GetModuleHandleExW from an address). The user's dxgi.dll does export ReShadeRegisterAddon and has the "limited add-on functionality" string (the
+  standard build); externally registered add-ons should still be taken. If it still fails, ReShade.log now says why.
+- UAV "snaps between path points": a prop's heading now turns evenly between the middles of neighbouring stretches (actors.cpp along(): CORNER =
+  half the stretch for props; people keep 28 units).
+- "Entering a scorestreak snaps my view to an arbitrary place" (the recorded player's own Vulcan etc.): hooked_get_predicted wrote the recorded
+  PREDICTED origin (the body's) over the player state the game handed in (the interpolated snapshot's, at the streak's place). Now if those are more
+  than 400 units apart the handed-in state is put back and nothing is given (logged the first 6 times). If first-person views go wrong in ordinary
+  play, the handed-in state is not what was assumed: remove this.
+- First-person gun: the log's first-person lists (entity 2048) DO include the gun (vm_bal27_base_loot_black + sights; vm_m1911_op01; vm_dear_base_loot)
+  and sometimes only the arms + vm_exo_arm_launcher_r (seen at 49.4 s after "back to 42.4 s", and vm_exo_launch_pad at 50.8 s: may be a legitimate
+  no-gun moment). Still no case tied to the user's complaint: need the recording's time where the gun was gone.

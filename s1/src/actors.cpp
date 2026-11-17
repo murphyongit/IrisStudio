@@ -528,7 +528,6 @@ namespace
 			from = to;
 		}
 
-		const float CORNER = 28.0f;
 		float left = distance < 0.0f ? 0.0f : distance;
 		from = actor.origin;
 		for (int i = 0; i < count; ++i)
@@ -542,6 +541,9 @@ namespace
 					out[k] = from[k] + (to[k] - from[k]) * t;
 				}
 
+				// (a person turns a corner within a step; a prop, a drone or a plane, turns all the way along: its
+				// heading goes evenly from one stretch's to the next's between their middles, with no snap)
+				const float CORNER = actor.prop && lengths[i] * 0.5f > 28.0f ? lengths[i] * 0.5f : 28.0f;
 				float h = headings[i];
 				const float to_end = lengths[i] - left;
 				if (i + 1 < count && to_end < CORNER)
