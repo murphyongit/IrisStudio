@@ -45,6 +45,9 @@ namespace
 	bool g_listed = false;
 	size_t g_stride = 0;
 	int g_noted = 0, g_noted_entries = 0;
+	// (0.87) whether the first-person view's models, as the game last made them, had a gun among them
+	std::atomic<bool> g_view_has_gun{true};
+	std::atomic<ULONGLONG> g_view_made_at{0};
 	std::map<int, unsigned> g_changed;                             // per entity: how many changes were asked for
 
 	// ---- the game's own gear: its tables say which model and which skin (a material in place of the
@@ -2144,6 +2147,18 @@ namespace
 				whose = body_of(handle, names);
 			}
 
+			if (handle == 2048 && !names.empty())
+			{
+				bool gun = false;
+				for (const std::string& name : names)
+				{
+					gun = gun || (name.compare(0, 3, "vm_") == 0 && name.compare(0, 7, "vm_exo_") != 0);
+				}
+
+				g_view_has_gun = gun;
+				g_view_made_at = GetTickCount64();
+			}
+
 			if (!names.empty())
 			{
 				// (what else a list's entry holds, for the weapons' camouflage: noted for the first person's
@@ -3264,6 +3279,35 @@ void models_game_frame(const TheaterState& state)
 		if (was_jumping && !state.jumping && noted < 12)
 		{
 			note_at = GetTickCount64() + 2000;
+		}
+
+		// (0.87) The first-person gun gone after a jump far ahead and back: the game made the first-person view
+		// while the gun's model, unloaded since, was still being loaded again, left the gun out, and never made
+		// the view again. So two seconds after a going back has ended, a view with no gun in it is made again by
+		// going back once more to the same time (the model is loaded by then). Once per eight seconds at most: a
+		// moment with truly no gun in hand (dead, in a scorestreak) costs one more second, not a loop.
+		static std::uint32_t seen_rewinds = 0;
+		static ULONGLONG gun_check_at = 0, last_remake = 0;
+		if (was_jumping && !state.jumping && state.rewinds != seen_rewinds)
+		{
+			seen_rewinds = state.rewinds;
+			gun_check_at = GetTickCount64() + 2000;
+		}
+
+		if (gun_check_at && GetTickCount64() > gun_check_at && !state.jumping)
+		{
+			gun_check_at = 0;
+			const bool gun = g_view_has_gun;
+			char text[160];
+			snprintf(text, sizeof(text), "models: two seconds after going back (now %.1f s): the first-person view %s", state.position_ms / 1000.0,
+			         gun ? "has its gun" : "has NO gun");
+			theater_log(text);
+			if (!gun && state.playing && GetTickCount64() - last_remake > 8000)
+			{
+				last_remake = GetTickCount64();
+				theater_log("models: the recording is gone back in once more for the gun");
+				theater_rebuild();
+			}
 		}
 
 		was_jumping = state.jumping;

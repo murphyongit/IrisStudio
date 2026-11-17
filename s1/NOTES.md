@@ -659,3 +659,12 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
 - First-person gun: the log's first-person lists (entity 2048) DO include the gun (vm_bal27_base_loot_black + sights; vm_m1911_op01; vm_dear_base_loot)
   and sometimes only the arms + vm_exo_arm_launcher_r (seen at 49.4 s after "back to 42.4 s", and vm_exo_launch_pad at 50.8 s: may be a legitimate
   no-gun moment). Still no case tied to the user's complaint: need the recording's time where the gun was gone.
+
+## 0.87
+- User: the first-person gun goes when skipping FAR AHEAD and then BACK (not at one time). The 0.85 log has exactly that: 11:14:00 far ahead (240 s),
+  11:14:03 back to 42.4 s -> the first-person list (entity 2048) was arms + vm_exo_arm_launcher_r, NO gun; the next going back (34.4 s) had
+  vm_dear_base_loot + sights. Reading: far ahead the early weapon's model is unloaded; back, the game makes the view while the model is still being
+  loaded again, leaves the gun out and never remakes the view; any later going back finds it loaded.
+- Fix tried (models.cpp, models_game_frame): the DObj hook notes whether list 2048 has a "vm_" model other than "vm_exo_*"; 2 s after a going back
+  ends, if not, theater_rebuild() once (8 s apart at most). Logged both ways. If the log says "has its gun" while the user sees none, the model is
+  there but not drawn: then look at the unloaded XModel instead.
