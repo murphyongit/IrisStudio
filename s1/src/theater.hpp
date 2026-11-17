@@ -242,6 +242,12 @@ int actors_duplicate(int index);
 bool camera_ground_under(const float at[3], float out[3]);
 // (the game's thread) A light for a moment (a shot's flash): from a time of the recording, for so long, fading.
 void scene_flash_light(const float origin[3], const float color[3], float radius, float intensity, double from_ms, double length_ms);
+// (the game's thread) The same at an entity's gun (its "tag_flash"; else at its chest): where that is, is found
+// when the scene's lights are added, the entity's model being in its pose then.
+void scene_flash_on_entity(int entity, const float color[3], float radius, float intensity, double length_ms);
+// How many shots of the match's players the game has told of, how many were lit, how many of those at the gun.
+void scene_shots_status(unsigned* seen, unsigned* lit, unsigned* at_gun);
+void scene_shot_seen();
 // The camera held by hand: how much it sways (0: not at all) and how fast.
 void camera_shake(float* amount, float* speed);
 void camera_set_shake(float amount, float speed);
@@ -330,6 +336,8 @@ struct StormState
 	bool shots_light = false;
 	float shots_reach = 420.0f;
 	float shots_color[3] = {1.0f, 0.72f, 0.42f};
+	// (0.81) how bright (a light of the editor's own is 256 to begin with; the game's own lights are in the thousands)
+	float shots_bright = 1500.0f;
 };
 StormState storm_state();
 void storm_set(const StormState& storm);

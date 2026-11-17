@@ -756,6 +756,65 @@ namespace
 		double from, until;
 	};
 	Flash g_flashes[12] = {};
+	// Shots of the match's players, waiting for the place of their guns (see scene_flash_on_entity).
+	struct Shot
+	{
+		bool waiting = false;
+		int entity = 0;
+		float color[3] = {};
+		float radius = 0.0f, intensity = 0.0f;
+		double length = 0.0;
+	};
+	Shot g_shots[16];
+	std::atomic<unsigned> g_shots_seen{0}, g_shots_lit{0}, g_shots_at_gun{0};
+
+	void light_shots(const double now)
+	{
+		for (Shot& shot : g_shots)
+		{
+			if (!shot.waiting)
+			{
+				continue;
+			}
+
+			shot.waiting = false;
+			float feet[3] = {}, gun[3] = {};
+			const bool stands = actors_entity_origin(shot.entity, feet);
+			bool at_gun = actors_entity_bone(shot.entity, "tag_flash", gun);
+			if (at_gun && stands)
+			{
+				// (a place far from the player is not its gun: a model not in its pose)
+				const float d[3] = {gun[0] - feet[0], gun[1] - feet[1], gun[2] - feet[2]};
+				at_gun = std::isfinite(gun[0]) && std::isfinite(gun[1]) && std::isfinite(gun[2]) && d[0] * d[0] + d[1] * d[1] + d[2] * d[2] < 200.0f * 200.0f;
+			}
+
+			if (!at_gun && !stands)
+			{
+				continue;
+			}
+
+			float at[3] = {feet[0], feet[1], feet[2] + 50.0f};
+			if (at_gun)
+			{
+				memcpy(at, gun, sizeof(at));
+			}
+
+			scene_flash_light(at, shot.color, shot.radius, shot.intensity, now, shot.length);
+			const unsigned lit = ++g_shots_lit;
+			if (at_gun)
+			{
+				++g_shots_at_gun;
+			}
+
+			if (lit <= 6)
+			{
+				char text[320];
+				snprintf(text, sizeof(text), "shots: entity %d lit at %.0f %.0f %.0f (%s; it stands at %.0f %.0f %.0f), reach %.0f, brightness %.0f, at %.0f ms", shot.entity,
+				         at[0], at[1], at[2], at_gun ? "its gun" : "no gun found: its chest", feet[0], feet[1], feet[2], shot.radius, shot.intensity, now);
+				theater_log(text);
+			}
+		}
+	}
 	std::atomic<float> g_shake_amount{0.0f}, g_shake_speed{1.0f};
 	double g_shake_time = 0.0;
 
@@ -768,6 +827,7 @@ namespace
 
 		{
 			const double now = theater_state().position_exact;
+			light_shots(now);
 			__try
 			{
 				static const float up[3] = {0.0f, 0.0f, 1.0f};
@@ -1535,4 +1595,41 @@ void camera_set_shake(const float amount, const float speed)
 {
 	g_shake_amount = amount;
 	g_shake_speed = speed;
+}
+
+void scene_flash_on_entity(const int entity, const float color[3], const float radius, const float intensity, const double length_ms)
+{
+	Shot* free = &g_shots[0];
+	for (Shot& shot : g_shots)
+	{
+		if (shot.waiting && shot.entity == entity)
+		{
+			// (two shots of one player's in one frame: one light)
+			return;
+		}
+
+		if (!shot.waiting)
+		{
+			free = &shot;
+		}
+	}
+
+	free->waiting = true;
+	free->entity = entity;
+	memcpy(free->color, color, sizeof(free->color));
+	free->radius = radius;
+	free->intensity = intensity;
+	free->length = length_ms;
+}
+
+void scene_shot_seen()
+{
+	++g_shots_seen;
+}
+
+void scene_shots_status(unsigned* seen, unsigned* lit, unsigned* at_gun)
+{
+	*seen = g_shots_seen.load();
+	*lit = g_shots_lit.load();
+	*at_gun = g_shots_at_gun.load();
 }

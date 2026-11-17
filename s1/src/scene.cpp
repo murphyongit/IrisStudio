@@ -484,32 +484,27 @@ namespace
 
 	void note_shot(const unsigned char* entity)
 	{
+		static unsigned told = 0;
+		scene_shot_seen();
 		const StormState scene = storm_state();
-		if (!scene.shots_light || scene.shots_reach <= 0.0f || !entity || IsBadReadPtr(entity + 0x144, 2))
-		{
-			return;
-		}
-
 		const TheaterState state = theater_state();
-		if (!state.playing || !state.caught_up || state.jumping)
+		const bool readable = entity && !IsBadReadPtr(entity + 0x144, 2);
+		const int number = readable ? *reinterpret_cast<const std::int16_t*>(entity + 0x144) : -1;
+		if (told < 6)
+		{
+			++told;
+			char text[240];
+			snprintf(text, sizeof(text), "shots: the game tells of a shot: entity %d (%p); lighting %s; playing %d, caught up %d, jumping %d", number,
+			         static_cast<const void*>(entity), scene.shots_light ? "on" : "off", state.playing ? 1 : 0, state.caught_up ? 1 : 0, state.jumping ? 1 : 0);
+			theater_log(text);
+		}
+
+		if (!scene.shots_light || scene.shots_reach <= 0.0f || number < 0 || !state.playing || !state.caught_up || state.jumping)
 		{
 			return;
 		}
 
-		const int number = *reinterpret_cast<const std::int16_t*>(entity + 0x144);
-		float at[3];
-		if (!actors_entity_bone(number, "tag_flash", at))
-		{
-			// (the player being watched in first person has no gun of the kind others see: from about its chest)
-			if (!actors_entity_origin(number, at))
-			{
-				return;
-			}
-
-			at[2] += 50.0f;
-		}
-
-		scene_flash_light(at, scene.shots_color, scene.shots_reach, 900.0f, state.position_exact, 60.0);
+		scene_flash_on_entity(number, scene.shots_color, scene.shots_reach, scene.shots_bright > 0.0f ? scene.shots_bright : 1500.0f, 80.0);
 	}
 
 	void hooked_fire(const std::uint64_t a, const std::uint64_t b, const std::uint64_t c, const std::uint64_t d, const std::uint64_t e, const std::uint64_t f,

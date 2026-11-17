@@ -575,3 +575,10 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
   The model's real name is NOT known yet (guessed by words): read theater\models_list.txt once the user has run 0.80.
 - "Copy the nearest player" (Scene > Actors): an actor at that player's origin and yaw (centity angles +0x44, plain floats), dressed as it.
 - Install note: device_commit_files can send an OLDER copy of an outputs file that was overwritten under the same name moments before; copy the build to a new name before committing, and always cmp after.
+
+## 0.81
+- User on 0.80: the players' gunfire lights nothing. The log said the hook on CG_FireWeapon went in, but nothing told whether it is called or
+  where the light went. 0.81: the hook only queues (entity number); camera.cpp's add_lights (the refdef hook, where players' bones are known to
+  be readable) finds tag_flash (rejected if > 200 units from the entity's origin; then origin + 50), lights for 80 ms at StormState.shots_bright
+  (1500, new, at the end). The log tells of the first 6 calls and the first 6 lights; Scene > Gunfire shows "Shots the game has told of / Lit /
+  at the gun". If "told of" stays 0 in a firefight, CG_FireWeapon is not what remote players' shots go through: look at CG_EntityEvent's callers.
