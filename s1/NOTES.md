@@ -668,3 +668,21 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
 - Fix tried (models.cpp, models_game_frame): the DObj hook notes whether list 2048 has a "vm_" model other than "vm_exo_*"; 2 s after a going back
   ends, if not, theater_rebuild() once (8 s apart at most). Logged both ways. If the log says "has its gun" while the user sees none, the model is
   there but not drawn: then look at the unloaded XModel instead.
+
+## 0.88 (Nov 25)
+- Log of 0.87 in use: ReShade took the add-on ("registered"), and after 63 goings back the first-person view "has its gun" every time.
+- User: rotate "the player" on all axes (taken as: actors; they had facing only, props had tilt/roll -> actors now too; ASK whether the match's own
+  players were meant); thermal picture wrong in free camera; wants a thermal option; blood and other effects choppy when slowed; some effects show
+  nothing; an easy way to make bullet trails from an actor's gun to a picked point; trails stay on screen after rewinding.
+- Thermal: CG decides in 0x1401D4520(client) -> byte 0x141643E96 -> R_SetThermalView 0x1405D0560 and the "thermal"/"clut_thermal" vision. Inputs:
+  0x14013C2E0(ps) (off), ps flags (0x1414C175C) bit 8 (script: scorestreak thermal), 0x1401DE0C0(client, ps) (thermal scope up). thermal.cpp hooks the
+  first and the last: any camera but first person -> off (bit 8 cleared for the call); Look > Thermal vision: as in the match / never / always
+  (saved as "tone_thermal N").
+- Tracers: CG_SpawnTracer = 0x1405337B0(client, from, to, centity*, weapon, byte, int); TracerDef lookup 0x140533DB0(name); cgMedia: defaulttracer
+  0x1414A6AD0, grapplingrope AD8/AE0, material gfx_tracer_thermal AE8, thicktracer_enemy AF0, _friendly AF8, _self B00. Local entities: 0xC0 each,
+  alloc 0x1401A1840, ring head 0x14149C340 (+0 before, +8 after), free chain 0x14149C400, kind at +0x10 (0 = tracer), drawn by 0x1401A16E0 ->
+  0x140533670. Actor.tracer / tracer_aimed / tracer_to (at the END of Actor): each shot calls the spawn with weapon 0 (default tracer).
+- After a going back: actors_clear_tracers() unhooks kind-0 local entities; effects_sweep_newer() asks FX_KillEffectDefNewerThan for EVERY loaded
+  effect kind with the game's time at the new place, 44 a frame (the game takes 64 requests a frame), and the roll waits meanwhile (hud_flushing).
+- Choppy effects in slow motion: NOT fixed. Most likely the effects' flipbook pictures (a few frames each); the exe has no frame-blend for sprites
+  (only CONST_SRC_CODE_PARTICLE_CLOUD_TEXTURE_ATLAS_SETTINGS). Asked the user whether the motion or the picture inside stutters.

@@ -1681,6 +1681,19 @@ namespace
 					memcpy(walker.path[walker.path_count++], point, sizeof(walker.path[0]));
 					actors_set(g_actor_open, walker);
 				}
+
+				if (!listed[g_actor_open].prop)
+				{
+					snprintf(text, sizeof(text), ICON_BOLT "  Aim %s's tracers here", listed[g_actor_open].name);
+					if (ImGui::MenuItem(text))
+					{
+						Actor shooter = listed[g_actor_open];
+						shooter.tracer = true;
+						shooter.tracer_aimed = true;
+						memcpy(shooter.tracer_to, point, sizeof(shooter.tracer_to));
+						actors_set(g_actor_open, shooter);
+					}
+				}
 			}
 		}
 
@@ -2100,6 +2113,22 @@ namespace
 		}
 
 		ImGui::SetItemTooltip(actor.prop ? "Dropped straight down onto whatever is under it." : "It, and every point of its path, dropped straight down onto whatever is under them.");
+		if (!actor.prop)
+		{
+			// (0.88) an actor can be tilted and rolled as a prop can: lying down, upside down, leaning
+			row_label("Tilt and roll");
+			float lean[2] = {actor.pitch, actor.roll};
+			ImGui::SetNextItemWidth(ImGui::CalcItemWidth());
+			if (ImGui::DragFloat2("##actorTilt", lean, 0.5f, -360.0f, 360.0f, "%.0f"))
+			{
+				actor.pitch = lean[0];
+				actor.roll = lean[1];
+				changed = true;
+			}
+
+			ImGui::SetItemTooltip("Leaning forward or back, and to a side, in degrees: with \"Facing\" that is every way an actor can be turned.\n(Double click to type a number; 0 and 0 is upright.)");
+		}
+
 		if (actor.prop)
 		{
 			row_label("Model");
@@ -2347,6 +2376,32 @@ namespace
 			}
 
 			ImGui::SetItemTooltip("An effect played at the gun's ejection port at each shot (the empty shell flying out).");
+			row_label("Tracer with each shot");
+			changed = ImGui::Checkbox("##tracer", &actor.tracer) || changed;
+			ImGui::SetItemTooltip("The game's own tracer flies from the muzzle at each shot, as its bullets' do.\nStraight ahead of the gun, or at a place you pick: right click the place in the picture >\n\"Aim this actor's tracers here\" (or the button here: where the camera is now).");
+			if (actor.tracer)
+			{
+				ImGui::SameLine();
+				if (ImGui::Button("Aim at the camera's place"))
+				{
+					camera_view_origin(actor.tracer_to);
+					actor.tracer_aimed = true;
+					changed = true;
+				}
+
+				if (actor.tracer_aimed)
+				{
+					row_label("They fly to");
+					ImGui::SetNextItemWidth(ImGui::CalcItemWidth());
+					changed = ImGui::DragFloat3("##tracerTo", actor.tracer_to, 2.0f, 0.0f, 0.0f, "%.0f") || changed;
+					ImGui::SameLine();
+					if (ImGui::SmallButton("Straight ahead instead"))
+					{
+						actor.tracer_aimed = false;
+						changed = true;
+					}
+				}
+			}
 		}
 
 		ImGui::BeginDisabled(actor.event_count >= ACTOR_EVENTS_MAX);

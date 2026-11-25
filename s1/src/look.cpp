@@ -1195,6 +1195,11 @@ namespace
 			fprintf(file, "sun_direction %g %g\n", sun.pitch, sun.yaw);
 		}
 
+		if (thermal_mode() != 0)
+		{
+			fprintf(file, "tone_thermal %d\n", thermal_mode());
+		}
+
 		if (g_rs_effect[0] && g_rs_name[0])
 		{
 			fprintf(file, "reshade_focus %d %d %g %g %s %s\n", g_rs_on ? 1 : 0, g_rs_only ? 1 : 0, g_rs_scale, g_rs_distance, g_rs_effect, g_rs_name);
@@ -1388,6 +1393,7 @@ namespace
 		if (wanted(GROUP_TONE))
 		{
 			tone_bits = 0;
+			thermal_set_mode(0);
 		}
 
 		char line[2048];
@@ -1447,6 +1453,10 @@ namespace
 					strncpy_s(g_rs_effect, effect, _TRUNCATE);
 					strncpy_s(g_rs_name, name, _TRUNCATE);
 				}
+			}
+			else if (sscanf_s(line, "tone_thermal %d", &n) == 1)
+			{
+				thermal_set_mode(n);
 			}
 			else if (sscanf_s(line, "tone_value %d %f", &n, &a) == 2)
 			{
@@ -1939,6 +1949,25 @@ void look_draw_tab(const TheaterState& state)
 		// (the Exposure section comes after the Film's)
 		if (strcmp(section.label, "Models") == 0)
 		{
+			reset = false;
+			if (ui_section(ICON_SLIDERS, "Thermal vision", &reset, false))
+			{
+				static const char* const MODES[] = {"As in the match, in first person only", "Never", "Always (any camera)"};
+				int mode = thermal_mode();
+				ui_row_label("Thermal picture");
+				if (ImGui::Combo("##thermal", &mode, MODES, 3))
+				{
+					thermal_set_mode(mode);
+				}
+
+				ImGui::SetItemTooltip("The white-hot picture of a thermal scope. As in the match: when the recorded player looks down a thermal scope,\nand only while you watch through his eyes (not in the free camera or any other). Always: on in every camera.");
+			}
+
+			if (reset)
+			{
+				thermal_set_mode(0);
+			}
+
 			reset = false;
 			const bool tone_open = ui_section(ICON_SLIDERS, "Exposure", &reset, false);
 			if (tone_open)

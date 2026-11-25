@@ -980,6 +980,20 @@ namespace
 	}
 
 	// (the game's thread) What an actor does at a time, as the recording's time goes past it.
+	// The game's own tracer (CG_SpawnTracer, 0x1405337B0: the client, from, to, the entity that fires, its weapon,
+	// two more): a "local entity" that flies from the one place to the other as the game's bullets' do. With
+	// weapon 0 the game takes its default tracer. The entity is only looked at (its number, whose it is).
+	void spawn_tracer(const int handle, const float from[3], const float to[3])
+	{
+		__try
+		{
+			reinterpret_cast<void (*)(int, const float*, const float*, const void*, unsigned, unsigned, int)>(0x1405337B0)(0, from, to, entity_at(handle), 0, 0, 0);
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+		}
+	}
+
 	void happen(const Actor& actor, const ActorEvent& event, void* model, const Shown& shown, const double before, const double now)
 	{
 		if (!event.effect[0])
@@ -1039,6 +1053,18 @@ namespace
 			{
 				const float at[3] = {origin[0] + axis[0][0] * 14.0f, origin[1] + axis[0][1] * 14.0f, origin[2] + axis[0][2] * 14.0f};
 				scene_flash_light(at, actor.shot_light_color, actor.shot_light_reach, 15000.0f, now, 80.0);
+			}
+
+			if (actor.tracer)
+			{
+				const float from[3] = {origin[0] + axis[0][0] * 14.0f, origin[1] + axis[0][1] * 14.0f, origin[2] + axis[0][2] * 14.0f};
+				float to[3] = {from[0] + axis[0][0] * 6000.0f, from[1] + axis[0][1] * 6000.0f, from[2] + axis[0][2] * 6000.0f};
+				if (actor.tracer_aimed)
+				{
+					memcpy(to, actor.tracer_to, sizeof(to));
+				}
+
+				spawn_tracer(actor.handle, from, to);
 			}
 
 			float out_of[3] = {}, thrown[3][3] = {};
@@ -1742,7 +1768,7 @@ void actors_scene_frame(const TheaterState& state)
 		if (model && shown.any)
 		{
 			if ((!actor.prop && !animate(built, model, shown.weights, shown.times)) ||
-			    !pose(actor.handle, shown.origin, shown.yaw, actor.prop ? actor.pitch : 0.0f, actor.prop ? actor.roll : 0.0f) ||
+			    !pose(actor.handle, shown.origin, shown.yaw, actor.pitch, actor.roll) ||
 			    !draw(model, actor.handle, shown.origin))
 			{
 				say("actors: a fault drawing %s; it is left out until it is changed", actor.name);
@@ -2267,5 +2293,35 @@ bool actors_entity_yaw(const int handle, float* out)
 	__except (EXCEPTION_EXECUTE_HANDLER)
 	{
 		return false;
+	}
+}
+
+// The game's short-lived "local entities" (0xC0 bytes each; the ones in use in a ring from the head at
+// 0x14149C340: before at +0, after at +8; the free ones a chain from 0x14149C400 through +8; the kind at +0x10,
+// 0 a tracer). The tracers are unhooked from the ring and given back.
+void actors_clear_tracers()
+{
+	__try
+	{
+		auto* head = reinterpret_cast<unsigned char*>(0x14149C340);
+		auto** free_ones = reinterpret_cast<unsigned char**>(0x14149C400);
+		unsigned char* one = *reinterpret_cast<unsigned char**>(head + 8);
+		for (int guard = 0; one && one != head && guard < 4096; ++guard)
+		{
+			unsigned char* after = *reinterpret_cast<unsigned char**>(one + 8);
+			if (*reinterpret_cast<int*>(one + 0x10) == 0)
+			{
+				unsigned char* before = *reinterpret_cast<unsigned char**>(one);
+				*reinterpret_cast<unsigned char**>(before + 8) = after;
+				*reinterpret_cast<unsigned char**>(after) = before;
+				*reinterpret_cast<unsigned char**>(one + 8) = *free_ones;
+				*free_ones = one;
+			}
+
+			one = after;
+		}
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
 	}
 }

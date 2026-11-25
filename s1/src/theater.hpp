@@ -252,6 +252,10 @@ struct Actor
 	float shot_light_color[3] = {1.0f, 0.72f, 0.42f};
 	float shot_light_reach = 420.0f;
 	char shell_effect[96] = "";
+	// (0.88) a tracer with each shot (the game's own, from the gun's muzzle): straight ahead of the gun, or at a
+	// place that was picked
+	bool tracer = false, tracer_aimed = false;
+	float tracer_to[3] = {};
 };
 struct ActorNow
 {
@@ -313,6 +317,16 @@ bool deaths_get(int entity, char out[64]);
 void deaths_on_create(void* tree, int whose, int handle);
 bool actors_preview_bones(float out[ACTOR_BONES][3], bool has[ACTOR_BONES], float* fraction);
 void actors_release();
+// (the game's thread) The game's tracers in flight are taken away (a recording gone back in: they were of later).
+void actors_clear_tracers();
+// thermal.cpp: the scope's thermal picture. 0 as the game has it, but only in first person; 1 never; 2 always.
+void thermal_start();
+int thermal_mode();
+void thermal_set_mode(int mode);
+// effects.cpp (the game's thread): every effect begun after the game's time now is to go (asked over some
+// frames); true while that is still being asked.
+void effects_sweep_newer();
+bool effects_sweeping();
 void actors_scene_frame(const TheaterState& state);
 void models_status(char out[200]);
 void models_allow_loading(bool on);

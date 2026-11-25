@@ -149,6 +149,10 @@ namespace
 		int from;  // (effects of the kind begun at this time or later)
 	};
 	std::vector<Kill> g_kills;
+	// (0.88) every kind of effect, to be asked to drop what it began after a time (a recording gone back in:
+	// the smoke and trails of later stayed in the picture)
+	std::vector<void*> g_sweep;
+	int g_sweep_from = 0;
 	std::uint32_t g_rewinds = 0;
 	int g_settled_frames = 0, g_told = 0;
 	std::unordered_map<std::string, bool> g_described;
@@ -865,6 +869,13 @@ void effects_game_frame(const TheaterState& state)
 		}
 	}
 
+	// (the game takes 64 such requests a frame)
+	for (int swept = 0; !g_sweep.empty() && swept < 44; ++swept)
+	{
+		kill_newer(g_sweep.back(), g_sweep_from);
+		g_sweep.pop_back();
+	}
+
 	// 2. taken away: by kind, from the earliest time that has to go. Whatever else of ours is of that kind
 	// and began no earlier goes with it, and is begun again below (as of when it began, so it carries on).
 	int asked = 0;
@@ -983,4 +994,22 @@ bool effects_play_once(const char* name, const float origin[3], const float axis
 	}
 
 	return def && play(def, game_time(), origin, axis);
+}
+
+void effects_sweep_newer()
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	g_sweep.clear();
+	for (const auto& effect : g_loaded)
+	{
+		g_sweep.push_back(effect.second);
+	}
+
+	g_sweep_from = *reinterpret_cast<const int*>(CG_TIME);
+}
+
+bool effects_sweeping()
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	return !g_sweep.empty();
 }

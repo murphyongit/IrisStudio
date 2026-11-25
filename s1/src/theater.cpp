@@ -38,7 +38,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.87 (recorder, playback, IrisStudio's editor)";
+	constexpr char VERSION[] = "0.88 (recorder, playback, IrisStudio's editor)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -285,11 +285,13 @@ namespace
 	std::atomic<int> g_hud_flush_steps{0};
 	std::atomic<void*> g_hud_flush_root{nullptr};
 
+	std::atomic<bool> g_sweep_wanted{false}, g_sweep_now{false};
+
 	bool hud_flushing()
 	{
 		const ULONGLONG now = GetTickCount64();
 		const ULONGLONG until = g_hud_flush_until;
-		return now < until || (g_hud_flush_steps > 0 && now < until + HUD_FLUSH_MOST_MS);
+		return now < until || ((g_hud_flush_steps > 0 || g_sweep_now || effects_sweeping()) && now < until + HUD_FLUSH_MOST_MS);
 	}
 	bool g_caught_up = false;
 	// a recording asked for by name (the editor's list), and when it may start
@@ -933,6 +935,8 @@ namespace
 	{
 		++g_rewinds;
 		g_hud_rebuild_wanted = true;
+		g_sweep_wanted = true;
+		actors_clear_tracers();
 		// (the client game begins again: what the editor made in it is let go of first)
 		actors_release();
 		// (the kill feed's lines and the popups left from later in the recording, and those the messages given
@@ -1233,6 +1237,11 @@ namespace
 			{
 				g_hud_rebuild_now = true;
 			}
+
+			if (g_sweep_wanted.exchange(false))
+			{
+				g_sweep_now = true;
+			}
 		}
 
 		if (now - g_play_report > 5000)
@@ -1262,6 +1271,13 @@ namespace
 		play_step(main, frame_start);
 		LeaveCriticalSection(&g_play_lock);
 		// (the game's own thread, at a frame's start, outside the HUD's step)
+		if (main && frame_start && g_sweep_now.exchange(false))
+		{
+			// (0.88) what the game's effects and tracers began later in the recording is taken away
+			actors_clear_tracers();
+			effects_sweep_newer();
+		}
+
 		if (main && frame_start && g_hud_rebuild_now.exchange(false))
 		{
 			rebuild_hud();
@@ -2685,6 +2701,7 @@ namespace
 				passes_start();
 				effects_start();
 				tone_start();
+				thermal_start();
 				if (HANDLE thread = CreateThread(nullptr, 0, &keys, nullptr, 0, nullptr))
 				{
 					CloseHandle(thread);
