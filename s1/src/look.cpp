@@ -1969,6 +1969,27 @@ void look_draw_tab(const TheaterState& state)
 			}
 
 			reset = false;
+			if (ui_section(ICON_SLIDERS, "Slow motion", &reset, false))
+			{
+				bool smooth = anim_smooth_on();
+				ui_row_label("Smooth players' animation");
+				if (ImGui::Checkbox("##animSmooth", &smooth))
+				{
+					anim_smooth_set(smooth);
+				}
+
+				ImGui::SetItemTooltip("The game moves a player's animation on a whole millisecond at a time; at 0.1x and slower that shows as the player\njittering while gliding (the editor's actors do not). On: the editor moves it on by the part of a millisecond too.");
+				unsigned calls = 0, moved = 0;
+				anim_smooth_status(&calls, &moved);
+				ImGui::TextDisabled("Players' animation steps seen: %u.  Animations moved on by the editor: %u.", calls, moved);
+			}
+
+			if (reset)
+			{
+				anim_smooth_set(true);
+			}
+
+			reset = false;
 			const bool tone_open = ui_section(ICON_SLIDERS, "Exposure", &reset, false);
 			if (tone_open)
 			{

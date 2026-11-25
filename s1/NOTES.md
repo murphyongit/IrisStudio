@@ -707,3 +707,14 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
 - The whole-millisecond animation (see 0.89) is still the only measured cause; at 120+ fps a frame at 0.1x is 0.83 ms, so it applies there as well.
   Player animation here works on whole-ms timestamps (cg time at cg+0x6E9C8 minus the lerp frame's at +0x4C, times 0.001), not on a dt: giving it
   fractions needs the timestamps themselves widened, a bigger job.
+
+## 0.91
+- User: the jitter stays with thermal left to the game; frame rate 40-80; actors never jitter. So it is the whole-millisecond player animation.
+- animsmooth.cpp: hooks the player animation (0x140130C40 and 0x14000AE70: rcx inside the centity array -> entity; rdx the client's record; r8d
+  the frame's ms; both called only from the entity code at 0x140192720..). The tree of each entity is noted where models.cpp sees a DObj made
+  (anim_smooth_note_tree). After the game's step every info of the tree (walk: root at tree+8, first child +0xE, next sibling +0xC) is put forward
+  by pace * the clock's fraction, pace = (time - time before + turns) / step ms from the last step with ms > 0 (kept per info index with the
+  animation's number); before the next step the game's own times are put back if still as written. XAnimInfo 0x48: +0x12 anim, +0x28 time, +0x2C
+  old time, +0x30/+0x32 cycle counts, then goal time, goal weight, weight, rate (+0x40). Look > Slow motion: a switch and two counters.
+  UNTESTED. If "steps seen" counts but "moved on" stays 0: the entity or tree is not found (the log's first four "animation:" lines say what the
+  function was given).

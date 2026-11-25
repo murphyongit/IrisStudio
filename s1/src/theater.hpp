@@ -321,6 +321,12 @@ void actors_release();
 void actors_clear_tracers();
 // thermal.cpp: the scope's thermal picture. 0 as the game has it, but only in first person; 1 never; 2 always.
 void thermal_start();
+// animsmooth.cpp: the players' animation given the part of a millisecond in slow motion (so they do not jitter).
+void anim_smooth_start();
+void anim_smooth_note_tree(int handle, void* tree);
+bool anim_smooth_on();
+void anim_smooth_set(bool on);
+void anim_smooth_status(unsigned* calls, unsigned* moved);
 int thermal_mode();
 void thermal_set_mode(int mode);
 // effects.cpp (the game's thread): every effect begun after the game's time now is to go (asked over some

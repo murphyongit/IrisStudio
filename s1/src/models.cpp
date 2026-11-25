@@ -2317,6 +2317,7 @@ namespace
 		// only in a recording being played, never in a match being played)
 		if (tree && handle < 2048)
 		{
+			anim_smooth_note_tree(handle, tree);
 			const TheaterState playback = theater_state();
 			if (playback.playing || playback.starting)
 			{

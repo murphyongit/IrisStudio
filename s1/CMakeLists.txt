@@ -32,7 +32,7 @@ add_library(imgui STATIC
 target_include_directories(imgui PUBLIC ${imgui_SOURCE_DIR})
 
 add_library(s1iris SHARED src/theater.cpp src/ui.cpp src/look.cpp src/capture.cpp src/camera.cpp src/sun.cpp src/sky.cpp src/models.cpp src/effects.cpp src/passes.cpp
-    src/actors.cpp src/scene.cpp src/exposure.cpp src/reshadelink.cpp src/thermal.cpp src/hudkeep.cpp src/surfaces.cpp src/proxy_xinput.cpp src/fonts.rc)
+    src/actors.cpp src/scene.cpp src/exposure.cpp src/reshadelink.cpp src/thermal.cpp src/animsmooth.cpp src/hudkeep.cpp src/surfaces.cpp src/proxy_xinput.cpp src/fonts.rc)
 set_target_properties(s1iris PROPERTIES OUTPUT_NAME "XInput1_3" PREFIX "")
 target_compile_definitions(s1iris PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_include_directories(s1iris PRIVATE third_party/reshade)
