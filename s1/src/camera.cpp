@@ -12,6 +12,7 @@
 
 #include <MinHook.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdarg>
@@ -71,7 +72,8 @@ namespace
 	using get_fov_t = float (*)(int);
 	get_fov_t g_original_get_fov = nullptr;
 	std::atomic<float> g_game_fov{65.0f};
-	std::atomic<bool> g_body{true}, g_clean{true}, g_player_aim{false};
+	std::atomic<bool> g_body{true}, g_clean{true}, g_player_aim{false}, g_hide{false};
+	bool g_hide_set = false;
 	bool g_cleaned = false, g_was_draw2d = true, g_was_direction = true;
 	float g_was_pain = 0.55f;
 	bool g_body_set = false;
@@ -1048,7 +1050,15 @@ namespace
 		}
 
 		// the player's body, where it was asked for and the camera is away from the eyes
-		const bool body = state.playing && g_body && (overriding || mode == CameraMode::ThirdPerson);
+		// (0.93) "Hide the player": neither the body nor the arms and gun, while the camera is away from the eyes
+		const bool hidden = state.playing && g_hide && overriding;
+		if (hidden != g_hide_set)
+		{
+			g_hide_set = hidden;
+			theater_command(hidden ? "cg_drawGun 0" : "cg_drawGun 1");
+		}
+
+		const bool body = state.playing && g_body && !g_hide && (overriding || mode == CameraMode::ThirdPerson);
 		if (body != g_body_set)
 		{
 			g_body_set = body;
@@ -1245,6 +1255,7 @@ CameraState camera_state()
 	state.mode = static_cast<CameraMode>(g_mode.load());
 	state.speed = g_bone_wanted ? g_bone_speed.load() : g_speed.load();
 	state.body = g_body;
+	state.hide = g_hide;
 	state.clean = g_clean;
 	state.player_aim = g_player_aim;
 	std::lock_guard<std::mutex> lock(g_lock);
@@ -1406,6 +1417,49 @@ void camera_set_speed(const float speed)
 }
 void camera_add_point() { g_add_request = true; }
 void camera_set_body(const bool on) { g_body = on; }
+void camera_set_hide(const bool on) { g_hide = on; }
+
+bool camera_point_get(const int index, std::uint32_t* ms, float origin[3], float angles[3], float* fov)
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	if (index < 0 || index >= static_cast<int>(g_points.size()))
+	{
+		return false;
+	}
+
+	const Point& point = g_points[static_cast<size_t>(index)];
+	*ms = point.ms;
+	memcpy(origin, point.pose.origin, sizeof(point.pose.origin));
+	memcpy(angles, point.pose.angles, sizeof(point.pose.angles));
+	*fov = point.pose.fov;
+	return true;
+}
+
+void camera_point_set(const int index, const std::uint32_t ms, const float origin[3], const float angles[3], const float fov)
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	if (index < 0 || index >= static_cast<int>(g_points.size()))
+	{
+		return;
+	}
+
+	Point& point = g_points[static_cast<size_t>(index)];
+	point.ms = ms;
+	memcpy(point.pose.origin, origin, sizeof(point.pose.origin));
+	memcpy(point.pose.angles, angles, sizeof(point.pose.angles));
+	point.pose.fov = fov;
+	point.pose.has_axis = false;
+	std::stable_sort(g_points.begin(), g_points.end(), [](const Point& a, const Point& b) { return a.ms < b.ms; });
+}
+
+void camera_point_remove(const int index)
+{
+	std::lock_guard<std::mutex> lock(g_lock);
+	if (index >= 0 && index < static_cast<int>(g_points.size()))
+	{
+		g_points.erase(g_points.begin() + index);
+	}
+}
 
 void camera_playback_ended()
 {
@@ -1413,6 +1467,12 @@ void camera_playback_ended()
 	{
 		g_body_set = false;
 		theater_command("camera_thirdPerson 0");
+	}
+
+	if (g_hide_set)
+	{
+		g_hide_set = false;
+		theater_command("cg_drawGun 1");
 	}
 
 	// (the HUD and the hit effects a clean outside view turned off: the game's own again)

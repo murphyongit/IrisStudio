@@ -41,10 +41,20 @@ namespace
 		std::uint16_t info;
 		float real, wrote;
 	};
+	// (0.93) The same for the client's own record (0xCC0 bytes each from 0x141620568; the animation function's
+	// second argument): its last 0x260 bytes hold what the function moves on by the frame's whole milliseconds
+	// besides the tree: the way the legs and the chest face as they swing round after the aim, among others.
+	// A fast turn of the mouse is 0.2 of a degree a millisecond: the body turned in such steps while it glided.
+	// Every number there that is an ordinary float and changed a little over a whole step is put forward by
+	// the part of a millisecond at that pace, and put back before the game's next step.
+	constexpr std::uintptr_t CLIENTS = 0x141620568;
+	constexpr size_t CLIENT_SIZE = 0xCC0, RECORD_FROM = 0xA60, RECORD_FLOATS = (CLIENT_SIZE - RECORD_FROM) / 4;
 	struct Slot
 	{
 		int entity = -1, count = 0;
 		Moved moved[64];
+		bool record_moved = false;
+		float pace[RECORD_FLOATS] = {}, real[RECORD_FLOATS] = {}, wrote[RECORD_FLOATS] = {};
 	};
 	Slot g_slots[64];
 	unsigned g_told = 0, g_calls = 0, g_moved = 0;
@@ -151,15 +161,85 @@ namespace
 		}
 	}
 
+	bool ordinary(const float value) { return std::isfinite(value) && std::fabs(value) > 1.0e-4f && std::fabs(value) < 1.0e6f; }
+
+	void record_back(Slot* slot, float* record)
+	{
+		__try
+		{
+			for (size_t i = 0; i < RECORD_FLOATS; ++i)
+			{
+				if (slot->pace[i] != 0.0f && memcmp(&record[i], &slot->wrote[i], sizeof(float)) == 0)
+				{
+					record[i] = slot->real[i];
+				}
+			}
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+		}
+
+		slot->record_moved = false;
+	}
+
+	void record_forward(Slot* slot, float* record, const float* was, const int step_ms, const float part)
+	{
+		__try
+		{
+			for (size_t i = 0; i < RECORD_FLOATS; ++i)
+			{
+				const float now = record[i];
+				if (step_ms > 0)
+				{
+					const float went = now - was[i];
+					slot->pace[i] = ordinary(now) && ordinary(was[i]) && went != 0.0f && std::fabs(went) < 3.0f * static_cast<float>(step_ms) ? went / static_cast<float>(step_ms) : 0.0f;
+				}
+				else if (memcmp(&now, &was[i], sizeof(float)) != 0)
+				{
+					// (it changed with no time gone by: not a thing that goes with time)
+					slot->pace[i] = 0.0f;
+				}
+
+				if (slot->pace[i] != 0.0f && ordinary(now))
+				{
+					slot->real[i] = now;
+					slot->wrote[i] = now + slot->pace[i] * part;
+					record[i] = slot->wrote[i];
+					slot->record_moved = true;
+					++g_moved;
+				}
+				else
+				{
+					slot->pace[i] = 0.0f;
+				}
+			}
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+		}
+	}
+
 	std::uint64_t run(const anim_t original, const std::uint64_t a, const std::uint64_t b, const std::uint64_t c, const std::uint64_t d)
 	{
 		const int entity = a >= CG_ENTITIES && a < CG_ENTITIES + 2048 * CENTITY_SIZE ? static_cast<int>((a - CG_ENTITIES) / CENTITY_SIZE) : -1;
+		float* record = b >= CLIENTS && b < CLIENTS + 64 * CLIENT_SIZE && (b - CLIENTS) % CLIENT_SIZE == 0 ? reinterpret_cast<float*>(b + RECORD_FROM) : nullptr;
+		float was[RECORD_FLOATS];
 		if (Slot* before = entity >= 0 ? slot_of(entity, false) : nullptr)
 		{
 			if (before->count)
 			{
 				put_back(before);
 			}
+
+			if (record && before->record_moved)
+			{
+				record_back(before, record);
+			}
+		}
+
+		if (record)
+		{
+			memcpy(was, record, sizeof(was));
 		}
 
 		const std::uint64_t result = original(a, b, c, d);
@@ -183,6 +263,10 @@ namespace
 				const float part = static_cast<float>(exact - std::floor(exact));
 				const int step_ms = static_cast<int>(static_cast<std::int32_t>(c));
 				put_forward(tree, step_ms < 0 || step_ms > 500 ? 0 : step_ms, part, slot);
+				if (record)
+				{
+					record_forward(slot, record, was, step_ms < 0 || step_ms > 500 ? 0 : step_ms, part);
+				}
 			}
 		}
 
@@ -212,6 +296,8 @@ void anim_smooth_note_tree(const int handle, void* tree)
 		g_trees[handle] = tree;
 	}
 }
+
+void* anim_smooth_tree(const int handle) { return handle >= 0 && handle < 2048 ? g_trees[handle] : nullptr; }
 
 bool anim_smooth_on() { return g_on; }
 

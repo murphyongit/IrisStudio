@@ -2325,3 +2325,64 @@ void actors_clear_tracers()
 	{
 	}
 }
+
+namespace
+{
+	// The leaf of a tree with the most weight (a "pb_" one, the body's, before any other): its animation's name.
+	bool heaviest(void* tree, void* anims, char out[64])
+	{
+		__try
+		{
+			const auto* infos = reinterpret_cast<const unsigned char*>(XANIM_INFOS);
+			unsigned stack[64];
+			int top = 0;
+			stack[top++] = *reinterpret_cast<const std::uint16_t*>(static_cast<const unsigned char*>(tree) + 8);
+			float best = 0.0f;
+			bool best_body = false;
+			out[0] = 0;
+			for (int guard = 0; top > 0 && guard < 400; ++guard)
+			{
+				const unsigned index = stack[--top];
+				if (!index)
+				{
+					continue;
+				}
+
+				const unsigned char* info = infos + index * INFO_SIZE;
+				const unsigned anim = *reinterpret_cast<const std::uint16_t*>(info + 0x12);
+				const unsigned char* entry = static_cast<const unsigned char*>(anims) + 8 + 16 * static_cast<size_t>(anim);
+				if (*reinterpret_cast<const std::uint16_t*>(entry) == 0)
+				{
+					const float weight = *reinterpret_cast<const float*>(info + 0x3C);
+					const char* name = asset_name(*reinterpret_cast<void* const*>(entry + 8));
+					const bool body = name && strncmp(name, "pb_", 3) == 0;
+					if (name && weight > 0.01f && ((body && !best_body) || (body == best_body && weight > best)))
+					{
+						best = weight;
+						best_body = body;
+						strncpy_s(out, 64, name, _TRUNCATE);
+					}
+				}
+
+				for (unsigned child = *reinterpret_cast<const std::uint16_t*>(info + 0xE); child && top < 64; child = *reinterpret_cast<const std::uint16_t*>(infos + child * INFO_SIZE + 0xC))
+				{
+					stack[top++] = child;
+				}
+			}
+
+			return out[0] != 0;
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			return false;
+		}
+	}
+}
+
+bool actors_entity_animation(const int entity, char out[64])
+{
+	out[0] = 0;
+	void* tree = anim_smooth_tree(entity);
+	void* anims = nullptr;
+	return tree && tree_anims(tree, &anims) && anims && heaviest(tree, anims, out);
+}

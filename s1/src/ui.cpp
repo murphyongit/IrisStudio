@@ -659,6 +659,46 @@ namespace
 		return index;
 	}
 
+	void use_animation(int actor_index, int clip_index, const char* animation);
+
+	// (0.93) An actor in the recorded player's own place: where he stands, facing as he does, dressed and armed as
+	// he is, in the animation his body mostly shows now. With "Hide the player" (Camera > Player) the actor is
+	// then the one to direct.
+	int add_actor_as_me()
+	{
+		const int me = *reinterpret_cast<const signed char*>(0x1414C66E0);
+		float at[3];
+		float yaw = 0.0f;
+		if (me < 0 || !actors_entity_origin(me, at))
+		{
+			ui_log("No copy made: the recorded player is not in the match right now.");
+			return -1;
+		}
+
+		actors_entity_yaw(me, &yaw);
+		const int index = actors_add(at, yaw, me, theater_state().position_ms);
+		if (index < 0)
+		{
+			ui_log("No copy made: all %d actors are in use.", ACTORS_MAX);
+			return -1;
+		}
+
+		g_actor_open = index;
+		g_actor_clip = 0;
+		char animation[64] = "";
+		if (actors_entity_animation(me, animation))
+		{
+			use_animation(index, 0, animation);
+			ui_log("A copy of your player, in the animation %s. To see only the copy: Camera > Player > Hide the player.", animation);
+		}
+		else
+		{
+			ui_log("A copy of your player (its animation could not be read: choose one for it). To see only the copy: Camera > Player > Hide the player.");
+		}
+
+		return index;
+	}
+
 	// The model in memory whose name has one of these words in it (the first word that finds any; of those it
 	// finds, the shortest name: the thing itself, not a piece of it).
 	bool model_like(const char* const* words, const int count, char out[64])
@@ -2677,6 +2717,14 @@ namespace
 			ImGui::PushTextWrapPos(0.0f);
 			ImGui::TextDisabled("Your own soldier in place of the arms and gun, in the Third person, Free and Dolly cameras.");
 			ImGui::PopTextWrapPos();
+			bool hide = camera.hide;
+			row_label("Hide the player");
+			if (ImGui::Checkbox("##hidePlayer", &hide))
+			{
+				camera_set_hide(hide);
+			}
+
+			ImGui::SetItemTooltip("In the Free, Dolly, Orbit and Bone cameras: nothing of your own player is drawn, neither the body nor the arms and gun.\n(For an actor that stands in for him: Scene > Actors > Copy my player.)");
 			bool clean = camera.clean;
 			row_label("Clean outside view");
 			if (ImGui::Checkbox("##clean", &clean))
@@ -2720,15 +2768,73 @@ namespace
 			}
 
 			ImGui::EndDisabled();
+			static int open_node = -1;
 			for (int i = 0; i < camera.points && i < 64; ++i)
 			{
 				char time[32], label[64];
 				format_time(time, sizeof(time), camera.point_ms[i]);
-				snprintf(label, sizeof(label), "Node %d      %s", i + 1, time);
-				if (ImGui::Selectable(label, false))
+				snprintf(label, sizeof(label), "Node %d      %s##node%d", i + 1, time, i);
+				ImGui::PushID(i);
+				if (ImGui::SmallButton(ICON_TRASH))
 				{
-					theater_seek(camera.point_ms[i]);
+					camera_point_remove(i);
+					open_node = -1;
+					ImGui::PopID();
+					break;
 				}
+
+				ImGui::SetItemTooltip("Take this node out of the path.");
+				ImGui::SameLine();
+				if (ImGui::Selectable(label, open_node == i))
+				{
+					// (a click goes to its time and opens it; a click on the open one closes it)
+					theater_seek(camera.point_ms[i]);
+					open_node = open_node == i ? -1 : i;
+				}
+
+				std::uint32_t ms = 0;
+				float origin[3], angles[3], fov = 0.0f;
+				if (open_node == i && camera_point_get(i, &ms, origin, angles, &fov))
+				{
+					bool edited = false;
+					float seconds = ms / 1000.0f;
+					ImGui::Indent();
+					row_label("Time");
+					if (ImGui::DragFloat("##nodeTime", &seconds, 0.01f, 0.0f, 36000.0f, "%.2f s"))
+					{
+						ms = static_cast<std::uint32_t>(seconds < 0.0f ? 0.0f : seconds * 1000.0f);
+						edited = true;
+					}
+
+					row_label("Place");
+					edited = ImGui::DragFloat3("##nodePlace", origin, 1.0f, 0.0f, 0.0f, "%.0f") || edited;
+					row_label("Pitch, yaw, roll");
+					edited = ImGui::DragFloat3("##nodeAngles", angles, 0.25f, 0.0f, 0.0f, "%.1f") || edited;
+					row_label("Field of view");
+					edited = ImGui::DragFloat("##nodeFov", &fov, 0.1f, 1.0f, 160.0f, "%.1f") || edited;
+					ImGui::BeginDisabled(camera.mode != CameraMode::Free);
+					if (ImGui::Button("Put this node where the camera is"))
+					{
+						camera_view_origin(origin);
+						edited = true;
+					}
+
+					ImGui::EndDisabled();
+					ImGui::SetItemTooltip("In the free camera: the node's place becomes the camera's (its angles are the numbers above).");
+					if (edited)
+					{
+						camera_point_set(i, ms, origin, angles, fov);
+						if (ms != camera.point_ms[i])
+						{
+							// (its place in the list may have changed with its time)
+							open_node = -1;
+						}
+					}
+
+					ImGui::Unindent();
+				}
+
+				ImGui::PopID();
 			}
 
 			ImGui::PushTextWrapPos(0.0f);
@@ -3484,6 +3590,13 @@ namespace
 				}
 
 				ImGui::SetItemTooltip("An actor exactly where the player nearest the camera stands right now, facing the same way and dressed the same:\na stand-in you can direct (animations, a path, shots) in that player's place.");
+				ImGui::SameLine();
+				if (ImGui::Button("Copy my player"))
+				{
+					add_actor_as_me();
+				}
+
+				ImGui::SetItemTooltip("An actor in your own (the recorded) player's place right now: same spot, facing, outfit, gun and animation.\nThen hide the real one (Camera > Player > Hide the player) and direct the copy: move it, change its animations.");
 				ImGui::SameLine();
 				ImGui::TextDisabled("%d of %d", actor_count, ACTORS_MAX);
 				if (actor_count == 0)

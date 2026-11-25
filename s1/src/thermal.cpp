@@ -27,6 +27,24 @@ namespace
 	// for the call under way: 0 the game's own answer, 1 off, 2 on
 	int g_now = 0;
 
+	// (0.93) "Is a scope up to the eye" (0x14018D150: the player's state, and one more; thirteen callers): with
+	// the camera away from the eyes it is not, whatever the recorded player does. The game dropped the player's
+	// body from the picture while he looked down a scope (it only draws the scope's picture then).
+	constexpr std::uintptr_t SCOPE_UP = 0x14018D150;
+	using scope_up_t = std::uint64_t (*)(void*, std::uint64_t);
+	scope_up_t g_original_scope_up = nullptr;
+
+	std::uint64_t hooked_scope_up(void* player, const std::uint64_t more)
+	{
+		const std::uint64_t is = g_original_scope_up(player, more);
+		if ((is & 0xFF) && theater_state().playing && camera_state().mode != CameraMode::FirstPerson)
+		{
+			return is & ~0xFFull;
+		}
+
+		return is;
+	}
+
 	bool hooked_scope(const int client, void* player)
 	{
 		return g_now == 1 ? false : g_now == 2 ? true : g_original_scope(client, player);
@@ -69,6 +87,9 @@ void thermal_start()
 	const bool ok = MH_CreateHook(reinterpret_cast<LPVOID>(CG_UPDATE_THERMAL), reinterpret_cast<LPVOID>(&hooked_update), reinterpret_cast<LPVOID*>(&g_original_update)) == MH_OK &&
 	                MH_CreateHook(reinterpret_cast<LPVOID>(CG_THERMAL_SCOPE_UP), reinterpret_cast<LPVOID>(&hooked_scope), reinterpret_cast<LPVOID*>(&g_original_scope)) == MH_OK &&
 	                MH_EnableHook(reinterpret_cast<LPVOID>(CG_UPDATE_THERMAL)) == MH_OK && MH_EnableHook(reinterpret_cast<LPVOID>(CG_THERMAL_SCOPE_UP)) == MH_OK;
+	const bool scope = MH_CreateHook(reinterpret_cast<LPVOID>(SCOPE_UP), reinterpret_cast<LPVOID>(&hooked_scope_up), reinterpret_cast<LPVOID*>(&g_original_scope_up)) == MH_OK &&
+	                   MH_EnableHook(reinterpret_cast<LPVOID>(SCOPE_UP)) == MH_OK;
+	theater_log(scope ? "scope: the game's \"scope up to the eye\" is hooked (not so outside first person)" : "scope: \"scope up to the eye\" could NOT be hooked");
 	theater_log(ok ? "thermal: the game's thermal picture is hooked (first person only; the Look tab can turn it on or off)" : "thermal: the game's thermal picture could NOT be hooked");
 }
 

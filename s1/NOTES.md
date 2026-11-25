@@ -729,3 +729,21 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
   than 45 degrees). Look > Slow motion > "Smooth the recorded aim" 0..200 ms; saved as "tone_aim_smooth N". The first-person view gets it too.
 - The 0.89 reading of his video (a step once per "millisecond") was wrong in its cause: the spacing fitted the 6 ms records at his real speed just as
   well. The players' whole-ms animation is real but small next to this; animsmooth.cpp stays (switchable).
+
+## 0.93
+- User: still choppy with the aim averaged over 200 ms. Wants: hide his player; turn his player into an actor copy (outfit, place, animation,
+  weapon); his player's model disappears while scoped; actors have no look direction; camera nodes edited and deleted one by one.
+- The choppiness: the per-millisecond step measured in his video (0.89) stands after all (events 0.2 s apart at about 0.004x = 1 ms; the 6 ms aim
+  records would be 1.4 s apart). Not the tree (0.91) and not the aim's target (0.92): most likely what the player animation function moves by the
+  frame's WHOLE milliseconds besides the tree, the legs'/chest's facing swinging round after the aim (0.2 degrees a ms in a fast turn). animsmooth.cpp
+  now also puts forward every ordinary float in the last 0x260 bytes of the client's record (clients at 0x141620568, 0xCC0 each; the function's
+  second argument) that changed a little over a whole step, by pace * the fraction, and puts the game's values back before its next step.
+  UNTESTED and by exclusion, not by sight. If still choppy: look at what else is computed from cg time as an int for the local player's body
+  (CG_Player after 0x140130C40; the entity's pose angles).
+- Scope: 0x14018D150(ps, x) "scope up to the eye" (13 callers; the thermal one calls it) is made false outside first person: the game dropped the
+  third-person body while scoped. thermal.cpp.
+- Camera > Player > "Hide the player": cg_drawGun 0 and no camera_thirdPerson while the camera is away from the eyes.
+- Scene > Actors > "Copy my player": cg client number (byte at 0x1414C66E0), actors_add there dressed as him (the outfit holds his gun), clip 0 =
+  the heaviest "pb_" leaf of his tree by name (XAnim_s: 8 bytes, then 16-byte entries: u16 children count, parts pointer at +8; info weight +0x3C).
+- Camera path: camera_point_get/set/remove; each node has a bin and opens to time, place, angles, field of view.
+- NOT done: actors' look direction (needs the game's control-tag angles for a DObj: not found yet).

@@ -133,6 +133,7 @@ struct CameraState
 	float fov = 80.0f, speed = 400.0f;
 	int points = 0;
 	bool body = false;
+	bool hide = false;        // (0.93) outside first person: nothing of the recorded player is drawn
 	bool clean = true;        // outside first person: none of the player's own HUD or hit effects
 	bool player_aim = false;  // the game's own workings keep the player's view (scorestreaks aim from the player)
 	std::uint32_t point_ms[64] = {};
@@ -327,6 +328,9 @@ void thermal_start();
 // animsmooth.cpp: the players' animation given the part of a millisecond in slow motion (so they do not jitter).
 void anim_smooth_start();
 void anim_smooth_note_tree(int handle, void* tree);
+void* anim_smooth_tree(int handle);
+// (the game's thread or the panel's: read only) The animation an entity's model mostly shows now, by its name.
+bool actors_entity_animation(int entity, char out[64]);
 bool anim_smooth_on();
 void anim_smooth_set(bool on);
 void anim_smooth_status(unsigned* calls, unsigned* moved);
@@ -375,6 +379,11 @@ void effects_remove(int index);
 bool effects_play_once(const char* name, const float origin[3], const float axis[3][3]);
 // The camera's path as bytes (for the saved scene and undo), and put back.
 int camera_points_export(unsigned char* out, int size);
+// (0.93) One point of the camera's path: read, changed (the path is put in order of time again), taken out.
+bool camera_point_get(int index, std::uint32_t* ms, float origin[3], float angles[3], float* fov);
+void camera_point_set(int index, std::uint32_t ms, const float origin[3], const float angles[3], float fov);
+void camera_point_remove(int index);
+void camera_set_hide(bool on);
 void camera_points_import(const unsigned char* bytes, int size);
 // scene.cpp: the saved scene (what the editor put into a recording, kept beside it), undo and redo, the storm.
 struct StormState
