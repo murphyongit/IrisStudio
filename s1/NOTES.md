@@ -698,3 +698,12 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
   the pose holds for several frames and then steps while the body slides: jitter. The actors use the exact clock.
   NOT fixed. Way in: hook the two XAnim calls' float dt (and keep the integer parts as they are), or step positions by whole ms too (uniform but
   coarse). Until then: stay at speeds where a frame is a whole millisecond or more and slow further in the edit.
+
+## 0.90
+- User: the player jitters at 0.1x too and "did not before the thermal update" (0.88), not sure. Nothing in 0.88 runs per frame but the two thermal
+  hooks, and by reading they change nothing for a player who is not in thermal; the 0.88 diff of theater.cpp only touches goings back. Could not find a
+  cause. 0.90: Look > Thermal vision has a fourth choice "Left to the game (as before 0.88)" that passes straight through both hooks, for an A/B in one
+  session. Also with choice 0 in first person the hook now passes straight through.
+- The whole-millisecond animation (see 0.89) is still the only measured cause; at 120+ fps a frame at 0.1x is 0.83 ms, so it applies there as well.
+  Player animation here works on whole-ms timestamps (cg time at cg+0x6E9C8 minus the lerp frame's at +0x4C, times 0.001), not on a dt: giving it
+  fractions needs the timestamps themselves widened, a bigger job.

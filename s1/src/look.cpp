@@ -1952,10 +1952,10 @@ void look_draw_tab(const TheaterState& state)
 			reset = false;
 			if (ui_section(ICON_SLIDERS, "Thermal vision", &reset, false))
 			{
-				static const char* const MODES[] = {"As in the match, in first person only", "Never", "Always (any camera)"};
+				static const char* const MODES[] = {"As in the match, in first person only", "Never", "Always (any camera)", "Left to the game (as before 0.88)"};
 				int mode = thermal_mode();
 				ui_row_label("Thermal picture");
-				if (ImGui::Combo("##thermal", &mode, MODES, 3))
+				if (ImGui::Combo("##thermal", &mode, MODES, 4))
 				{
 					thermal_set_mode(mode);
 				}

@@ -36,10 +36,19 @@ namespace
 	{
 		const TheaterState state = theater_state();
 		g_now = 0;
-		if (state.playing && client == 0)
+		const int mode = g_mode;
+		if (mode == 3 || !state.playing || client != 0)
 		{
-			const int mode = g_mode;
-			g_now = mode == 1 ? 1 : mode == 2 ? 2 : camera_state().mode == CameraMode::FirstPerson ? 0 : 1;
+			// (3: all of it left to the game, nothing of the player's state touched: as before 0.88)
+			g_original_update(client);
+			return;
+		}
+
+		g_now = mode == 1 ? 1 : mode == 2 ? 2 : camera_state().mode == CameraMode::FirstPerson ? 0 : 1;
+		if (g_now == 0)
+		{
+			g_original_update(client);
+			return;
 		}
 
 		auto* flags = reinterpret_cast<unsigned*>(PLAYER_FLAGS);
@@ -65,4 +74,4 @@ void thermal_start()
 
 int thermal_mode() { return g_mode; }
 
-void thermal_set_mode(const int mode) { g_mode = mode < 0 || mode > 2 ? 0 : mode; }
+void thermal_set_mode(const int mode) { g_mode = mode < 0 || mode > 3 ? 0 : mode; }
