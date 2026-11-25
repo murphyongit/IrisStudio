@@ -1885,15 +1885,15 @@ namespace
 				}
 
 				float away[3];
-				bool far = false;
+				bool jumped = false;
 				for (int i = 0; i < 3; ++i)
 				{
 					away[i] = aim[i] - predicted.viewangles[i];
 					away[i] -= 360.0f * floorf(away[i] / 360.0f + 0.5f);
-					far = far || std::fabs(away[i]) > 45.0f;
+					jumped = jumped || std::fabs(away[i]) > 45.0f;
 				}
 
-				if (far)
+				if (jumped)
 				{
 					// (a respawn or a cut: not averaged across)
 					continue;
