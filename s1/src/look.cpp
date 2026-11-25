@@ -1200,6 +1200,8 @@ namespace
 			fprintf(file, "tone_thermal %d\n", thermal_mode());
 		}
 
+		fprintf(file, "tone_aim_smooth %g\n", theater_aim_smooth());
+
 		if (g_rs_effect[0] && g_rs_name[0])
 		{
 			fprintf(file, "reshade_focus %d %d %g %g %s %s\n", g_rs_on ? 1 : 0, g_rs_only ? 1 : 0, g_rs_scale, g_rs_distance, g_rs_effect, g_rs_name);
@@ -1453,6 +1455,10 @@ namespace
 					strncpy_s(g_rs_effect, effect, _TRUNCATE);
 					strncpy_s(g_rs_name, name, _TRUNCATE);
 				}
+			}
+			else if (sscanf_s(line, "tone_aim_smooth %f", &a) == 1)
+			{
+				theater_set_aim_smooth(a);
 			}
 			else if (sscanf_s(line, "tone_thermal %d", &n) == 1)
 			{
@@ -1979,6 +1985,15 @@ void look_draw_tab(const TheaterState& state)
 				}
 
 				ImGui::SetItemTooltip("The game moves a player's animation on a whole millisecond at a time; at 0.1x and slower that shows as the player\njittering while gliding (the editor's actors do not). On: the editor moves it on by the part of a millisecond too.");
+				float aim = theater_aim_smooth();
+				ui_row_label("Smooth the recorded aim");
+				ui::Default(40.0f);
+				if (ui::SliderFloat("##aimSmooth", &aim, 0.0f, 200.0f, "%.0f ms"))
+				{
+					theater_set_aim_smooth(aim);
+				}
+
+				ImGui::SetItemTooltip("The recorded player's aim is your mouse's, and a mouse moves in tiny counts: slowed down, his gun and chest twitch\nwith each one. The aim is averaged over this long before and after each moment. 0: exactly as recorded.\nMore: steadier, but a fast flick turns a little rounder. It also steadies the first-person view.");
 				unsigned calls = 0, moved = 0;
 				anim_smooth_status(&calls, &moved);
 				ImGui::TextDisabled("Players' animation steps seen: %u.  Animations moved on by the editor: %u.", calls, moved);
@@ -1987,6 +2002,7 @@ void look_draw_tab(const TheaterState& state)
 			if (reset)
 			{
 				anim_smooth_set(true);
+				theater_set_aim_smooth(40.0f);
 			}
 
 			reset = false;

@@ -38,7 +38,7 @@
 
 namespace
 {
-	constexpr char VERSION[] = "0.91 (recorder, playback, IrisStudio's editor)";
+	constexpr char VERSION[] = "0.92 (recorder, playback, IrisStudio's editor)";
 
 	// void CL_ParseServerMessage(int localClientNum, msg_t* msg)
 	constexpr uintptr_t CL_PARSE_SERVER_MESSAGE = 0x1402129B0;
@@ -1738,6 +1738,53 @@ namespace
 	}
 
 	// Playback: the recorded player's position of a time, where the game asks for what it predicted.
+	// (0.92) The recorded player's aim is the mouse's: it comes in counts (0.173 of a degree each in the user's
+	// recording), a few in one saved moment and none in the next, about every 6 ms. Gone through evenly from
+	// one saved moment to the next it still starts and stops with them, and slowed down the player's gun and
+	// chest twitch (the editor's actors, with no mouse, do not). So the aim given is the average of the recorded
+	// aim over this long before and after (weighted most at the middle); 0: as recorded.
+	std::atomic<float> g_aim_smooth_ms{40.0f};
+
+	bool recorded_aim_at(const double when, size_t at, float out[3])
+	{
+		const size_t count = g_predicted.size();
+		while (at + 1 < count && g_predicted[at + 1].serverTime <= when)
+		{
+			++at;
+		}
+
+		while (at > 0 && g_predicted[at].serverTime > when)
+		{
+			--at;
+		}
+
+		const PredictedView& one = g_predicted[at];
+		if (!one.hasView)
+		{
+			return false;
+		}
+
+		memcpy(out, one.viewangles, sizeof(one.viewangles));
+		if (at + 1 < count)
+		{
+			const PredictedView& next = g_predicted[at + 1];
+			const int span = next.serverTime - one.serverTime;
+			if (next.hasView && span > 0 && span <= 100)
+			{
+				float t = static_cast<float>((when - one.serverTime) / span);
+				t = t < 0.0f ? 0.0f : t > 1.0f ? 1.0f : t;
+				for (int i = 0; i < 3; ++i)
+				{
+					float turn = next.viewangles[i] - one.viewangles[i];
+					turn -= 360.0f * floorf(turn / 360.0f + 0.5f);
+					out[i] += turn * t;
+				}
+			}
+		}
+
+		return true;
+	}
+
 	bool hooked_get_predicted(unsigned char* cl, const int server_time, unsigned char* ps)
 	{
 		// (the player's state as the game hands it in, before anything is written into it: see "a scorestreak's view")
@@ -1817,6 +1864,54 @@ namespace
 						turn -= 360.0f * floorf(turn / 360.0f + 0.5f);
 						predicted.viewangles[i] += turn * t;
 					}
+				}
+			}
+		}
+
+		const float smooth = g_aim_smooth_ms;
+		if (predicted.hasView && smooth >= 1.0f)
+		{
+			const double when = static_cast<double>(server_time) + g_clock_fraction;
+			float sum[3] = {}, weights = 0.0f;
+			const int STEPS = 24;
+			for (int j = 0; j < STEPS; ++j)
+			{
+				const float off = -smooth + (j + 0.5f) * 2.0f * smooth / STEPS;
+				const float weight = 1.0f - std::fabs(off) / smooth;
+				float aim[3];
+				if (!recorded_aim_at(when + off, low - 1, aim))
+				{
+					continue;
+				}
+
+				float away[3];
+				bool far = false;
+				for (int i = 0; i < 3; ++i)
+				{
+					away[i] = aim[i] - predicted.viewangles[i];
+					away[i] -= 360.0f * floorf(away[i] / 360.0f + 0.5f);
+					far = far || std::fabs(away[i]) > 45.0f;
+				}
+
+				if (far)
+				{
+					// (a respawn or a cut: not averaged across)
+					continue;
+				}
+
+				for (int i = 0; i < 3; ++i)
+				{
+					sum[i] += away[i] * weight;
+				}
+
+				weights += weight;
+			}
+
+			if (weights > 0.0f)
+			{
+				for (int i = 0; i < 3; ++i)
+				{
+					predicted.viewangles[i] += sum[i] / weights;
 				}
 			}
 		}
@@ -2754,6 +2849,8 @@ void theater_slower() { g_slower_request = true; }
 void theater_faster() { g_faster_request = true; }
 void theater_seek(const std::uint32_t ms) { g_seek_request = ms; }
 void theater_rebuild() { g_rebuild_request = true; }
+float theater_aim_smooth() { return g_aim_smooth_ms; }
+void theater_set_aim_smooth(const float ms) { g_aim_smooth_ms = ms < 0.0f ? 0.0f : ms > 300.0f ? 300.0f : ms; }
 void theater_scan() { g_scan_request = true; }
 
 void theater_set_speed(const float speed)

@@ -718,3 +718,14 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
   old time, +0x30/+0x32 cycle counts, then goal time, goal weight, weight, rate (+0x40). Look > Slow motion: a switch and two counters.
   UNTESTED. If "steps seen" counts but "moved on" stays 0: the entity or tree is not found (the log's first four "animation:" lines say what the
   function was given).
+
+## 0.92
+- 0.91's animation hook works (log: "given 1416560A4 and 141620568, 0 ms; entity 0, its tree ..."; the first argument is the centity's nextState,
+  +0x144) but the user's jitter stayed; he guessed "my mouse inputs". RIGHT: read from his clip1.awdm (67960 PRED records, 260 bytes: Predicted 36 +
+  the client block 0xE0; the view angles at block +0xD0): a record about every 6 ms (5..7), and the aim moves in MOUSE COUNTS of 0.173 degrees: pitch
+  steps +0.173, 0, +0.173, 0 ...; yaw steps all multiples of 0.173. Gone through linearly it starts and stops every 6 ms: at 0.1x the recorded
+  player's gun and chest twitch (the jittering player is entity 0, the recorder's own body, in the dolly camera).
+- Fix: hooked_get_predicted averages the recorded aim over +-g_aim_smooth_ms (40 by default; 24 samples, triangle weights, not across jumps of more
+  than 45 degrees). Look > Slow motion > "Smooth the recorded aim" 0..200 ms; saved as "tone_aim_smooth N". The first-person view gets it too.
+- The 0.89 reading of his video (a step once per "millisecond") was wrong in its cause: the spacing fitted the 6 ms records at his real speed just as
+  well. The players' whole-ms animation is real but small next to this; animsmooth.cpp stays (switchable).

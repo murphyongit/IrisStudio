@@ -66,6 +66,9 @@ void theater_faster();
 void theater_seek(std::uint32_t ms);
 // The recording given again from its start up to where it is: the game makes every model anew.
 void theater_rebuild();
+// How long (ms) before and after a moment the recorded player's aim is averaged over (0: as recorded).
+float theater_aim_smooth();
+void theater_set_aim_smooth(float ms);
 // The speed nearest to one of the steps (IrisStudio's timescale steps); the steps themselves.
 void theater_set_speed(float speed);
 int theater_speed_steps(const float** steps);
