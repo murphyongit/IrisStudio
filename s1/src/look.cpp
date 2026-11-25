@@ -2201,9 +2201,9 @@ namespace
 		camera_view_origin(eye);
 		const float far_off = std::sqrt((place[0] - eye[0]) * (place[0] - eye[0]) + (place[1] - eye[1]) * (place[1] - eye[1]) + (place[2] - eye[2]) * (place[2] - eye[2]));
 		g_rs_pinned = far_off;
-		if (g_rs_on && g_rs_only)
 		{
-			// (ReShade's effect does the blur: the game's own is left as it is)
+			// (0.89, asked for: the game's own depth of field is kept off for good, see look_frame; a pinned
+			// focus only gives its distance, for ReShade's effect)
 			return;
 		}
 
@@ -2234,6 +2234,9 @@ namespace
 	void draw_reshade_focus()
 	{
 		ImGui::Spacing();
+		ImGui::PushTextWrapPos(0.0f);
+		ImGui::TextDisabled("The game's own depth of field is kept switched off (r_dof_enable 0). The focus above only gives its distance to ReShade's effect, below.");
+		ImGui::PopTextWrapPos();
 		ImGui::SeparatorText("Focus in ReShade");
 		const int status = reshade_link_status();
 		if (status < 2)
@@ -2500,6 +2503,22 @@ void look_frame(const TheaterState& state)
 	focus_frame(state);
 	sound_follows_pause(state);
 	reshade_link_frame();
+	{
+		// (0.89, asked for) The game's own depth of field stays off: r_dof_enable is put back to 0 whenever
+		// anything has turned it on (looked at twice a second).
+		static ULONGLONG looked_at = 0;
+		if (GetTickCount64() - looked_at > 500)
+		{
+			looked_at = GetTickCount64();
+			if (const Dvar dof = find("r_dof_enable"))
+			{
+				if (atof(text_of(dof, dof.current()).c_str()) != 0.0)
+				{
+					theater_command("r_dof_enable 0");
+				}
+			}
+		}
+	}
 	// the settings with keyframes: what the keyframes make of this frame's time
 	g_now_ms = state.position_ms;
 	if (state.playing)

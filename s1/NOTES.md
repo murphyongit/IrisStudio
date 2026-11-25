@@ -686,3 +686,15 @@ for AW Xbox names), exe /home/claude/awtheater/test/s1_mp_unpacked.exe, run with
   effect kind with the game's time at the new place, 44 a frame (the game takes 64 requests a frame), and the roll waits meanwhile (hud_flushing).
 - Choppy effects in slow motion: NOT fixed. Most likely the effects' flipbook pictures (a few frames each); the exe has no frame-blend for sprites
   (only CONST_SRC_CODE_PARTICLE_CLOUD_TEXTURE_ATLAS_SETTINGS). Asked the user whether the motion or the picture inside stutters.
+
+## 0.89
+- User: the game's own depth of field must stay off from now on: look.cpp look_frame puts r_dof_enable back to 0 twice a second; focus_frame no
+  longer sends the game's DOF settings (a pinned focus only feeds the ReShade link).
+- User's screen recording (dolly camera, about 0.004x speed): "my player jitters, the actor does not". Measured in the video: the player's body
+  moves by the same amount every game frame, with a different step about every 26 captured frames (120 fps) = once per game MILLISECOND. Cause: the
+  editor gives the game the clock's sub-millisecond part for entity POSITIONS (CG_FRAME_INTERPOLATION += fraction), but the game's player ANIMATION
+  runs on whole milliseconds (player animation 0x140130C40(es?, clientInfo, int frametime ms) and 0x14000AE70(.., int ms); inside, dt = ms * 0.001
+  (0x1407F7920) goes to XAnim 0x1404E6440 / 0x1404E4980 at 0x1401311F1 / 0x1401318FC). Below about 0.06x at 60 fps (a frame shorter than 1 ms)
+  the pose holds for several frames and then steps while the body slides: jitter. The actors use the exact clock.
+  NOT fixed. Way in: hook the two XAnim calls' float dt (and keep the integer parts as they are), or step positions by whole ms too (uniform but
+  coarse). Until then: stay at speeds where a frame is a whole millisecond or more and slow further in the edit.
