@@ -341,6 +341,17 @@ namespace IWXMVM
         virtual uint32_t GetDemoFooterSize() { return 0; }
         virtual uint32_t GetDemoHeaderSize() { return 0; }
 
+        // For rewinding (Components::Rewinding). Whether the demo message whose body is about to be read is a
+        // gamestate (a map's load): bodyOffset is where in the file its body begins, length the body's size. Without
+        // an answer core goes by the size, as it always has (10,000 bytes or more, or the file's first message).
+        virtual std::optional<bool> IsDemoGamestateMessage([[maybe_unused]] std::uint32_t bodyOffset,
+                                                           [[maybe_unused]] int length)
+        {
+            return std::nullopt;
+        }
+        // How many bytes of the file come before a message's body (its kind, sequence and length)
+        virtual std::uint32_t GetDemoMessageHeaderSize() { return 9; }
+
        private:
         Types::Game game;
     };

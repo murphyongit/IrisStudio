@@ -145,7 +145,13 @@ namespace IWXMVM::Components::Rewinding
         auto addresses = Mod::GetGameInterface()->GetPlaybackDataAddresses();
 
         // TODO: find a more robust method of detecting a gamestate message
-        if (len >= 10'000 || Mod::GetGameInterface()->GetDemoHeaderSize() + demoFileOffset == 9)
+        // (a game that can tell says so; the others are judged by the message's size)
+        const auto headerSize = Mod::GetGameInterface()->GetDemoMessageHeaderSize();
+        const auto answer = Mod::GetGameInterface()->IsDemoGamestateMessage(demoFileOffset, len);
+        const bool isGamestate = answer.has_value()
+                                     ? answer.value()
+                                     : (len >= 10'000 || Mod::GetGameInterface()->GetDemoHeaderSize() + demoFileOffset == 9);
+        if (isGamestate)
         {
             // first message with the gamestate; triggers the game to load a map
             if (initialGamestate != nullptr)
@@ -158,7 +164,7 @@ namespace IWXMVM::Components::Rewinding
         {
             // after gamestate before first snapshot
             initialGamestate = std::make_unique<InitialGamestate>();
-            initialGamestate->fileOffset = demoFileOffset - 9;
+            initialGamestate->fileOffset = demoFileOffset - headerSize;
             assert(initialGamestate->fileOffset > 0);
 
             initialGamestate->lastExecutedServerCommand =

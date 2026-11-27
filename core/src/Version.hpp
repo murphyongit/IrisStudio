@@ -18,6 +18,8 @@ namespace IWXMVM
                 return "IW5iris";
             case Types::Game::T5:
                 return "T5iris";
+            case Types::Game::IW4:
+                return "IW4iris";
             default:
                 return "Iris";
         }

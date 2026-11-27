@@ -1,0 +1,24 @@
+LIBRARY ddraw
+EXPORTS
+    AcquireDDThreadLock = iris_AcquireDDThreadLock
+    CompleteCreateSysmemSurface = iris_CompleteCreateSysmemSurface
+    D3DParseUnknownCommand = iris_D3DParseUnknownCommand
+    DDGetAttachedSurfaceLcl = iris_DDGetAttachedSurfaceLcl
+    DDInternalLock = iris_DDInternalLock
+    DDInternalUnlock = iris_DDInternalUnlock
+    DSoundHelp = iris_DSoundHelp
+    DirectDrawCreate = iris_DirectDrawCreate
+    DirectDrawCreateClipper = iris_DirectDrawCreateClipper
+    DirectDrawCreateEx = iris_DirectDrawCreateEx
+    DirectDrawEnumerateA = iris_DirectDrawEnumerateA
+    DirectDrawEnumerateExA = iris_DirectDrawEnumerateExA
+    DirectDrawEnumerateExW = iris_DirectDrawEnumerateExW
+    DirectDrawEnumerateW = iris_DirectDrawEnumerateW
+    GetDDSurfaceLocal = iris_GetDDSurfaceLocal
+    GetOLEThunkData = iris_GetOLEThunkData
+    GetSurfaceFromDC = iris_GetSurfaceFromDC
+    RegisterSpecialCase = iris_RegisterSpecialCase
+    ReleaseDDThreadLock = iris_ReleaseDDThreadLock
+    SetAppCompatData = iris_SetAppCompatData
+    DllCanUnloadNow = iris_DllCanUnloadNow PRIVATE
+    DllGetClassObject = iris_DllGetClassObject PRIVATE

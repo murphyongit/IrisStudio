@@ -3,7 +3,7 @@ name: Build
 on:
   push:
     branches: [main]
-    paths-ignore: ['s1/**', '.github/workflows/s1.yml']
+    paths-ignore: ['s1/**', '.github/workflows/s1.yml', 'iw4/**', '.github/workflows/iw4.yml']
   workflow_dispatch:
 
 permissions:

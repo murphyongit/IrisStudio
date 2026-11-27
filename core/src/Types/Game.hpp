@@ -7,6 +7,7 @@ namespace IWXMVM::Types
         None,
         IW3,
         IW5,
-        T5
+        T5,
+        IW4
     };
 }  // namespace IWXMVM::Types
