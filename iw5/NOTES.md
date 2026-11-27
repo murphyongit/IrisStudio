@@ -50,3 +50,20 @@ Licence: GNU GPL v3, as the rest of this repository; the module is upstream IWXM
 - The starter now tells a 32-bit game folder (has mss32.dll) from the 64-bit one, looks for the 32-bit files in
   steamapps\content\app_42680|42690|42682\depot_42682 and <game>\downgrade by itself, and explains the 64-bit case
   in its own words instead of leaving it to Plutonium's message.
+
+## First working run (27 Nov 2026) and its four fixes (all from the 32-bit iw5mp.exe 1.9.461, md5 607fb4af...)
+The user's downgraded depot's iw5mp.exe has the addresses Plutonium runs (MainWndProc 0x5D0600 in both), so it is
+the reference binary: /home/claude/iw5/bin32, tools/x.py (disassembler) and tools/sig.py (resolves Signatures.hpp).
+- Rewind went to the demo's start and stayed there: CL_AdjustTimeDelta (0x4851F0) runs in the frame after a snapshot
+  was read (cl.newSnapshots, 0x1065AF4) and resets the clock when it is >500 ms from the snapshot, undoing the
+  realtime jump the core makes after a rewind. Hooks/Playback.cpp clears newSnapshots when realtime jumped.
+  (clientStatic's realtime is at 0xBA4EE8, 4 before the struct's field; ResetClientData no longer writes to it.)
+- Timescale under 0.1 looked low-fps: whole milliseconds only. CG_SetFrameInterpolation (0x44BB80) is hooked and
+  given the part of a millisecond the frame is at. Places players and the view; animations and effects still step.
+- Bone camera ended the game: bones were asked for on the editor's thread. Bones.cpp answers on the main thread, in
+  CL_Demo_CalcViewValues (0x6AAA60), right after the game resets its skeleton memory (0x48DE00, in CG_CalcViewValues).
+  That function only runs in the theater's free/third-person modes, which the mod's cameras are.
+- Free camera spun: Plutonium's window procedure and raw input come back for the new window after the mod's
+  vid_restart; they are now removed each time the editor takes the mouse, and SetCursorPos from any other module is
+  refused meanwhile (CursorGuard.cpp, logs the first caller).
+- The log is copied by the starter to <mod folder>\IW5iris_log.txt when the game closes.

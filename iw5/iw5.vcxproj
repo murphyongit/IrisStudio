@@ -110,6 +110,8 @@
     </ProjectReference>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="src\Bones.cpp" />
+    <ClCompile Include="src\CursorGuard.cpp" />
     <ClCompile Include="src\Entrypoint.cpp" />
     <ClCompile Include="src\Functions.cpp" />
     <ClCompile Include="src\Hooks.cpp" />
@@ -124,6 +126,8 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\Addresses.hpp" />
+    <ClInclude Include="src\Bones.hpp" />
+    <ClInclude Include="src\CursorGuard.hpp" />
     <ClInclude Include="src\Functions.hpp" />
     <ClInclude Include="src\Hooks.hpp" />
     <ClInclude Include="src\Hooks\Camera.hpp" />

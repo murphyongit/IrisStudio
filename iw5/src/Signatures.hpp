@@ -45,6 +45,7 @@ namespace IWXMVM::IW5::Signatures
         Sig("D9 C0 D9 05 ?? ?? ?? ?? DD E1 DF E0 DD D9 D9 44 24 04", GAType::Data, 4,
             Lambda::DereferenceAddress) > com_codeTimeScale;
         Sig("56 8B 74 24 0C 3B C6 7D 1E", GAType::Code, -5) > CG_ExecuteNewServerCommands;
+        Sig("8B 80 14 33 00 00 8B 91 14 33 00 00 2B D0", GAType::Code, -14) > CG_SetFrameInterpolation;
 
         Sig("74 0E 83 3D ?? ?? ?? ?? ?? 0F 95 C0", GAType::Code, -7) > CG_DrawShellshockBlend;
         Sig("50 E8 ?? ?? ?? ?? 83 C4 04 85 C0 0F 84 E9 00 00 00", GAType::Code, -5) > Item_GameMsgWindow_Paint;

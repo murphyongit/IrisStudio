@@ -7,6 +7,8 @@
 #include "Patches.hpp"
 #include "Functions.hpp"
 #include "Hooks.hpp"
+#include "Bones.hpp"
+#include "CursorGuard.hpp"
 #include "Hooks/HUD.hpp"
 #include "Hooks/Camera.hpp"
 #include "Components/Rewinding.hpp"
@@ -27,28 +29,34 @@ namespace IWXMVM::IW5
         void InstallHooksAndPatches() final
         {
             Hooks::Install();
+            Bones::Install();
+            CursorGuard::Install();
             Patches::GetGamePatches();
         }
 
+        // Plutonium's MW3 puts its own window procedure before the game's and feeds raw mouse input to the game
+        // through it, which keeps grabbing the cursor from the editor. It does so again for every new window, and the
+        // mod makes the game open a new one when it starts (vid_restart), so this is done whenever the editor takes
+        // the mouse, not once.
         void RemovePlutoniumCallbacks()
         {
             HWND hwnd = D3D9::FindWindowHandle();
-            DWORD wndprocAddr = GetWindowLongPtr(hwnd, GWLP_WNDPROC);
+            if (!hwnd)
+                return;
+            const auto wndprocAddr = static_cast<uintptr_t>(GetWindowLongPtr(hwnd, GWLP_WNDPROC));
+            if (!wndprocAddr || wndprocAddr == Mod::GetGameInterface()->GetWndProc())
+                return;
 
-            // mw3 plutonium has a wndproc callback hook that we need to remove
-            if (wndprocAddr != Mod::GetGameInterface()->GetWndProc())
-            {
-                // remove plutonium's wndproc hook and restore it with the game's original wndproc
-                SetWindowLongPtr(hwnd, GWL_WNDPROC, Mod::GetGameInterface()->GetWndProc());
+            SetWindowLongPtr(hwnd, GWLP_WNDPROC, static_cast<LONG_PTR>(Mod::GetGameInterface()->GetWndProc()));
 
-                // remove plutonium's raw input device hook
-                RAWINPUTDEVICE hid;
-                hid.usUsagePage = 1;  // HID_USAGE_PAGE_GENERIC
-                hid.usUsage = 2;      // HID_MOUSE
-                hid.dwFlags = RIDEV_REMOVE;
-                hid.hwndTarget = NULL;
-                RegisterRawInputDevices(&hid, 1, sizeof(RAWINPUTDEVICE));
-            }
+            RAWINPUTDEVICE hid;
+            hid.usUsagePage = 1;  // HID_USAGE_PAGE_GENERIC
+            hid.usUsage = 2;      // HID_MOUSE
+            hid.dwFlags = RIDEV_REMOVE;
+            hid.hwndTarget = NULL;
+            RegisterRawInputDevices(&hid, 1, sizeof(RAWINPUTDEVICE));
+            LOG_DEBUG("Took Plutonium's window procedure ({0:X}) and raw mouse input off the game's window",
+                      wndprocAddr);
         }
 
         void SetupEventListeners() final
@@ -93,9 +101,14 @@ namespace IWXMVM::IW5
         void SetMouseMode(Types::MouseMode mode) final
         {
             if (mode == Types::MouseMode::Capture)
+            {
                 Patches::GetGamePatches().IN_Frame.Apply();
+                RemovePlutoniumCallbacks();
+            }
             else 
                 Patches::GetGamePatches().IN_Frame.Revert();
+            // (Plutonium has its own mouse input, which the patch doesn't stop)
+            CursorGuard::SetEditorHasMouse(mode == Types::MouseMode::Capture);
         }
 
         Types::GameState GetGameState() final
@@ -520,71 +533,9 @@ namespace IWXMVM::IW5
             return entities;
         }
 
-        auto FindBoneIndex(Structures::DObj* dobj, uint16_t boneName)
-        {
-            if (!dobj->models || !dobj->numModels)
-                return -1;
-
-            auto boneIndex = -1;
-
-            auto totalBones = 0;
-            for (int m = 0; m < dobj->numModels; m++)
-            {
-                auto model = dobj->models[m];
-                if (!model || !model->numBones)
-                    return -1;
-                for (int b = 0; b < model->numBones; b++)
-                {
-                    auto bone = model->boneNames[b];
-                    if (bone == boneName)
-                    {
-                        boneIndex = totalBones + b;
-                    }
-                }
-                totalBones += model->numBones;
-            }
-
-            return boneIndex;
-        }
-
         Types::BoneData GetBoneData(int32_t entityId, const std::string& name) final
         {
-            Structures::DObj* dobj = Functions::Com_GetClientDObj(entityId);
-
-            if (!dobj)
-            {
-                return {.id = -1};
-            }
-
-            auto entities = Structures::GetEntities();
-            auto entity = &entities[entityId];
-            auto boneName = Functions::Scr_AllocString(name.c_str());
-
-            const auto orgTimeStamp = std::exchange(dobj->skel.timeStamp, Structures::GetClientStatic()->skelTimeStamp);
-
-            auto boneIndex = FindBoneIndex(dobj, boneName);
-            if (boneIndex == -1)
-            {
-                dobj->skel.timeStamp = orgTimeStamp;
-                return {.id = -1};
-            }
-
-            float rotationMatrix[3 * 3];
-            float origin[3];
-            auto result = Functions::CG_DObjGetWorldBoneMatrix(entity, boneIndex, (float*)rotationMatrix, dobj, origin);
-
-            dobj->skel.timeStamp = orgTimeStamp;
-            if (!result)
-            {
-                LOG_ERROR("Call to CG_DObjGetWorldBoneMatrix failed");
-                return {.id = -1};
-            }
-
-            Types::BoneData boneData;
-            boneData.id = boneIndex;
-            boneData.position = glm::make_vec3(origin);
-            boneData.rotation = glm::make_mat3(rotationMatrix);
-            return boneData;
+            return Bones::GetBoneData(entityId, name);
         }
 
         constexpr std::vector<std::string> GetSupportedBoneNames()
@@ -645,8 +596,9 @@ namespace IWXMVM::IW5
             //clc->timeDemoPrev = 0;
             //clc->timeDemoBaseTime = 0;
 
-            auto cls = Structures::GetClientStatic();
-            cls->realtime = 0;
+            // (the client's realtime is left as it is: CL_FirstSnapshot, called next, sets the difference between it
+            // and the demo's time. The line that was here wrote to the field after it, as realtime is 4 bytes
+            // before where this struct has it: see GetPlaybackDataAddresses.)
             //cls->realFrametime = 0;
 
             auto cgs = Structures::GetClientGlobalsStatic();

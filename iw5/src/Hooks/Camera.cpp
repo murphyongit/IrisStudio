@@ -6,6 +6,7 @@
 #include "../Addresses.hpp"
 #include "../Functions.hpp"
 #include "../Structures.hpp"
+#include "../Bones.hpp"
 
 namespace IWXMVM::IW5::Hooks::Camera
 {
@@ -17,6 +18,9 @@ namespace IWXMVM::IW5::Hooks::Camera
     {
         if (Mod::GetGameInterface()->GetGameState() != Types::GameState::InDemo)
             return;
+
+        // (the main thread, in a frame of the demo's world: where the game can be asked for bones)
+        Bones::UpdateRequestedBones();
 
         auto& camera = Components::CameraManager::Get().GetActiveCamera();
         auto cg = Structures::GetClientGlobals();
