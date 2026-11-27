@@ -26,6 +26,7 @@ namespace IWXMVM::IW4::Addresses
     inline constexpr std::uintptr_t IN_Frame = 0x475E10;
     inline constexpr std::uintptr_t MainWndProc = 0x4731F0;
     inline constexpr std::uintptr_t R_AddCmdDrawText = 0x509D80;
+    inline constexpr std::uintptr_t DB_EnumXAssets = 0x4B76D0;           // (type, function, data, overrides)
 
     // data
     inline constexpr std::uintptr_t cg = 0x7F0F78;

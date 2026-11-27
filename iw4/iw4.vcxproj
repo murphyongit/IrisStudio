@@ -116,6 +116,7 @@
     <ClCompile Include="src\Hooks.cpp" />
     <ClCompile Include="src\Hooks\Camera.cpp" />
     <ClCompile Include="src\Hooks\Playback.cpp" />
+    <ClCompile Include="src\Sky.cpp" />
     <ClCompile Include="src\Structures.cpp" />
     <ClCompile Include="src\StdInclude.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
@@ -131,6 +132,7 @@
     <ClInclude Include="src\Hooks\Playback.hpp" />
     <ClInclude Include="src\IW4Interface.hpp" />
     <ClInclude Include="src\Patches.hpp" />
+    <ClInclude Include="src\Sky.hpp" />
     <ClInclude Include="src\Structures.hpp" />
     <ClInclude Include="src\Game\Structs.hpp" />
   </ItemGroup>

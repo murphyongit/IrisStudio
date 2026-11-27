@@ -10,6 +10,7 @@
 #include "Hooks/Camera.hpp"
 #include "Hooks/Playback.hpp"
 #include "Patches.hpp"
+#include "Sky.hpp"
 #include "Structures.hpp"
 
 #include "Components/CameraManager.hpp"
@@ -19,9 +20,13 @@
 #include "glm/gtc/type_ptr.hpp"
 #include "glm/vec3.hpp"
 
+#include <unordered_map>
+
 namespace IWXMVM::IW4
 {
     // Modern Warfare 2 (2009) multiplayer, build 177, as the IW4M client starts it (iw4m.exe + iw4m.dll).
+    inline constexpr const char* MODULE_VERSION = "0.2";
+
     class IW4Interface : public GameInterface
     {
        public:
@@ -31,6 +36,7 @@ namespace IWXMVM::IW4
 
         void InstallHooksAndPatches() final
         {
+            LOG_INFO("IW4 module {} (Modern Warfare 2, build 177, IW4M client)", MODULE_VERSION);
             Hooks::Install();
             Patches::GetGamePatches();
         }
@@ -46,6 +52,13 @@ namespace IWXMVM::IW4
                 // the kill feed's own settings, so that the toggle for it starts from the game's
                 if (const auto dvar = Functions::TryFindDvar("con_gameMsgWindow0MsgTime"))
                     dvar->current.value = dvar->reset.value;
+
+                const auto clc = Structures::GetClientConnection();
+                LOG_INFO("Demo command done: name \"{}\", playing {}, file {}, first folder {}", clc->demoName,
+                         clc->demoplaying, GetDemoInfo().path, Functions::GetFirstSearchDirectory().string());
+
+                // (the map is not there yet: the game loads it in the frames that follow)
+                Hooks::Camera::OnDemoLoad();
             });
         }
 
@@ -91,7 +104,14 @@ namespace IWXMVM::IW4
 
         Types::Features GetSupportedFeatures() final
         {
-            return Types::Features_None;
+            return static_cast<Types::Features>(Types::Features_Sky);
+        }
+
+        // (asked for by core as the demo command ends, before the map is there; given again once it is, see
+        // Hooks::Camera)
+        std::vector<Types::SkyImage> GetSkyImages() final
+        {
+            return Sky::GetSkyImages();
         }
 
         void InitializeGameAddresses() final
@@ -342,6 +362,8 @@ namespace IWXMVM::IW4
             };
         }
 
+        // Core applies these every frame of a demo (the game brings parts of its HUD back now and then), from the
+        // render thread: only what differs is written, and nothing goes through the game's own setters.
         void SetHudInfo(Types::HudInfo hudInfo) final
         {
             Functions::SetBool("cg_draw2D", hudInfo.show2DElements);
@@ -357,12 +379,11 @@ namespace IWXMVM::IW4
                 hudInfo.showKillfeed = false;
             }
 
-            // (each goes back to the game's own value, which dvar_t::reset has)
             Functions::SetBool("ui_hud_hardcore", !hudInfo.showPlayerHUD);
-            SetFloatOrDefault("cg_centertime", hudInfo.showPlayerHUD, 0.0f);
-            SetFloatOrDefault("cg_overheadRankSize", hudInfo.showPlayerHUD, 0.0f);
-            SetFloatOrDefault("cg_overheadNamesSize", hudInfo.showPlayerHUD, 0.0f);
-            SetFloatOrDefault("cg_overheadIconSize", hudInfo.showPlayerHUD, 0.0f);
+            SetFloatOrOwn("cg_centertime", hudInfo.showPlayerHUD, 0.0f);
+            SetFloatOrOwn("cg_overheadRankSize", hudInfo.showPlayerHUD, 0.0f);
+            SetFloatOrOwn("cg_overheadNamesSize", hudInfo.showPlayerHUD, 0.0f);
+            SetFloatOrOwn("cg_overheadIconSize", hudInfo.showPlayerHUD, 0.0f);
 
             Functions::SetBool("cg_drawShellshock", hudInfo.showShellshock);
             Functions::SetBool("ui_drawCrosshair", hudInfo.showCrosshair);
@@ -373,18 +394,12 @@ namespace IWXMVM::IW4
 
             Functions::SetBool("cg_drawDamageDirection", hudInfo.showBloodOverlay);
             Functions::SetBool("cg_drawDamageFlash", hudInfo.showBloodOverlay);
-            SetFloatOrDefault("painVisionTriggerHealth", hudInfo.showBloodOverlay, 0.0f);
+            SetFloatOrOwn("painVisionTriggerHealth", hudInfo.showBloodOverlay, 0.0f);
 
-            SetFloatOrDefault("con_gameMsgWindow0MsgTime", hudInfo.showKillfeed, 0.0f);
+            SetFloatOrOwn("con_gameMsgWindow0MsgTime", hudInfo.showKillfeed, 0.0f);
 
-            Functions::Dvar_SetStringByName(
-                "g_TeamColor_Allies", std::format("{} {} {} 1", hudInfo.killfeedTeam1Color[0],
-                                                  hudInfo.killfeedTeam1Color[1], hudInfo.killfeedTeam1Color[2])
-                                          .c_str());
-            Functions::Dvar_SetStringByName(
-                "g_TeamColor_Axis", std::format("{} {} {} 1", hudInfo.killfeedTeam2Color[0],
-                                                hudInfo.killfeedTeam2Color[1], hudInfo.killfeedTeam2Color[2])
-                                        .c_str());
+            SetColor("g_TeamColor_Allies", hudInfo.killfeedTeam1Color);
+            SetColor("g_TeamColor_Axis", hudInfo.killfeedTeam2Color);
         }
 
         std::vector<Types::Entity> GetEntities() final
@@ -619,11 +634,39 @@ namespace IWXMVM::IW4
             return glm::make_vec3(dvar->current.vector);
         }
 
-        // The game's own value when shown, else the one that hides it
-        static void SetFloatOrDefault(const char* name, bool shown, float hidden)
+        static void SetColor(const char* name, const glm::vec3& color)
         {
-            if (const auto dvar = Functions::FindDvar(name))
-                dvar->current.value = shown ? dvar->reset.value : hidden;
+            const auto dvar = Functions::FindDvar(name);
+            if (!dvar)
+                return;
+
+            for (int i = 0; i < 3; ++i)
+            {
+                if (dvar->type == Structures::DVAR_TYPE_COLOR)
+                {
+                    const auto byte = static_cast<unsigned char>(std::clamp(color[i] * 255.0f + 0.5f, 0.0f, 255.0f));
+                    if (dvar->current.color[i] != byte)
+                        dvar->current.color[i] = byte;
+                }
+                else if (dvar->current.vector[i] != color[i])
+                {
+                    dvar->current.vector[i] = color[i];
+                }
+            }
+        }
+
+        // When shown: the value the setting had when the editor first came to it (the player's own, from his
+        // config), else the one that hides it
+        void SetFloatOrOwn(const char* name, bool shown, float hidden)
+        {
+            const auto dvar = Functions::FindDvar(name);
+            if (!dvar)
+                return;
+
+            const auto own = ownValues.try_emplace(name, dvar->current.value).first->second;
+            const auto wanted = shown ? own : hidden;
+            if (dvar->current.value != wanted)
+                dvar->current.value = wanted;
         }
 
         Types::DemoInfo demoInfo{};
@@ -632,5 +675,6 @@ namespace IWXMVM::IW4
         std::string playDemoError;
         bool showScore = true;
         bool showIconsAndText = true;
+        std::unordered_map<std::string, float> ownValues;
     };
 }  // namespace IWXMVM::IW4

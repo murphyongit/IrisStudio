@@ -2,12 +2,14 @@
 #include "Camera.hpp"
 
 #include "Components/CameraManager.hpp"
+#include "Components/Skybox.hpp"
 #include "Mod.hpp"
 #include "Utilities/HookManager.hpp"
 #include "Utilities/MathUtils.hpp"
 
 #include "../Addresses.hpp"
 #include "../Functions.hpp"
+#include "../Sky.hpp"
 #include "../Structures.hpp"
 
 // CG_DrawActiveFrame (0x486C20) works the frame's view out with CG_CalcViewValues (0x59A1E0, called at 0x486D26)
@@ -18,10 +20,35 @@ namespace IWXMVM::IW4::Hooks::Camera
 {
     namespace
     {
+        std::atomic<bool> mapAwaited = false;
+
+        // Once per demo, on the main thread, in the first frame its map is drawn. (/EHa: a fault in here is caught
+        // and said, it does not take the game down.)
+        void OnMapReady()
+        {
+            try
+            {
+                auto images = Sky::GetSkyImages();
+                LOG_INFO("The map is loaded: {} sky image(s){}{}", images.size(), images.empty() ? "" : ", ",
+                         images.empty() ? std::string{} : images.front().name);
+                Components::Skybox::SetMapSkyImages(std::move(images));
+            }
+            catch (...)
+            {
+                LOG_ERROR("Reading the loaded map's sky failed");
+            }
+        }
+
         void __cdecl ApplyCamera()
         {
             if (Mod::GetGameInterface()->GetGameState() != Types::GameState::InDemo)
                 return;
+
+            if (mapAwaited.load() && Structures::GetClientGlobals()->snap != nullptr)
+            {
+                mapAwaited = false;
+                OnMapReady();
+            }
 
             auto& camera = Components::CameraManager::Get().GetActiveCamera();
             const auto cg = Structures::GetClientGlobals();
@@ -89,6 +116,11 @@ namespace IWXMVM::IW4::Hooks::Camera
         }
 
         HookManager::WriteCall(site, (std::uintptr_t)AfterCalcViewValues_Stub);
+    }
+
+    void OnDemoLoad()
+    {
+        mapAwaited = true;
     }
 
     void OnCameraChanged()

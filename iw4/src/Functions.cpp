@@ -32,19 +32,19 @@ namespace IWXMVM::IW4::Functions
 
     void SetBool(const char* name, bool value)
     {
-        if (const auto dvar = FindDvar(name))
+        if (const auto dvar = FindDvar(name); dvar && dvar->current.enabled != value)
             dvar->current.enabled = value;
     }
 
     void SetFloat(const char* name, float value)
     {
-        if (const auto dvar = FindDvar(name))
+        if (const auto dvar = FindDvar(name); dvar && dvar->current.value != value)
             dvar->current.value = value;
     }
 
     void SetInt(const char* name, int value)
     {
-        if (const auto dvar = FindDvar(name))
+        if (const auto dvar = FindDvar(name); dvar && dvar->current.integer != value)
             dvar->current.integer = value;
     }
 

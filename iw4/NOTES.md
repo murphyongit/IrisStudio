@@ -80,3 +80,16 @@
   a dummy to clear), "connection interrupted" picture, the killcam "you" marker.
 - If it does not start: the log is in the mod's folder under the game's (core's Logger); with no log at all the
   loader did not load IW4iris.dll (missing Visual C++ 2015-2022 x86 runtime or d3dx9_43.dll would do that).
+
+## 0.2 (same day, before any test: 0.1 was installed but not run)
+- Look > Sky: GameInterface::GetSkyImages from GfxWorld.skies[].skyImage (world found with DB_EnumXAssets 0x4B76D0,
+  type 0x15). Core asks at PostDemoLoad, but in this game the demo command returns before the map loads (the
+  gamestate is read in later frames; cl_ingame turns on once the client game is up), so the module gives core the
+  images again in the first frame with a snapshot (Hooks::Camera OnMapReady, in a try/catch: /EHa).
+- Core calls SetHudInfo EVERY frame of a demo from the render thread (VisualsMenu OnFrame): it now writes only what
+  differs, straight into dvar_t::current (team colours too, by the dvar's type), and "shown" restores the value the
+  setting had when the editor first touched it (the player's config), not the game's default.
+- Core's log: IWXMVM.log in the game's folder (the process's working folder), every line flushed. Lines to look
+  for: "IW4 module 0.2", "Demo command done: name ..., playing 1, file ..., first folder ...", "The map is loaded".
+- Core reads the Look tab's starting values (sun, DOF, film, HUD) in the first frame the game says it is in a demo;
+  if refdef.primaryLights is not filled yet then, the sun starts as zeros (watch for a black sun after "Default").
