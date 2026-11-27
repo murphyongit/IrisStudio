@@ -36,3 +36,17 @@ meant MW3 and that it "should work for every version". Versions on his PC (27 No
 - Local check: /tmp/mod_check.sh iw5 (see iw4/NOTES.md).
 
 Licence: GNU GPL v3, as the rest of this repository; the module is upstream IWXMVM's work.
+
+## 0.1 first try by the user (27 Nov 2026) and the starter's second build
+- He ran IW5iris.exe: Plutonium answered "invalid game folder ... Unable to load import '_AIL_set_redist_directory@4'
+  from module 'mss32.dll'". That is Steam's September 2026 update: his folder now holds the 64-bit game (no mss32.dll,
+  no binkw32.dll, 64-bit fastfiles), which Plutonium IW5 cannot use. His Plutonium folder has no game-files\iw5-legacy.
+- Plutonium's own answer (forum.plutonium.pw/topic/46446, "MW3 Downgrade and Update Prevention Guide"): the old
+  32-bit depots through Steam's console (steam://open/console): download_depot 42680 42682 2661317971072643596
+  (base), download_depot 42680 42683 1595601894688570808 (English), download_depot 42690 42691 4104640605720756125
+  (multiplayer binaries; 42681 = singleplayer's, not needed). They land in <Steam>\steamapps\content\app_N\depot_N
+  and are merged into one folder. (Other posts give other manifests for 42682/42683: 6067691797475126381 and
+  6381783964590594065. Not checked by me: the forum could not be fetched from here.)
+- The starter now tells a 32-bit game folder (has mss32.dll) from the 64-bit one, looks for the 32-bit files in
+  steamapps\content\app_42680|42690|42682\depot_42682 and <game>\downgrade by itself, and explains the 64-bit case
+  in its own words instead of leaving it to Plutonium's message.

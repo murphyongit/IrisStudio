@@ -94,27 +94,64 @@ namespace
         return text;
     }
 
-    bool IsGameFolder(const std::filesystem::path& folder)
+    // What a folder holds: the 32-bit game Plutonium runs (it has the old sound library, mss32.dll), the 64-bit game
+    // Steam installs since its September 2026 update (no mss32.dll: Plutonium refuses it as "an invalid game
+    // folder"), or no game at all.
+    enum class FolderKind { None, Game32, Game64 };
+
+    FolderKind KindOfFolder(const std::filesystem::path& folder)
     {
         std::error_code error;
-        return !folder.empty() && std::filesystem::is_directory(folder / "main", error) &&
-               std::filesystem::is_directory(folder / "zone", error);
+        if (folder.empty() || !std::filesystem::is_directory(folder / "main", error) ||
+            !std::filesystem::is_directory(folder / "zone", error))
+            return FolderKind::None;
+        return std::filesystem::is_regular_file(folder / "mss32.dll", error) ? FolderKind::Game32 : FolderKind::Game64;
     }
 
-    // The game's folder: the settings file's, else the one the game's installer wrote down, else Steam's usual place
-    std::filesystem::path FindGameFolder(const std::map<std::string, std::string>& settings)
+    struct GameFolder
+    {
+        std::filesystem::path folder;   // the 32-bit game's, empty when none was found
+        std::filesystem::path only64;   // a 64-bit game's that was found instead
+    };
+
+    // The 32-bit game's folder: the settings file's, else where Steam's console puts the old version
+    // (steamapps\content\app_...\depot_42682, the other depots moved into it), else the game's own folder
+    GameFolder FindGameFolder(const std::map<std::string, std::string>& settings)
     {
         std::vector<std::filesystem::path> candidates;
         if (const auto found = settings.find("game"); found != settings.end())
             candidates.emplace_back(Widen(found->second));
-        candidates.emplace_back(
-            ReadRegistryString(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Activision\\Modern Warfare 3", L"InstallPath"));
-        candidates.emplace_back(L"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Call of Duty Modern Warfare 3");
 
+        std::vector<std::filesystem::path> installs;
+        installs.emplace_back(
+            ReadRegistryString(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Activision\\Modern Warfare 3", L"InstallPath"));
+        installs.emplace_back(L"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Call of Duty Modern Warfare 3");
+        for (const auto& install : installs)
+        {
+            if (install.empty())
+                continue;
+            // <Steam>\steamapps\common\<game>  ->  <Steam>\steamapps\content\app_N\depot_42682
+            const auto steamapps = install.parent_path().parent_path();
+            for (const wchar_t* app : {L"app_42680", L"app_42690", L"app_42682"})
+                candidates.push_back(steamapps / "content" / app / "depot_42682");
+            candidates.push_back(install / "downgrade");
+        }
+        for (const auto& install : installs)
+            candidates.push_back(install);
+
+        GameFolder result;
         for (const auto& candidate : candidates)
-            if (IsGameFolder(candidate))
-                return candidate;
-        return {};
+        {
+            const auto kind = KindOfFolder(candidate);
+            if (kind == FolderKind::Game32)
+            {
+                result.folder = candidate;
+                return result;
+            }
+            if (kind == FolderKind::Game64 && result.only64.empty())
+                result.only64 = candidate;
+        }
+        return result;
     }
 
     // Whether the process was started with a -lan argument, which is how Plutonium is started in LAN mode. When
@@ -255,14 +292,25 @@ namespace
             return nullptr;
         }
 
-        const auto game = FindGameFolder(settings);
-        if (game.empty())
+        const auto found = FindGameFolder(settings);
+        if (found.folder.empty() && !found.only64.empty())
         {
-            error = "The game's folder wasn't found. Put a line like\n"
-                    "  game=C:\\Program Files (x86)\\Steam\\steamapps\\common\\Call of Duty Modern Warfare 3\n"
-                    "into IW5iris.ini next to this program.";
+            error = "The Modern Warfare 3 that Steam has installed is the new 64-bit version (Steam's September 2026 "
+                    "update), and Plutonium only runs the older 32-bit one.\n\n"
+                    "The 32-bit files can be downloaded with Steam itself (Plutonium's \"MW3 Downgrade and Update "
+                    "Prevention Guide\" on forum.plutonium.pw has the steps). Once they are in\n"
+                    "  <Steam>\\steamapps\\content\\app_42680\\depot_42682\n"
+                    "run this again: it finds them there by itself.";
             return nullptr;
         }
+        if (found.folder.empty())
+        {
+            error = "The game's folder wasn't found. Put a line like\n"
+                    "  game=D:\\Games\\Modern Warfare 3\n"
+                    "into IW5iris.ini next to this program (the folder with the 32-bit game in it).";
+            return nullptr;
+        }
+        const auto& game = found.folder;
 
         std::wstring name = L"Player";
         if (const auto found = settings.find("name"); found != settings.end() && !found->second.empty())
