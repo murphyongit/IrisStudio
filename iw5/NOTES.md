@@ -34,3 +34,5 @@ meant MW3 and that it "should work for every version". Versions on his PC (27 No
   build.yml (BO1) ignores iw5/**; see iw4/NOTES.md for the [skip ci] way of not republishing BO1.
 - Core's log under Plutonium: IWXMVM.log in the process's working folder = Plutonium's folder.
 - Local check: /tmp/mod_check.sh iw5 (see iw4/NOTES.md).
+
+Licence: GNU GPL v3, as the rest of this repository; the module is upstream IWXMVM's work.
