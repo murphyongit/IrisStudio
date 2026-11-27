@@ -162,22 +162,17 @@ namespace IWXMVM::IW5
 
         // Where the mod keeps its files and first looks for demos. Under Plutonium the executable is Plutonium's
         // own (in its bin folder), so the game's folder is used: the one with main\demo in it.
+        // Where the mod keeps its files and looks for demos: the folder IW5iris.dll is in. Next to the 32-bit Steam
+        // game that is the game's folder; with Plutonium it is the folder the player keeps the mod in (his Steam
+        // folder, whose main\demo has his demos), not the folder of 32-bit files Plutonium was pointed at.
         std::filesystem::path GetUserDirectory() final
         {
             static const auto userDirectory = [] {
-                const auto exePath = std::filesystem::path(PathUtils::GetCurrentExecutablePath());
-                if (_stricmp(exePath.filename().string().c_str(), "plutonium-bootstrapper-win32.exe") != 0)
-                    return exePath.parent_path();
-
-                const auto fs_basepath = Functions::FindDvar("fs_basepath");
-                if (!fs_basepath || !fs_basepath->current.string || !*fs_basepath->current.string)
-                {
-                    LOG_ERROR("fs_basepath isn't set, keeping the mod's files next to the executable");
-                    return exePath.parent_path();
-                }
-
-                LOG_INFO("Plutonium: the game's folder is {}", fs_basepath->current.string);
-                return std::filesystem::path(fs_basepath->current.string);
+                wchar_t path[MAX_PATH]{};
+                const auto module = GetModuleHandleW(L"IW5iris.dll");
+                if (module && GetModuleFileNameW(module, path, MAX_PATH))
+                    return std::filesystem::path(path).parent_path();
+                return std::filesystem::path(PathUtils::GetCurrentExecutablePath()).parent_path();
             }();
             return userDirectory;
         }

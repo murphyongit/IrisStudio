@@ -36,7 +36,12 @@ namespace
     constexpr wchar_t PLUTONIUM_IMAGE_NAME[] = L"plutonium-bootstrapper-win32.exe";
     constexpr wchar_t MOD_DLL[] = L"IW5iris.dll";
     // the menu is up about this long after the game's window shows (ReShade has swapped its device in by then)
-    constexpr auto MENU_AFTER_WINDOW = std::chrono::seconds(15);
+    // The game is still loading when its window shows, and loading the mod into that left a black screen: wait until
+    // it stops reading its files (the menu), at least MENU_MIN and at most MENU_MAX after the window showed.
+    constexpr auto MENU_MIN = std::chrono::seconds(20);
+    constexpr auto MENU_MAX = std::chrono::seconds(150);
+    constexpr auto MENU_QUIET = std::chrono::seconds(6);
+    constexpr ULONGLONG QUIET_BYTES_PER_SECOND = 1'000'000;
     constexpr auto WINDOW_WAIT = std::chrono::minutes(5);
 
     std::wstring ToLower(std::wstring text)
@@ -334,6 +339,65 @@ namespace
         return process.hProcess;
     }
 
+    // The mod's log is written where the game runs, which isn't a folder the player looks in: the newest one is
+    // copied next to this program as IW5iris_log.txt
+    void CopyLog(const std::filesystem::path& ownFolder, const std::map<std::string, std::string>& settings)
+    {
+        std::vector<std::filesystem::path> folders{ownFolder};
+        if (const auto found = settings.find("plutonium"); found != settings.end())
+            folders.emplace_back(Widen(found->second));
+        else if (const wchar_t* local = _wgetenv(L"LOCALAPPDATA"))
+            folders.push_back(std::filesystem::path(local) / "Plutonium");
+        folders.push_back(folders.back() / "bin");
+        folders.push_back(folders[folders.size() - 2] / "games");
+        if (const auto game = FindGameFolder(settings); !game.folder.empty())
+            folders.push_back(game.folder);
+
+        std::error_code ec;
+        std::filesystem::path newest;
+        std::filesystem::file_time_type newestTime{};
+        for (const auto& folder : folders)
+        {
+            const auto log = folder / "IWXMVM.log";
+            if (!std::filesystem::is_regular_file(log, ec))
+                continue;
+            const auto time = std::filesystem::last_write_time(log, ec);
+            if (newest.empty() || time > newestTime)
+            {
+                newest = log;
+                newestTime = time;
+            }
+        }
+        if (newest.empty())
+            return;
+        std::filesystem::copy_file(newest, ownFolder / "IW5iris_log.txt",
+                                   std::filesystem::copy_options::overwrite_existing, ec);
+    }
+
+    // Waits for the game's menu. False when the game closed meanwhile.
+    bool WaitForMenu(HANDLE process)
+    {
+        const auto start = std::chrono::steady_clock::now();
+        auto quietSince = start;
+        IO_COUNTERS last{};
+        GetProcessIoCounters(process, &last);
+        while (true)
+        {
+            if (WaitForSingleObject(process, 1000) == WAIT_OBJECT_0)
+                return false;
+            const auto now = std::chrono::steady_clock::now();
+            IO_COUNTERS counters{};
+            if (!GetProcessIoCounters(process, &counters) ||
+                counters.ReadTransferCount - last.ReadTransferCount > QUIET_BYTES_PER_SECOND)
+                quietSince = now;
+            last = counters;
+            if (now - start >= MENU_MAX)
+                return true;
+            if (now - start >= MENU_MIN && now - quietSince >= MENU_QUIET)
+                return true;
+        }
+    }
+
     int Run()
     {
         std::printf("IW5iris for Modern Warfare 3 (2011)\n\n");
@@ -347,6 +411,7 @@ namespace
             return 1;
         }
         const auto settings = ReadSettings(folder / "IW5iris.ini");
+        CopyLog(folder, settings);   // the last run's, should that have ended badly
 
         // a game already running is used as it is (the checks below refuse it if it can't take the mod)
         bool startedHere = false;
@@ -456,15 +521,11 @@ namespace
 
         if (startedHere)
         {
-            std::printf("Waiting for the game's menu...\n");
-            const auto until = std::chrono::steady_clock::now() + MENU_AFTER_WINDOW;
-            while (std::chrono::steady_clock::now() < until)
+            std::printf("Waiting for the game to finish loading (up to two and a half minutes)...\n");
+            if (!WaitForMenu(process))
             {
-                if (WaitForSingleObject(process, 250) == WAIT_OBJECT_0)
-                {
-                    std::printf("The game closed.\n");
-                    return 1;
-                }
+                std::printf("The game closed.\n");
+                return 1;
             }
         }
 
@@ -476,7 +537,9 @@ namespace
         }
 
         std::printf("\nIW5iris is loaded. Switch to the game: the editor shows after a few seconds.\n"
-                    "You can close this window.\n");
+                    "Leave this window open: when the game closes, it saves the mod's log next to itself.\n");
+        WaitForSingleObject(process, INFINITE);
+        CopyLog(folder, settings);
         return 0;
     }
 }  // namespace
